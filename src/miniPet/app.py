@@ -57,7 +57,7 @@ class MiniPetApp(QApplication):
         if self.events:
             self.events.event_received.connect(self._on_event)
             self.events.start()
-        QTimer.singleShot(800, self._show_startup_greeting)
+        QTimer.singleShot(0, self._show_startup_greeting)
 
     def _event_tts_path(self, event_name):
         voice_name = config.tts_config.get('voice_name') or config.DEFAULT_TTS_CONFIG['voice_name']
@@ -67,19 +67,22 @@ class MiniPetApp(QApplication):
     def _play_event_tts(self, event_name):
         cfg = config.tts_config
         if not cfg.get('enabled') or not cfg.get('api_key'):
-            return
+            return False
         path = self._event_tts_path(event_name)
         if not path.is_file():
-            return
+            return False
         stop_tts()
         self.event_tts_worker = TtsPreviewWorker(path, parent=self)
-        self.event_tts_worker.result_ready.connect(self._on_event_tts_done)
+        self.event_tts_worker.result_ready.connect(lambda success, text: self._on_event_tts_done(event_name, success, text))
         self.event_tts_worker.start()
+        return True
 
-    def _on_event_tts_done(self, success, text):
+    def _on_event_tts_done(self, event_name, success, text):
         if not success:
             print('Event TTS failed:', text)
         self.event_tts_worker = None
+        if event_name == 'exit' and self.is_quitting:
+            self.pet.quit_now()
 
     def _show_startup_greeting(self):
         x, y = self.pet.bubble_anchor()
@@ -103,9 +106,9 @@ class MiniPetApp(QApplication):
         if self.pet.quick_menu is not None:
             self.pet.quick_menu.close()
         x, y = self.pet.bubble_anchor()
-        self.note.setup_bubble('我会想你的，再见~', x, y, 1000, title=config.current_pet or '宠物')
-        self._play_event_tts('exit')
-        QTimer.singleShot(1200, self.pet.quit_now)
+        self.note.setup_bubble('我会想你的，再见~', x, y, 3000, title=config.current_pet or '宠物')
+        if not self._play_event_tts('exit'):
+            self.pet.quit_now()
 
     def _append_chat_message(self, role, content, source):
         message = self.chat_store.append(role, content, source=source, pet_name=config.current_pet or '宠物')
@@ -136,7 +139,7 @@ class MiniPetApp(QApplication):
             self.note.setup_bubble('我还在想上一句话，稍等一下。', x, y, 3000, title=config.current_pet or '宠物')
             return
         x, y = self.pet.bubble_anchor()
-        self.note.setup_bubble(self._content_preview(text), x, y, 2500, title='你')
+        self.note.setup_bubble(self._content_preview(text), x, y, 2000, title='你')
         self._append_chat_message('user', text, 'quick_chat')
         if self.pet.chat_window is not None and self.pet.chat_window.isVisible():
             self.pet.chat_window.reload_history()
@@ -173,7 +176,7 @@ class MiniPetApp(QApplication):
             self._append_chat_message('assistant', reply, 'quick_chat')
             if self.pet.chat_window is not None and self.pet.chat_window.isVisible():
                 self.pet.chat_window.reload_history()
-            self.note.setup_bubble(reply, x, y, max(5000, min(15000, len(reply) * 180)), title=config.current_pet or '宠物')
+            self.note.setup_bubble(reply, x, y, max(5000, min(25000, len(reply) * 180)), title=config.current_pet or '宠物')
             self._speak_quick_reply(reply)
         else:
             self.note.setup_bubble('我现在说不出来：' + text, x, y, 6000, title=config.current_pet or '宠物')

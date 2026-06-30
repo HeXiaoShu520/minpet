@@ -519,6 +519,24 @@ class VoiceChatWindow(QWidget):
         self._drag_pos = None
         super().mouseReleaseEvent(event)
 
+    def _detach_audio_worker(self, worker):
+        if worker is None:
+            return
+        try:
+            worker.result_ready.disconnect()
+        except Exception:
+            pass
+        if worker.isRunning():
+            worker.requestInterruption()
+            worker.quit()
+            if worker.wait(800):
+                worker.deleteLater()
+                return
+            worker.setParent(None)
+            worker.finished.connect(worker.deleteLater)
+        else:
+            worker.deleteLater()
+
     def shutdown(self):
         if self._closing:
             return
@@ -536,16 +554,10 @@ class VoiceChatWindow(QWidget):
             self.chat_worker.quit()
             self.chat_worker.wait(1500)
             self.chat_worker = None
-        if self.tts_worker is not None and self.tts_worker.isRunning():
-            self.tts_worker.requestInterruption()
-            self.tts_worker.quit()
-            self.tts_worker.wait(1500)
-            self.tts_worker = None
-        if self.welcome_worker is not None and self.welcome_worker.isRunning():
-            self.welcome_worker.requestInterruption()
-            self.welcome_worker.quit()
-            self.welcome_worker.wait(1500)
-            self.welcome_worker = None
+        self._detach_audio_worker(self.tts_worker)
+        self.tts_worker = None
+        self._detach_audio_worker(self.welcome_worker)
+        self.welcome_worker = None
 
     def closeEvent(self, event):
         self.shutdown()
