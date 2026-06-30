@@ -1,0 +1,12 @@
+venv/
+.env
+miniPet/.env
+__pycache__/
+**/__pycache__/
+*.pyc
+data/
+miniPet/data/
+dist/
+build/
+.DS_Store
+**/.DS_Store

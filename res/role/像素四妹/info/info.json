@@ -1,0 +1,19 @@
+{
+    "coverImages": ["cover.png", "simei-poster.jpg"],
+    "pfp":"simei.png",
+    "petName": "像素四妹",
+	"intro": "像素化的四妹桌宠,由b站代号皮克嗖儿制作.\n好像是ta的15w粉整活作品.\n(据说之后还会整别的活!",
+    "tages": {
+        "代号皮克嗖儿":"#C5E0B4",
+        "四妹桌宠":"#BDD7EE"
+    },
+    "author":{
+        "name":"代号皮克嗖儿",
+        "pfp":"pikesou.png",
+        "frameColor":"#8FAADC",
+        "links":{
+            "BiliBili":"9959876"
+        },
+		"infos":""
+    }
+}

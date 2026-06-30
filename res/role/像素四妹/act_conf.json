@@ -1,0 +1,106 @@
+{
+  "default": {
+    "images": "simei_idle",
+    "act_num": 1,
+    "frame_refresh": 0.2
+  },
+  "up" : {
+    "images": "simei_idle",
+    "act_num": 1,
+    "frame_refresh": 0.2
+  },
+  "down" : {
+    "images": "simei_idle",
+    "act_num": 1,
+    "frame_refresh": 0.2
+  },
+  "left": {
+    "images": "simei_idle",
+    "act_num": 1,
+    "frame_refresh": 0.2
+  },
+  "right": {
+    "images": "simei_idle",
+    "act_num": 1,
+    "frame_refresh": 0.2
+  },
+  "sleepy": {
+    "images": "simei_sleepy",
+    "act_num": 2,
+    "frame_refresh": 0.2
+  },
+  "sleep": {
+    "images": "simei_fallsleep",
+    "act_num": 5,
+    "frame_refresh": 0.2
+  },
+  "faint": {
+    "images": "simei_fallsleep",
+    "act_num": 5,
+    "frame_refresh": 0.2
+  },
+  "left_walk": {
+    "images": "simei_walk",
+    "act_num": 5,
+    "need_move": true,
+    "direction": "left",
+    "frame_refresh": 0.1
+  },
+  "right_walk": {
+    "images": "simei_walk-right",
+    "act_num": 5,
+    "need_move": true,
+    "direction": "right",
+    "frame_refresh": 0.1
+  },
+  "drag": {
+    "images": "simei_drag",
+    "act_num": 1,
+    "frame_refresh": 0.1
+  },
+  "fall": {
+    "images": "simei_flow",
+    "act_num": 1,
+    "frame_refresh": 0.1
+  },
+  "onfloor": {
+    "images": "simei_quxi",
+    "act_num": 1,
+    "frame_refresh": 0.2
+  },
+  "patpat": {
+    "images": "simei_love",
+    "act_num": 1,
+    "frame_refresh": 0.2
+  },
+  "feed_1":{
+    "images": "simei_bling",
+    "act_num": 1,
+    "frame_refresh": 0.2
+  },
+  "feed_2":{
+    "images": "simei_idle",
+    "act_num": 1,
+    "frame_refresh": 0.2
+  },
+  "feed_3":{
+    "images": "simei_eat",
+    "act_num": 1,
+    "frame_refresh": 0.2
+  },
+  "flush":{
+    "images": "simei_flush",
+    "act_num": 1,
+    "frame_refresh": 0.2
+  },
+  "play":{
+    "images": "simei_playknife",
+    "act_num": 5,
+    "frame_refresh": 0.2
+  },
+  "work":{
+    "images": "simei_write",
+    "act_num": 4,
+    "frame_refresh": 0.2
+  }
+}

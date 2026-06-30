@@ -1,0 +1,124 @@
+{
+  "default": {
+    "images": "stand",
+    "act_num": 50,
+    "frame_refresh": 0.08
+  },
+  "up" : {
+    "images": "stand",
+    "act_num": 100,
+    "frame_refresh": 0.08
+  },
+  "down" : {
+    "images": "stand",
+    "act_num": 50,
+    "frame_refresh": 0.08
+  },
+  "left": {
+    "images": "stand",
+    "act_num": 200,
+    "frame_refresh": 0.08
+  },
+  "right": {
+    "images": "stand1",
+    "act_num": 50,
+    "frame_refresh": 0.08
+  },
+  "left_walk": {
+    "images": "walk",
+    "act_num": 2,
+    "need_move": true,
+    "direction": "left",
+    "frame_move": 5,
+    "frame_refresh":0.04
+  },
+  "right_walk": {
+    "images": "walk1",
+    "act_num": 2,
+    "need_move": true,
+    "direction": "right",
+    "frame_move": 5,
+    "frame_refresh": 0.04
+  },
+  "drag": {
+    "images": "catch",
+    "act_num": 1,
+    "frame_refresh": 0.04
+  },
+  "fall": {
+    "images": "flo",
+    "act_num": 1,
+    "frame_refresh": 0.04
+  },
+  "onfloor": {
+    "images": "floed",
+    "act_num": 1,
+    "frame_refresh": 0.04
+  },
+  "patpat": {
+    "images": "muotou",
+    "act_num": 1,
+    "frame_refresh": 0.04
+  },
+  "sit": {
+    "images": "sit",
+    "act_num": 1,
+    "frame_refresh": 0.04
+  },
+  "sitwithball": {
+    "images": "sitwithball",
+    "act_num": 1,
+    "frame_refresh": 0.04
+  },
+  "sleep": {
+    "images": "sleep",
+    "act_num": 3,
+    "frame_refresh": 0.04
+  },
+  "chashou": {
+    "images": "chashou",
+    "act_num": 1,
+    "frame_refresh": 0.04
+  },
+  "chigua": {
+    "images": "chigua",
+    "act_num": 1,
+    "frame_refresh": 0.04
+  },
+  "lajitong": {
+    "images": "lajitong",
+    "act_num": 1,
+    "frame_refresh": 0.04
+  },
+  "muotou": {
+    "images": "muotou",
+    "act_num": 1,
+    "frame_refresh": 0.04
+  },
+  "piao": {
+    "images": "piao",
+    "act_num": 1,
+    "frame_refresh": 0.04
+  },
+  "s": {
+    "images": "piao",
+    "act_num": 1,
+    "frame_refresh": 0.04
+  },
+  "feed_1":{
+    "images": "chashou",
+    "act_num": 1,
+    "frame_refresh": 0.04
+  },
+  "feed_2":{
+    "images": "chashou",
+    "act_num": 1,
+    "frame_refresh": 0.04
+  },
+  "feed_3":{
+    "images": "chashou",
+    "act_num": 1,
+    "frame_refresh": 0.04
+  }
+  
+}

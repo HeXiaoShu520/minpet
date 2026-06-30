@@ -1,0 +1,16 @@
+{
+  "对话1":{
+    "title": "早安",
+    "start": "text_1",
+    "text_1": "早上好。",
+    "option_1": "早啊",
+    "relationship": {
+      "text_1": ["option_1"]
+    }
+  }
+}
+
+
+
+
+

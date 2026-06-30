@@ -1,0 +1,74 @@
+{
+  "greeting_1": {
+    "image": "gw.png",
+    "sound": "greeting_1.wav"
+  },
+  "greeting_2": {
+    "image": "gr.png",
+    "sound": "greeting_3.wav"
+  },
+  "greeting_3": {
+    "image": "gw.png",
+    "sound": "greeting_3.wav"
+  },
+  "greeting_4": {
+    "image": "gr.png",
+    "sound": "greeting_5.wav"
+  },
+  "greeting_5": {
+    "image": "gn.png",
+    "sound": "greeting_5.wav"
+  },
+  "feed_1": {
+    "image": "meme.png",
+    "sound": "feed_1.wav"
+  },
+  "feed_2": {
+    "image": "meme.png",
+    "sound": "feed_2.wav"
+  },
+  "feed_3": {
+    "image": "meme.png",
+    "sound": "feed_3.wav"
+  },
+  "random_1": {
+    "sound": "random_1.wav",
+    "sound_priority": 1
+  },
+  "random_2": {
+    "sound": "random_2.wav",
+    "sound_priority": 1
+  },
+  "random_3": {
+    "sound": "random_3.wav",
+    "sound_priority": 1
+  },
+  "random_4": {
+    "sound": "random_4.wav",
+    "sound_priority": 1
+  },
+  "random_5": {
+    "sound": "random_5.wav",
+    "sound_priority": 1
+  },
+  "onfloor": {
+    "sound": "onfloor.wav",
+    "sound_priority": 1
+  },
+  "play": {
+    "sound": "play.wav",
+    "sound_priority": 1
+  },
+  "work": {
+    "sound": "work.wav",
+    "sound_priority": 1
+  },
+  "stinkyMonkey": {
+    "sound": "stinkyMonkey.wav",
+    "sound_priority": 1
+  },
+  "snore": {
+    "sound": "snore.wav",
+    "sound_priority": 1
+  }
+}
