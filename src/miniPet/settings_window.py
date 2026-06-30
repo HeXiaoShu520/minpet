@@ -428,7 +428,13 @@ class TTSPage(MiniPetScrollPage):
         self.voiceCard.setCurrentValue(cfg.get('voice_name', config.DEFAULT_TTS_CONFIG['voice_name']))
         self.voiceCard.comboBox.currentTextChanged.connect(self._preview_voice)
         self.maxCharsCard = LineEditSettingCard(FIF.FONT_SIZE, '最大字数', '过长回复会截断后播放，避免请求过大', placeholder='500', parent=self.apiGroup)
+        self.maxCharsCard.lineEdit.setFixedWidth(120)
         self.maxCharsCard.setText(cfg.get('max_chars', 500))
+        self.disableEmojiFilterCard = SwitchSettingCard(FIF.MESSAGE, '禁用 Emoji 过滤', '对应火山参数 disable_emoji_filter，开启后合成请求传 true', parent=self.apiGroup)
+        self.disableEmojiFilterCard.setChecked(bool(cfg.get('disable_emoji_filter', False)))
+        self.parenthesisFilterCard = LineEditSettingCard(FIF.FONT_SIZE, '括号过滤长度', '对应火山参数 max_length_to_filter_parenthesis，0 为不过滤，100 为过滤', placeholder='0', parent=self.apiGroup)
+        self.parenthesisFilterCard.lineEdit.setFixedWidth(120)
+        self.parenthesisFilterCard.setText(cfg.get('max_length_to_filter_parenthesis', 0))
 
         self.linkGroup = SettingCardGroup('相关链接', self.scrollWidget)
         self.linkCard = SettingCard(FIF.LINK, '火山语音资源', '服务开通、在线体验和 API 教程', self.linkGroup)
@@ -457,7 +463,7 @@ class TTSPage(MiniPetScrollPage):
         self.saveBtn.clicked.connect(self._save)
         self.testBtn.clicked.connect(self._test)
 
-        for card in [self.enabledCard, self.apiKeyCard, self.voiceCard, self.maxCharsCard, self.actionCard]:
+        for card in [self.enabledCard, self.apiKeyCard, self.voiceCard, self.maxCharsCard, self.disableEmojiFilterCard, self.parenthesisFilterCard, self.actionCard]:
             self.apiGroup.addSettingCard(card)
         self.linkGroup.addSettingCard(self.linkCard)
         self.expandLayout.addWidget(self.apiGroup)
@@ -491,11 +497,17 @@ class TTSPage(MiniPetScrollPage):
             max_chars = max(1, int(self.maxCharsCard.text() or 500))
         except ValueError:
             max_chars = 500
+        try:
+            max_length_to_filter_parenthesis = max(0, int(self.parenthesisFilterCard.text() or 0))
+        except ValueError:
+            max_length_to_filter_parenthesis = 0
         return {
             'enabled': self.enabledCard.isChecked(),
             'api_key': self.apiKeyCard.text(),
             'voice_name': self.voiceCard.currentValue() or config.DEFAULT_TTS_CONFIG['voice_name'],
             'max_chars': max_chars,
+            'disable_emoji_filter': self.disableEmojiFilterCard.isChecked(),
+            'max_length_to_filter_parenthesis': max_length_to_filter_parenthesis,
         }
 
     def _save(self):
@@ -522,6 +534,41 @@ class TTSPage(MiniPetScrollPage):
             InfoBar.success('测试成功', '语音已播放完成', duration=2000, position=InfoBarPosition.BOTTOM, parent=self.window())
         else:
             InfoBar.error('测试失败', text[:120], duration=5000, position=InfoBarPosition.BOTTOM, parent=self.window())
+
+
+class ReplyDisplayPage(MiniPetScrollPage):
+    def __init__(self, parent=None):
+        super().__init__('回复显示设置', parent)
+        cfg = config.typewriter_config
+        defaults = config.DEFAULT_TYPEWRITER_CONFIG
+
+        self.displayGroup = SettingCardGroup('AI 回复显示', self.scrollWidget)
+        self.enabledCard = SwitchSettingCard(FIF.MESSAGE, 'AI 回复逐字显示', '开启后，AI 回复文字会一字一字显示；关闭后直接显示完整回复', parent=self.displayGroup)
+        self.enabledCard.setChecked(bool(cfg.get('enabled', defaults['enabled'])))
+        self.speedCard = RangeSettingCard(8, 120, 1, FIF.MESSAGE, '逐字显示速度', '每个字的最大显示间隔，单位毫秒，数值越小越快', self.displayGroup)
+        self.speedCard.setValue(int(cfg.get('speed_ms', defaults['speed_ms'])))
+        self.maxDurationCard = RangeSettingCard(500, 15000, 1, FIF.FONT_SIZE, '最长显示时长', '单条回复逐字显示的最长时间，单位毫秒', self.displayGroup)
+        self.maxDurationCard.setValue(int(cfg.get('max_duration_ms', defaults['max_duration_ms'])))
+        self.ttsDelayCard = RangeSettingCard(0, 3000, 1, FIF.VOLUME, '语音播报文字延迟', '开启语音播报时，回复文字延迟显示的时间，单位毫秒', self.displayGroup)
+        self.ttsDelayCard.setValue(int(cfg.get('tts_delay_ms', defaults['tts_delay_ms'])))
+        self.saveCard = PushSettingCard('保存', FIF.SAVE, '保存回复显示设置', '保存 AI 回复逐字显示相关配置', self.displayGroup)
+        self.saveCard.clicked.connect(self._save)
+
+        for card in [self.enabledCard, self.speedCard, self.maxDurationCard, self.ttsDelayCard, self.saveCard]:
+            self.displayGroup.addSettingCard(card)
+        self.expandLayout.addWidget(self.displayGroup)
+
+    def _collect(self):
+        return {
+            'enabled': self.enabledCard.isChecked(),
+            'speed_ms': int(self.speedCard.value()),
+            'max_duration_ms': int(self.maxDurationCard.value()),
+            'tts_delay_ms': int(self.ttsDelayCard.value()),
+        }
+
+    def _save(self):
+        config.save_typewriter_config(self._collect())
+        InfoBar.success('保存成功', '回复显示设置已保存', duration=2000, position=InfoBarPosition.BOTTOM, parent=self.window())
 
 
 class RealtimePage(MiniPetScrollPage):
@@ -614,6 +661,8 @@ class SettingsWindow(FluentWindow):
         self.role.setObjectName('RolePage')
         self.tts = TTSPage(self)
         self.tts.setObjectName('TTSPage')
+        self.reply_display = ReplyDisplayPage(self)
+        self.reply_display.setObjectName('ReplyDisplayPage')
         self.realtime = RealtimePage(self)
         self.realtime.setObjectName('RealtimePage')
         self.role_tools = RoleToolsPage(self)
@@ -625,6 +674,7 @@ class SettingsWindow(FluentWindow):
         self.addSubInterface(self.llm, FIF.ROBOT, '大模型')
         self.addSubInterface(self.role, _icon('character.svg'), '角色')
         self.addSubInterface(self.tts, FIF.VOLUME, '语音')
+        self.addSubInterface(self.reply_display, FIF.MESSAGE, '回复显示')
         self.addSubInterface(self.realtime, FIF.PHONE, '实时通话')
         self.addSubInterface(self.role_tools, _icon('minipet.svg'), '角色资源')
         self.navigationInterface.setExpandWidth(180)

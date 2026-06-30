@@ -92,23 +92,32 @@ class PcmStreamPlayer:
             self.stream.close()
 
 
-def split_sentences(text, target_chars=50):
+def split_sentences(text, first_target_chars=30, target_chars=80):
     text = (text or '').strip()
     if not text:
         return []
-    parts = re.split(r'(?<=[\n。！？!?；;])', text)
+    parts = re.split(r'(?<=[\n。！？!?；;，,：:、])', text)
     chunks = []
     current = ''
     for part in (p.strip() for p in parts if p.strip()):
-        while len(part) > target_chars:
+        limit = first_target_chars if not chunks else target_chars
+        while len(part) > limit:
             if current:
                 chunks.append(current)
                 current = ''
-            chunks.append(part[:target_chars])
-            part = part[target_chars:].strip()
+                limit = target_chars
+            cut = max(part.rfind(mark, 0, limit + 1) for mark in '，,、：:；;。！？!?')
+            if cut <= 0:
+                cut = limit
+            else:
+                cut += 1
+            chunks.append(part[:cut].strip())
+            part = part[cut:].strip()
+            limit = target_chars
         if not part:
             continue
-        if current and len(current) + len(part) > target_chars:
+        limit = first_target_chars if not chunks else target_chars
+        if current and len(current) + len(part) > limit:
             chunks.append(current)
             current = part
         else:
@@ -119,12 +128,17 @@ def split_sentences(text, target_chars=50):
 
 
 def _build_ws_payload(text, cfg):
+    additions = {
+        'disable_markdown_filter': True,
+        'disable_emoji_filter': bool(cfg.get('disable_emoji_filter', config.DEFAULT_TTS_CONFIG['disable_emoji_filter'])),
+        'max_length_to_filter_parenthesis': int(cfg.get('max_length_to_filter_parenthesis', config.DEFAULT_TTS_CONFIG['max_length_to_filter_parenthesis'])),
+    }
     return {
         'req_params': {
             'text': text,
             'speaker': cfg.get('voice_name') or config.DEFAULT_TTS_CONFIG['voice_name'],
             'audio_params': {'format': 'pcm', 'sample_rate': SAMPLE_RATE},
-            'additions': json.dumps({'disable_markdown_filter': True}, ensure_ascii=False),
+            'additions': json.dumps(additions, ensure_ascii=False),
         },
     }
 

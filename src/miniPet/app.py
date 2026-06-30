@@ -14,7 +14,7 @@ from miniPet.event_client import EventClient
 from miniPet.llm_client import ChatWorker
 from miniPet.notification import NotificationCenter
 from miniPet.settings_window import SettingsWindow
-from miniPet.tts_client import TtsWorker, stop_tts
+from miniPet.tts_client import TtsPreviewWorker, TtsWorker, stop_tts
 
 
 class MiniPetApp(QApplication):
@@ -40,6 +40,7 @@ class MiniPetApp(QApplication):
         self.chat_history = self.chat_store.load_today()
         self.quick_chat_worker = None
         self.quick_tts_worker = None
+        self.event_tts_worker = None
         self.quick_thinking_bubble_id = None
         self.is_quitting = False
 
@@ -58,10 +59,33 @@ class MiniPetApp(QApplication):
             self.events.start()
         QTimer.singleShot(800, self._show_startup_greeting)
 
+    def _event_tts_path(self, event_name):
+        voice_name = config.tts_config.get('voice_name') or config.DEFAULT_TTS_CONFIG['voice_name']
+        safe_name = ''.join(ch if ch.isalnum() or ch in ('-', '_') else '_' for ch in voice_name)
+        return config.DATA_DIR / 'tts_events' / f'{safe_name}_{event_name}.pcm'
+
+    def _play_event_tts(self, event_name):
+        cfg = config.tts_config
+        if not cfg.get('enabled') or not cfg.get('api_key'):
+            return
+        path = self._event_tts_path(event_name)
+        if not path.is_file():
+            return
+        stop_tts()
+        self.event_tts_worker = TtsPreviewWorker(path, parent=self)
+        self.event_tts_worker.result_ready.connect(self._on_event_tts_done)
+        self.event_tts_worker.start()
+
+    def _on_event_tts_done(self, success, text):
+        if not success:
+            print('Event TTS failed:', text)
+        self.event_tts_worker = None
+
     def _show_startup_greeting(self):
         x, y = self.pet.bubble_anchor()
         name = config.current_pet or '宠物'
         self.note.setup_bubble('好久不见~', x, y, 6000, title=name)
+        self._play_event_tts('startup')
 
     def _show_chat_window(self):
         self.pet.show_chat(self.chat_history, self._append_chat_message, self.chat_store.content_for_llm)
@@ -80,6 +104,7 @@ class MiniPetApp(QApplication):
             self.pet.quick_menu.close()
         x, y = self.pet.bubble_anchor()
         self.note.setup_bubble('我会想你的，再见~', x, y, 1000, title=config.current_pet or '宠物')
+        self._play_event_tts('exit')
         QTimer.singleShot(1200, self.pet.quit_now)
 
     def _append_chat_message(self, role, content, source):
@@ -219,7 +244,7 @@ class MiniPetApp(QApplication):
             self.pet.voice_chat_window.shutdown()
         if self.pet.realtime_window is not None:
             self.pet.realtime_window.shutdown()
-        for worker_name in ('quick_chat_worker', 'quick_tts_worker'):
+        for worker_name in ('quick_chat_worker', 'quick_tts_worker', 'event_tts_worker'):
             worker = getattr(self, worker_name, None)
             if worker is not None and worker.isRunning():
                 worker.requestInterruption()

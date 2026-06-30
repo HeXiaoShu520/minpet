@@ -40,6 +40,8 @@ DEFAULT_TTS_CONFIG = {
     'api_key': '',
     'voice_name': 'zh_female_vv_uranus_bigtts',
     'max_chars': 500,
+    'disable_emoji_filter': False,
+    'max_length_to_filter_parenthesis': 0,
 }
 
 DEFAULT_TYPEWRITER_CONFIG = {
@@ -80,6 +82,8 @@ TTS_ENV_KEYS = {
     'api_key': 'TTS_API_KEY',
     'voice_name': 'TTS_VOICE_NAME',
     'max_chars': 'TTS_MAX_CHARS',
+    'disable_emoji_filter': 'TTS_DISABLE_EMOJI_FILTER',
+    'max_length_to_filter_parenthesis': 'TTS_MAX_LENGTH_TO_FILTER_PARENTHESIS',
 }
 
 REALTIME_ENV_KEYS = {
@@ -240,4 +244,10 @@ def save_tts_config(config):
 def save_typewriter_config(config):
     global typewriter_config
     typewriter_config = dict(config)
-    _save_env_config(typewriter_config, TYPEWRITER_ENV_KEYS, DEFAULT_TYPEWRITER_CONFIG, '# MINIPET Typewrit
+    _save_env_config(typewriter_config, TYPEWRITER_ENV_KEYS, DEFAULT_TYPEWRITER_CONFIG, '# MINIPET Typewriter settings')
+
+
+def save_realtime_config(config):
+    global realtime_config
+    realtime_config = dict(config)
+    _save_env_config(realtime_config, REALTIME_ENV_KEYS, DEFAULT_REALTIME_CONFIG, '# MINIPET Realtime settings')
