@@ -6,7 +6,7 @@ import time
 import wave
 
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QPoint, QPointF, QRectF, Qt, QTimer, QUrl
-from PySide6.QtGui import QColor, QFont, QKeyEvent, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient
+from PySide6.QtGui import QColor, QFont, QKeyEvent, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QRadialGradient
 from PySide6.QtMultimedia import QSoundEffect
 from PySide6.QtWidgets import QApplication, QFrame, QLabel, QLineEdit, QPushButton
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -243,7 +243,7 @@ class MagicConchPopup(EasterGamePopup):
         self.input.hide()
         self.button.hide()
         messages = [
-            {'role': 'system', 'content': '你是桌宠里的神奇海螺。用户会问一个问题。你必须用中文回答，只给一句短答案，像神奇海螺一样神秘、笃定、可爱。不要解释，不要超过18个字。'},
+            {'role': 'system', 'content': '你就是神奇海螺本身。用户问你问题，你必须用"海螺说："开头，接一句神秘、笃定、可爱的中文短答案，总长度不超过20个字。不要解释，不要换行，不要出现"海螺低语"等其他前缀，只用"海螺说："。'},
             {'role': 'user', 'content': question},
         ]
         self.worker = ChatWorker(messages, parent=self)
@@ -277,21 +277,19 @@ class MagicConchPopup(EasterGamePopup):
         pulse = (math.sin(elapsed * 7) + 1) / 2
         wobble_amp = 7 if listening else 2.2
         wobble = math.sin(elapsed * 10) * wobble_amp
-        cx, cy = self.width() / 2, 136 + wobble
+        cx, cy = self.width() / 2, 176 + wobble
 
+        # 外层光晕圆圈
         painter.setPen(Qt.NoPen)
         for i in range(4):
             alpha = int((70 - i * 12) * (0.35 + pulse * 0.65))
-            painter.setBrush(QColor(128, 166, 255, alpha))
+            painter.setBrush(QColor(170, 140, 220, alpha))
             r = 62 + i * 16 + pulse * 10
             painter.drawEllipse(QPoint(int(cx), int(cy)), int(r), int(r * 0.56))
         self._draw_magic_sparkles(painter, cx, cy, elapsed, listening)
         self._draw_shell(painter, cx, cy, elapsed, listening)
 
         if not asked:
-            painter.setFont(QFont('Microsoft YaHei UI', 9, QFont.Bold))
-            painter.setPen(QColor(67, 95, 142, 205))
-            painter.drawText(0, 232, self.width(), 22, Qt.AlignCenter, '像神奇海螺一样，先问一个问题')
             return
 
         if listening:
@@ -313,7 +311,7 @@ class MagicConchPopup(EasterGamePopup):
         painter.setFont(font)
         painter.setPen(QColor(42, 69, 108))
         metrics = painter.fontMetrics()
-        answer = '海螺说：' + self.answer
+        answer = self.answer
         answer_rect = QRectF(42, 262, self.width() - 84, 48)
         if metrics.boundingRect(answer_rect.toRect(), Qt.AlignCenter | Qt.TextWordWrap, answer).height() > answer_rect.height():
             font.setPointSize(10)
@@ -322,118 +320,81 @@ class MagicConchPopup(EasterGamePopup):
         painter.setOpacity(1)
 
     def _draw_magic_sparkles(self, painter, cx, cy, elapsed, listening):
+        """简约星光粒子：只画细十字星，克制分布"""
         painter.save()
-        painter.setPen(Qt.NoPen)
-        points = [(-92, -34, 2.0), (-66, 42, 1.4), (-18, -58, 1.8), (46, -48, 1.5), (96, -10, 2.1), (72, 50, 1.3)]
-        for i, (dx, dy, size) in enumerate(points):
-            twinkle = (math.sin(elapsed * (3.2 + i * 0.37) + i) + 1) / 2
-            alpha = int((70 + 120 * twinkle) * (1.25 if listening else 0.75))
-            painter.setBrush(QColor(130, 170, 255, max(0, min(220, alpha))))
-            x = cx + dx + math.sin(elapsed * 1.5 + i) * 3
-            y = cy + dy + math.cos(elapsed * 1.3 + i) * 2
-            r = size + twinkle * 1.5
-            painter.drawEllipse(QPoint(int(x), int(y)), int(r), int(r))
-            painter.setPen(QPen(QColor(255, 255, 255, alpha), 1.2))
-            painter.drawLine(int(x - r * 2.0), int(y), int(x + r * 2.0), int(y))
-            painter.drawLine(int(x), int(y - r * 2.0), int(x), int(y + r * 2.0))
+        # 6个星光点，偏移更分散
+        pts = [(-78, -44), (68, -52), (104, 8), (82, 58), (-48, 62), (-96, 18)]
+        for i, (dx, dy) in enumerate(pts):
+            twinkle = (math.sin(elapsed * (2.8 + i * 0.45) + i * 1.3) + 1) / 2
+            base_alpha = 160 if listening else 90
+            alpha = int(base_alpha * (0.3 + 0.7 * twinkle))
+            alpha = max(0, min(240, alpha))
+            x = cx + dx + math.sin(elapsed * 1.2 + i) * 4
+            y = cy + dy + math.cos(elapsed * 1.1 + i) * 3
+            r = 1.4 + twinkle * 2.0
+            # 十字星：两条线
+            color = QColor(170, 210, 255, alpha)
+            pen = QPen(color, max(1.0, r * 0.7))
+            pen.setCapStyle(Qt.RoundCap)
+            painter.setPen(pen)
+            arm = r * 2.8
+            painter.drawLine(QPointF(x - arm, y), QPointF(x + arm, y))
+            painter.drawLine(QPointF(x, y - arm), QPointF(x, y + arm))
+            # 斜45°短臂
+            arm2 = arm * 0.55
+            painter.drawLine(QPointF(x - arm2, y - arm2), QPointF(x + arm2, y + arm2))
+            painter.drawLine(QPointF(x + arm2, y - arm2), QPointF(x - arm2, y + arm2))
+            # 中心亮点
             painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(240, 248, 255, alpha))
+            painter.drawEllipse(QPointF(x, y), r * 0.6, r * 0.6)
         painter.restore()
 
     def _draw_shell(self, painter, cx, cy, elapsed, listening):
+        """直接渲染神奇海螺图片，带摇摆和辉光动画"""
         painter.save()
-        painter.translate(cx, cy)
-        painter.rotate(math.sin(elapsed * 4) * (3 if listening else 0.8))
-        painter.scale(0.82, 0.82)
 
+        # ── 底部投影 ──
         painter.setPen(Qt.NoPen)
-        shadow = QRadialGradient(10, 58, 132)
-        shadow.setColorAt(0, QColor(35, 45, 75, 62))
-        shadow.setColorAt(1, QColor(35, 45, 75, 0))
-        painter.setBrush(shadow)
-        painter.drawEllipse(QRectF(-144, 30, 288, 58))
+        sh = QRadialGradient(cx, cy + 68, 85)
+        sh.setColorAt(0, QColor(160, 120, 200, 40))
+        sh.setColorAt(1, QColor(160, 120, 200, 0))
+        painter.setBrush(sh)
+        painter.drawEllipse(QRectF(cx - 85, cy + 48, 170, 40))
 
-        tail_grad = QLinearGradient(-150, -42, 22, 60)
-        tail_grad.setColorAt(0, QColor(224, 221, 252))
-        tail_grad.setColorAt(0.45, QColor(216, 187, 232))
-        tail_grad.setColorAt(1, QColor(166, 143, 203))
-        painter.setBrush(tail_grad)
-        painter.setPen(QPen(QColor(55, 48, 73), 2.8))
-        tail = QPainterPath()
-        tail.moveTo(-150, 0)
-        tail.cubicTo(-124, -42, -64, -62, -8, -38)
-        tail.cubicTo(24, -24, 28, 4, 6, 28)
-        tail.cubicTo(-22, 58, -90, 62, -130, 34)
-        tail.cubicTo(-142, 26, -150, 12, -150, 0)
-        painter.drawPath(tail)
+        # ── 图片大小和摆动 ──
+        img_size = 172  # 渲染尺寸
+        sway = math.sin(elapsed * (3.2 if listening else 1.8)) * (3.0 if listening else 1.0)
 
-        painter.setPen(QPen(QColor(102, 82, 137, 165), 2.2))
-        for x, y, w, h in [(-132, -14, 48, 42), (-108, -31, 62, 66), (-76, -42, 74, 84), (-38, -40, 78, 90)]:
-            painter.drawArc(x, y, w, h, 72 * 16, 210 * 16)
+        # 加载（缓存到类属性）
+        if not hasattr(MagicConchPopup, '_shell_pixmap'):
+            _p = config.RES_DIR / 'items' / 'easter' / 'magic_conch.png'
+            MagicConchPopup._shell_pixmap = QPixmap(str(_p))
 
-        painter.setBrush(QColor(247, 226, 250))
-        painter.setPen(QPen(QColor(105, 78, 126), 1.8))
-        for x, y, r in [(-120, 9, 8), (-98, -13, 10), (-76, 17, 11), (-52, -19, 12), (-28, 16, 12)]:
-            bump = QPainterPath()
-            bump.moveTo(x - r, y + r * 0.25)
-            bump.cubicTo(x - r * 0.7, y - r * 1.2, x + r * 0.7, y - r * 1.2, x + r, y + r * 0.25)
-            bump.cubicTo(x + r * 0.42, y + r, x - r * 0.42, y + r, x - r, y + r * 0.25)
-            painter.drawPath(bump)
+        px = MagicConchPopup._shell_pixmap
+        if not px.isNull():
+            scaled = px.scaled(img_size, img_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            sw, sh2 = scaled.width(), scaled.height()
+            painter.save()
+            painter.translate(cx, cy)
+            painter.rotate(-10 + sway)  # 固定逆时针10度 + 摇摆
+            painter.drawPixmap(-sw // 2, -sh2 // 2, scaled)
+            painter.restore()
 
-        body_grad = QLinearGradient(-36, -68, 148, 82)
-        body_grad.setColorAt(0, QColor(255, 241, 253))
-        body_grad.setColorAt(0.36, QColor(241, 190, 230))
-        body_grad.setColorAt(0.72, QColor(218, 148, 207))
-        body_grad.setColorAt(1, QColor(175, 105, 174))
-        painter.setBrush(body_grad)
-        painter.setPen(QPen(QColor(48, 42, 61), 3.0))
-        body = QPainterPath()
-        body.moveTo(-34, -12)
-        body.cubicTo(-8, -54, 42, -70, 78, -48)
-        body.cubicTo(114, -26, 142, 6, 158, 40)
-        body.cubicTo(170, 72, 132, 92, 76, 84)
-        body.cubicTo(26, 77, -18, 58, -48, 36)
-        body.cubicTo(-64, 23, -56, 2, -34, -12)
-        painter.drawPath(body)
-
-        lip_grad = QLinearGradient(18, -52, 130, 72)
-        lip_grad.setColorAt(0, QColor(255, 232, 250, 225))
-        lip_grad.setColorAt(0.55, QColor(217, 150, 209, 210))
-        lip_grad.setColorAt(1, QColor(143, 94, 158, 205))
-        painter.setBrush(lip_grad)
-        painter.setPen(QPen(QColor(86, 61, 100), 2.5))
-        lip = QPainterPath()
-        lip.moveTo(36, -42)
-        lip.cubicTo(76, -48, 124, -16, 144, 28)
-        lip.cubicTo(158, 60, 130, 76, 90, 70)
-        lip.cubicTo(54, 64, 26, 42, 16, 18)
-        lip.cubicTo(8, -4, 14, -34, 36, -42)
-        painter.drawPath(lip)
-
-        inner_grad = QRadialGradient(88, 24, 56)
-        inner_grad.setColorAt(0, QColor(42, 38, 58))
-        inner_grad.setColorAt(0.62, QColor(92, 66, 116))
-        inner_grad.setColorAt(1, QColor(182, 126, 188))
-        painter.setBrush(inner_grad)
-        painter.setPen(QPen(QColor(57, 44, 72), 2.2))
-        inner = QPainterPath()
-        inner.moveTo(64, -18)
-        inner.cubicTo(91, -23, 120, 6, 124, 36)
-        inner.cubicTo(108, 56, 72, 54, 54, 28)
-        inner.cubicTo(46, 10, 48, -10, 64, -18)
-        painter.drawPath(inner)
-
-        painter.setPen(QPen(QColor(255, 247, 255, 190), 4.2))
-        painter.drawArc(-26, -48, 112, 86, 75 * 16, 82 * 16)
-        painter.drawArc(-8, 10, 132, 70, 210 * 16, 72 * 16)
-        painter.setPen(QPen(QColor(143, 96, 160, 135), 2.1))
-        for x in [-18, 10, 38, 66, 94]:
-            line = QPainterPath()
-            line.moveTo(x, -36)
-            line.cubicTo(x + 12, -8, x + 9, 28, x - 8, 64)
-            painter.drawPath(line)
+        # ── 聆听时外层辉光环 ──
+        if listening:
+            pulse = (math.sin(elapsed * 8) + 1) / 2
+            for i in range(3):
+                r = img_size // 2 + 8 + i * 10 + pulse * 6
+                alpha = int((80 - i * 22) * (0.5 + pulse * 0.5))
+                glow = QRadialGradient(cx, cy, r)
+                glow.setColorAt(0.7, QColor(200, 160, 240, alpha))
+                glow.setColorAt(1.0, QColor(200, 160, 240, 0))
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(glow)
+                painter.drawEllipse(QRectF(cx - r, cy - r, r * 2, r * 2))
 
         painter.restore()
-
 
 class DailyTipPopup(EasterGamePopup):
     title = '每日小技巧'
@@ -467,25 +428,25 @@ class DailyTipPopup(EasterGamePopup):
         painter.drawText(34, 130, self.width() - 68, 82, Qt.AlignCenter | Qt.TextWordWrap, self.tip)
 
 
+
 class DicePopup(EasterGamePopup):
     title = '摇骰子'
 
     def __init__(self, x, y, parent=None):
         self.value = random.randint(1, 6)
-        self.final_transform = self._final_transform()
         super().__init__(x, y, parent)
-        self.setFixedSize(280, 300)
+        self.setFixedSize(280, 408)
         self.move_to_anchor(x, y)
         self.web = QWebEngineView(self)
-        self.web.setGeometry(34, 58, 212, 158)
+        self.web.setGeometry(20, 52, 240, 252)
         self.web.setContextMenuPolicy(Qt.NoContextMenu)
         self.web.setStyleSheet('background: #fff7fa; border: none;')
         self.web.page().setBackgroundColor(QColor(255, 247, 250))
-        self.web.setHtml(self._html(self.value))
+        self.web.setHtml(self._html(self.value), QUrl.fromLocalFile(str(config.RES_DIR / 'items' / 'easter' / '3d' / 'dice.html')))
         self.web.show()
         self.web.raise_()
         self.button = QPushButton('重新投掷', self)
-        self.button.setGeometry(86, 252, 108, 32)
+        self.button.setGeometry(86, 334, 108, 32)
         self.button.setCursor(Qt.PointingHandCursor)
         self.button.setStyleSheet('QPushButton{border:none;border-radius:15px;background:#bd5f86;color:white;font-weight:700;} QPushButton:hover{background:#a84f75;}')
         self.button.clicked.connect(self.roll)
@@ -494,69 +455,111 @@ class DicePopup(EasterGamePopup):
 
     def roll(self):
         self.value = random.randint(1, 6)
-        self.final_transform = self._final_transform()
         self.started_at = time.monotonic()
         self.played_sounds.discard('dice_land')
         self.played_sounds.discard('dice_start')
-        self.web.setHtml(self._html(self.value))
+        self.web.setHtml(self._html(self.value), QUrl.fromLocalFile(str(config.RES_DIR / 'items' / 'easter' / '3d' / 'dice.html')))
         self._play_once('dice_start', 'dice3d')
         self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
         self._draw_card(painter, QColor(255, 247, 250, 248), QColor(238, 180, 202, 230))
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(105, 55, 82, 34))
-        painter.drawEllipse(QRectF(88, 198, 104, 14))
-        elapsed = self._elapsed()
-        if elapsed > 1.18:
+        if self._elapsed() > 1.8:
             self._play_once('dice_land', 'drop')
             painter.setFont(QFont('Microsoft YaHei UI', 12, QFont.Bold))
             painter.setPen(QColor(116, 56, 82))
-            painter.drawText(0, 220, self.width(), 24, Qt.AlignCenter, f'结果：{self.value} 点')
-
-    def _final_transform(self):
-        # 落地后保持稳定俯视侧角，能看到顶部结果面。
-        return 'rotateX(-18deg) rotateY(-26deg) rotateZ(0deg)'
-
-    def _pips(self, value):
-        return {
-            1: '<span class="p c"></span>',
-            2: '<span class="p tl"></span><span class="p br"></span>',
-            3: '<span class="p tl"></span><span class="p c"></span><span class="p br"></span>',
-            4: '<span class="p tl"></span><span class="p tr"></span><span class="p bl"></span><span class="p br"></span>',
-            5: '<span class="p tl"></span><span class="p tr"></span><span class="p c"></span><span class="p bl"></span><span class="p br"></span>',
-            6: '<span class="p tl"></span><span class="p tr"></span><span class="p ml"></span><span class="p mr"></span><span class="p bl"></span><span class="p br"></span>',
-        }[value]
+            painter.drawText(0, 304, self.width(), 24, Qt.AlignCenter, f'结果：{self.value} 点')
 
     def _html(self, value):
-        final = self.final_transform
-        top_pips = self._pips(value)
-        return f'''
-<!doctype html><html><head><meta charset="utf-8"><style>
-html,body{{margin:0;width:100%;height:100%;background:#fff7fa;overflow:hidden;}}
-.scene{{width:212px;height:158px;display:flex;align-items:flex-end;justify-content:center;perspective:660px;padding-bottom:18px;box-sizing:border-box;}}
-.dice{{width:78px;height:78px;position:relative;transform-style:preserve-3d;animation:drop 1.18s linear forwards;}}
-.face{{position:absolute;width:78px;height:78px;border-radius:14px;background:linear-gradient(135deg,#fff 0%,#ffe7f0 60%,#d58aac 100%);border:2px solid #7d3759;box-sizing:border-box;box-shadow:inset 0 2px 7px rgba(255,255,255,.85),0 8px 18px rgba(92,43,69,.18);backface-visibility:visible;}}
-.front{{transform:translateZ(39px)}} .back{{transform:rotateY(180deg) translateZ(39px)}} .right{{transform:rotateY(90deg) translateZ(39px)}} .left{{transform:rotateY(-90deg) translateZ(39px)}} .top{{transform:rotateX(90deg) translateZ(39px)}} .bottom{{transform:rotateX(-90deg) translateZ(39px)}}
-.p{{position:absolute;width:11px;height:11px;border-radius:50%;background:#bc4870;box-shadow:inset 0 1px 2px rgba(255,255,255,.35)}}
-.c{{left:33px;top:33px}} .tl{{left:17px;top:17px}} .tr{{right:17px;top:17px}} .ml{{left:17px;top:33px}} .mr{{right:17px;top:33px}} .bl{{left:17px;bottom:17px}} .br{{right:17px;bottom:17px}}
-@keyframes drop{{
-0%{{transform:translateY(-120px) rotateX(-260deg) rotateY(130deg) rotateZ(42deg);animation-timing-function:cubic-bezier(.24,.02,.78,.46)}}
-45%{{transform:translateY(0) rotateX(210deg) rotateY(255deg) rotateZ(112deg) scaleY(.86);animation-timing-function:cubic-bezier(.18,.78,.25,1)}}
-63%{{transform:translateY(-34px) rotateX(285deg) rotateY(310deg) rotateZ(145deg) scaleY(1.02);animation-timing-function:cubic-bezier(.35,.02,.82,.42)}}
-78%{{transform:translateY(0) rotateX(345deg) rotateY(365deg) rotateZ(170deg) scaleY(.92);animation-timing-function:cubic-bezier(.18,.75,.28,1)}}
-90%{{transform:translateY(-10px) rotateX(342deg) rotateY(334deg) rotateZ(180deg)}}
-100%{{transform:translateY(0) {final}}}
+        import base64
+        three_path = (config.RES_DIR / 'items' / 'easter' / '3d' / 'three.min.js').as_posix()
+        dice_dir = config.RES_DIR / 'items' / 'easter' / 'dice'
+
+        # 读取6张PNG贴图并转Base64
+        face_data = {}
+        for i in range(1, 7):
+            png_path = dice_dir / f'face_{i}.png'
+            with open(png_path, 'rb') as f:
+                b64 = base64.b64encode(f.read()).decode('ascii')
+                face_data[i] = f'data:image/png;base64,{b64}'
+
+        side_values = [v for v in (1, 2, 3, 4, 5, 6) if v != value]
+        random.shuffle(side_values)
+        right, left, bottom, front, back = side_values[:5]
+        ry = random.randint(0, 359)
+        return f"""<!doctype html><html><head><meta charset='utf-8'><style>
+html,body{{margin:0;width:100%;height:100%;overflow:hidden;background:#fff7fa;}}
+#stage{{width:240px;height:252px;}}
+</style></head><body><div id='stage'></div><script src='file:///{three_path}'></script><script>
+const W=240,H=252,OA=W/H,OH=5.2;
+const scene=new THREE.Scene();
+const camera=new THREE.OrthographicCamera(-OH*OA/2,OH*OA/2,OH/2,-OH/2,0.1,100);
+camera.position.set(2.6,3.2,5.2); camera.lookAt(0,0.15,0);
+const renderer=new THREE.WebGLRenderer({{alpha:true,antialias:true}});
+renderer.setSize(W,H); renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+document.getElementById('stage').appendChild(renderer.domElement);
+scene.add(new THREE.AmbientLight(0xfff5f8,1.5));
+const dL=new THREE.DirectionalLight(0xffffff,1.8); dL.position.set(-1.5,5,4); scene.add(dL);
+const fL=new THREE.DirectionalLight(0xffe0f0,0.6); fL.position.set(4,0.5,-1); scene.add(fL);
+const shadowMesh=new THREE.Mesh(
+  new THREE.CircleGeometry(0.9,48),
+  new THREE.MeshBasicMaterial({{color:0x6b3a55,transparent:true,opacity:0.0,depthWrite:false}})
+);
+shadowMesh.rotation.x=-Math.PI/2; shadowMesh.position.set(0,-1.35,0);
+shadowMesh.scale.set(1.2,0.8,1); scene.add(shadowMesh);
+const faceDataURLs={{{','.join(f'{i}:"{face_data[i]}"' for i in range(1,7))}}};
+const loader=new THREE.TextureLoader();
+function faceTex(n){{
+  const t=loader.load(faceDataURLs[n],()=>renderer.render(scene,camera));
+  t.colorSpace=THREE.SRGBColorSpace;
+  t.anisotropy=renderer.capabilities.getMaxAnisotropy();
+  return t;
 }}
-</style></head><body><div class="scene"><div class="dice">
-<div class="face front"><span class="p tl"></span><span class="p tr"></span><span class="p bl"></span><span class="p br"></span></div>
-<div class="face right"><span class="p tl"></span><span class="p br"></span></div>
-<div class="face top">{top_pips}</div>
-<div class="face bottom"><span class="p tl"></span><span class="p tr"></span><span class="p bl"></span><span class="p br"></span></div>
-<div class="face left"><span class="p tl"></span><span class="p tr"></span><span class="p c"></span><span class="p bl"></span><span class="p br"></span></div>
-<div class="face back"><span class="p tl"></span><span class="p tr"></span><span class="p ml"></span><span class="p mr"></span><span class="p bl"></span><span class="p br"></span></div>
-</div></div></body></html>'''
+const mats=[{right},{left},{value},{bottom},{front},{back}].map(n=>
+  new THREE.MeshStandardMaterial({{map:faceTex(n),roughness:0.12,metalness:0.0}})
+);
+const cube=new THREE.Mesh(new THREE.BoxGeometry(1.8,1.8,1.8),mats);
+scene.add(cube);
+const finalRad={{x:0,y:{ry}*Math.PI/180,z:0}};
+const GROUND=-1.15,DICE_R=0.9,THROW_H=3.8;
+const DUR_FLY=900,DUR_B1=320,DUR_B2=220,DUR_SETTLE=200;
+const TOTAL=DUR_FLY+DUR_B1+DUR_B2+DUR_SETTLE;
+const spinX0=(Math.random()*3+2)*Math.PI*2;
+const spinY0=(Math.random()*2+1.5)*Math.PI*2;
+const spinZ0=(Math.random()*1.5+0.5)*Math.PI*2;
+const T0=performance.now();
+function tick(now){{
+  const el=now-T0;
+  let cy,rx,ry2,rz,sOp,sS;
+  if(el<DUR_FLY){{
+    const p=el/DUR_FLY,fp=p*p,sd=1-p*0.3;
+    cy=GROUND+DICE_R+THROW_H*(1-fp);
+    rx=finalRad.x+spinX0*sd*(1-p); ry2=finalRad.y+spinY0*sd*(1-p); rz=spinZ0*(1-p);
+    const hr=(1-fp); sOp=0.04+(1-hr)*0.20; sS=0.4+(1-hr)*0.7;
+  }} else if(el<DUR_FLY+DUR_B1){{
+    const p=(el-DUR_FLY)/DUR_B1,sf=Math.pow(1-p,2);
+    cy=GROUND+DICE_R+Math.sin(p*Math.PI)*0.55;
+    rx=finalRad.x+spinX0*sf*0.12; ry2=finalRad.y+spinY0*sf*0.10; rz=spinZ0*sf*0.08;
+    sOp=0.18-Math.sin(p*Math.PI)*0.06; sS=1.0-Math.sin(p*Math.PI)*0.18;
+  }} else if(el<DUR_FLY+DUR_B1+DUR_B2){{
+    const p=(el-DUR_FLY-DUR_B1)/DUR_B2;
+    cy=GROUND+DICE_R+Math.sin(p*Math.PI)*0.18;
+    rx=finalRad.x; ry2=finalRad.y; rz=0;
+    sOp=0.20-Math.sin(p*Math.PI)*0.03; sS=1.0-Math.sin(p*Math.PI)*0.06;
+  }} else {{
+    const p=Math.min(1,(el-DUR_FLY-DUR_B1-DUR_B2)/DUR_SETTLE);
+    const j=Math.sin(p*Math.PI*3)*(1-p)*0.018;
+    cy=GROUND+DICE_R; rx=finalRad.x+j; ry2=finalRad.y; rz=j*0.5;
+    sOp=0.22; sS=1.0;
+  }}
+  cube.position.y=cy; cube.rotation.x=rx; cube.rotation.y=ry2; cube.rotation.z=rz;
+  shadowMesh.material.opacity=Math.min(sOp,0.28);
+  const s=Math.max(0.3,sS); shadowMesh.scale.set(s,s,s);
+  renderer.render(scene,camera); if(el<TOTAL) requestAnimationFrame(tick);
+}}
+requestAnimationFrame(tick);
+</script></body></html>"""
 
 
 class CoinPopup(EasterGamePopup):
@@ -564,146 +567,177 @@ class CoinPopup(EasterGamePopup):
 
     def __init__(self, x, y, parent=None):
         self.result = random.choice(['正面', '反面'])
-        self.rest_angle = random.choice([-16, -11, -7, 6, 12, 17])
         super().__init__(x, y, parent)
+        self.setFixedSize(280, 408)
+        self.move_to_anchor(x, y)
+        self.web = QWebEngineView(self)
+        self.web.setGeometry(20, 52, 240, 252)
+        self.web.setContextMenuPolicy(Qt.NoContextMenu)
+        self.web.setStyleSheet('background: #fff7fa; border: none;')
+        self.web.page().setBackgroundColor(QColor(255, 247, 250))
+        self.web.setHtml(self._html(self.result), QUrl.fromLocalFile(str(config.RES_DIR / 'items' / 'easter' / '3d' / 'dice.html')))
+        self.web.show()
+        self.web.raise_()
+        self.button = QPushButton('重新抛掷', self)
+        self.button.setGeometry(86, 334, 108, 32)
+        self.button.setCursor(Qt.PointingHandCursor)
+        self.button.setStyleSheet('QPushButton{border:none;border-radius:15px;background:#bd5f86;color:white;font-weight:700;} QPushButton:hover{background:#a84f75;}')
+        self.button.clicked.connect(self.toss)
+        self.button.show()
+        self._play_once('coin_start', 'coin')
+
+    def toss(self):
+        self.result = random.choice(['正面', '反面'])
+        self.started_at = time.monotonic()
+        self.played_sounds.discard('coin_land')
+        self.played_sounds.discard('coin_start')
+        self.web.setHtml(self._html(self.result), QUrl.fromLocalFile(str(config.RES_DIR / 'items' / 'easter' / '3d' / 'dice.html')))
+        self._play_once('coin_start', 'coin')
+        self.update()
+
+    def _html(self, result):
+        three_path = (config.RES_DIR / 'items' / 'easter' / '3d' / 'three.min.js').as_posix()
+        front_path = (config.RES_DIR / 'items' / 'easter' / 'coin_front.png').as_posix()
+        back_path  = (config.RES_DIR / 'items' / 'easter' / 'coin_back.png').as_posix()
+        final_x = 0 if result == '正面' else 180
+        final_y = random.randint(0, 359)
+        return f"""<!doctype html><html><head><meta charset='utf-8'><style>
+html,body{{margin:0;width:100%;height:100%;overflow:hidden;background:#fff7fa;}}
+#stage{{width:240px;height:252px;}}
+</style></head><body><div id='stage'></div>
+<script src='file:///{three_path}'></script><script>
+const W=240,H=252,OA=W/H,OH=5.8;
+const scene=new THREE.Scene();
+const camera=new THREE.OrthographicCamera(-OH*OA/2,OH*OA/2,OH/2,-OH/2,0.1,100);
+camera.position.set(1.5,3.8,5.5); camera.lookAt(0,0.25,0);
+const renderer=new THREE.WebGLRenderer({{alpha:true,antialias:true}});
+renderer.setSize(W,H); renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+document.getElementById('stage').appendChild(renderer.domElement);
+scene.add(new THREE.AmbientLight(0xffffff,2.6));
+const dL=new THREE.DirectionalLight(0xffffff,2.2); dL.position.set(-1.5,5,4); scene.add(dL);
+const fL=new THREE.DirectionalLight(0xfff0f8,0.8); fL.position.set(4,1,-2); scene.add(fL);
+// 柔和点光源做辉光（不遮挡贴图）
+const pL=new THREE.PointLight(0xffb8e0,0.0,8); pL.position.set(0,1,2); scene.add(pL);
+const shadowMesh=new THREE.Mesh(
+  new THREE.CircleGeometry(1.5,64),
+  new THREE.MeshBasicMaterial({{color:0x6b3a55,transparent:true,opacity:0.0,depthWrite:false}})
+);
+shadowMesh.rotation.x=-Math.PI/2; shadowMesh.position.set(0,-0.36,0); scene.add(shadowMesh);
+function makeFaceTex(isFront){{
+  const loader=new THREE.TextureLoader();
+  const url=isFront?'file:///{front_path}':'file:///{back_path}';
+  const t=loader.load(url,()=>{{renderer.render(scene,camera);}});
+  t.colorSpace=THREE.SRGBColorSpace;
+  t.anisotropy=renderer.capabilities.getMaxAnisotropy();
+  return t;
+}}
+function makeEdgeTex(){{
+  const c=document.createElement('canvas'); c.width=256; c.height=32;
+  const g=c.getContext('2d');
+  const eg=g.createLinearGradient(0,0,0,32);
+  eg.addColorStop(0,'#f0c8b0'); eg.addColorStop(0.25,'#d4907a'); eg.addColorStop(0.5,'#c07860'); eg.addColorStop(0.75,'#d4907a'); eg.addColorStop(1,'#f0c8b0');
+  g.fillStyle=eg; g.fillRect(0,0,256,32);
+  g.strokeStyle='rgba(255,220,200,0.40)'; g.lineWidth=1;
+  for(let x=0;x<256;x+=4){{ g.beginPath(); g.moveTo(x,0); g.lineTo(x,32); g.stroke(); }}
+  const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; return t;
+}}
+const coinGeo=new THREE.CylinderGeometry(1.32,1.32,0.26,96);
+const coinMats=[
+  new THREE.MeshStandardMaterial({{map:makeEdgeTex(),roughness:0.15,metalness:0.75}}),
+  new THREE.MeshStandardMaterial({{map:makeFaceTex(true),roughness:0.10,metalness:0.0}}),
+  new THREE.MeshStandardMaterial({{map:makeFaceTex(false),roughness:0.10,metalness:0.0}}),
+];
+const coin=new THREE.Mesh(coinGeo,coinMats);
+scene.add(coin);
+const finalRad={{x:{final_x}*Math.PI/180,y:{final_y}*Math.PI/180,z:0}};
+const GROUND=-0.35,THROW_H=3.8;
+const DUR_FLY=900,DUR_B1=300,DUR_B2=200,DUR_SETTLE=180;
+const TOTAL=DUR_FLY+DUR_B1+DUR_B2+DUR_SETTLE;
+const spinX0=(Math.random()*3+2.5)*Math.PI*2;
+const spinY0=(Math.random()*0.8+0.5)*Math.PI*2;
+const T0=performance.now();
+function tick(now){{
+  const el=now-T0;
+  let worldY,rx,ry2,rz=0,sOp,sS,glowI;
+  if(el<DUR_FLY){{
+    const p=el/DUR_FLY,fp=p*p,h=THROW_H*(1-fp);
+    worldY=GROUND+h;
+    rx=finalRad.x+spinX0*(1-p); ry2=finalRad.y+spinY0*(1-p);
+    sOp=0.04+(1-h/THROW_H)*0.22; sS=0.3+(1-h/THROW_H)*0.75;
+    glowI=0.0;
+  }} else if(el<DUR_FLY+DUR_B1){{
+    const p=(el-DUR_FLY)/DUR_B1,f=Math.pow(1-p,2);
+    worldY=GROUND+Math.sin(p*Math.PI)*0.45;
+    rx=finalRad.x+spinX0*f*0.08; ry2=finalRad.y+spinY0*f*0.06;
+    sOp=0.22-Math.sin(p*Math.PI)*0.06; sS=1.0-Math.sin(p*Math.PI)*0.16;
+    glowI=p*1.2;
+  }} else if(el<DUR_FLY+DUR_B1+DUR_B2){{
+    const p=(el-DUR_FLY-DUR_B1)/DUR_B2;
+    worldY=GROUND+Math.sin(p*Math.PI)*0.14;
+    rx=finalRad.x; ry2=finalRad.y;
+    sOp=0.22; sS=1.0-Math.sin(p*Math.PI)*0.05;
+    glowI=1.2+p*0.6;
+  }} else {{
+    const p=Math.min(1,(el-DUR_FLY-DUR_B1-DUR_B2)/DUR_SETTLE);
+    const j=Math.sin(p*Math.PI*4)*(1-p)*0.012;
+    worldY=GROUND; rx=finalRad.x+j; ry2=finalRad.y; rz=j*0.3;
+    sOp=0.24; sS=1.0;
+    glowI=1.4+Math.sin((el-TOTAL)*0.004)*0.4;
+  }}
+  coin.position.y=worldY; coin.rotation.x=rx; coin.rotation.y=ry2; coin.rotation.z=rz;
+  pL.intensity=glowI; pL.position.set(0,worldY+0.5,1.8);
+  shadowMesh.material.opacity=Math.min(sOp,0.30);
+  const s=Math.max(0.3,sS); shadowMesh.scale.set(s,s,s);
+  renderer.render(scene,camera);
+  requestAnimationFrame(tick);
+}}
+requestAnimationFrame(tick);
+</script></body></html>"""
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        self._draw_card(painter, QColor(255, 252, 240, 248), QColor(234, 203, 121, 230))
-        elapsed = self._elapsed()
-        self._play_once('coin_start', 'coin')
-        if elapsed > 1.05:
+        self._draw_card(painter, QColor(255, 247, 250, 248), QColor(238, 180, 202, 230))
+        if self._elapsed() > 1.6:
             self._play_once('coin_land', 'drop')
-        if elapsed < 1.05:
-            stage = 'air'
-            p = elapsed / 1.05
-            x = self.width() / 2 + math.sin(p * math.pi) * 12
-            y = 182 - math.sin(p * math.pi) * 96
-            edge = abs(math.cos(elapsed * 22))
-            angle = elapsed * 420
-            face = '正' if int(elapsed * 7) % 2 == 0 else '反'
-        elif elapsed < 2.25:
-            stage = 'edge'
-            t = elapsed - 1.05
-            p = min(1.0, t / 1.2)
-            x = self.width() / 2 + math.sin(t * 12) * (1 - p) * 10
-            y = 184 - abs(math.sin(t * 10)) * (1 - p) * 22
-            edge = 0.10 + 0.22 * (1 - p) + 0.08 * abs(math.sin(t * 18))
-            angle = self.rest_angle * p + t * 900 * (1 - p) + self._spring(t, 4.0, 16.0) * 12
-            face = self.result[0]
-        elif elapsed < 3.05:
-            stage = 'settle'
-            t = elapsed - 2.25
-            p = self._ease_out(t / 0.8)
-            x = self.width() / 2 + math.sin(t * 10) * (1 - p) * 3
-            y = 184 - abs(math.sin(t * 9)) * (1 - p) * 6
-            edge = 0.32 + 0.68 * p
-            angle = self.rest_angle + self._spring(t, 4.2, 14.0) * 10 * (1 - p)
-            face = self.result[0]
-        else:
-            stage = 'flat'
-            t = elapsed - 3.05
-            x = self.width() / 2
-            y = 184
-            edge = 1.0
-            angle = self.rest_angle + self._spring(t, 5.0, 18.0) * 3
-            face = self.result[0]
-
-        shadow_w = 60 + edge * 62
-        shadow_alpha = 26 + int(edge * 24)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(110, 80, 26, shadow_alpha))
-        painter.drawEllipse(QRectF(self.width() / 2 - shadow_w / 2, 204, shadow_w, 15))
-
-        painter.save()
-        painter.translate(x, y)
-        painter.rotate(angle)
-        if stage == 'edge':
-            painter.rotate(90)
-        self._draw_coin(painter, edge, face)
-        painter.restore()
-
-        if stage != 'flat':
-            painter.setFont(QFont('Microsoft YaHei UI', 10, QFont.Bold))
-            painter.setPen(QColor(137, 95, 26, 190))
-            painter.drawText(0, 218, self.width(), 24, Qt.AlignCenter, '硬币翻滚中...')
-        else:
             painter.setFont(QFont('Microsoft YaHei UI', 12, QFont.Bold))
-            painter.setPen(QColor(120, 82, 24))
-            painter.drawText(0, 218, self.width(), 28, Qt.AlignCenter, f'结果：{self.result}')
-
-    def _draw_coin(self, painter, face_scale, face):
-        sx = max(0.08, min(1.0, face_scale))
-        for offset in range(10, 0, -1):
-            painter.save()
-            painter.translate(offset * (1 - sx) * 0.9, 0)
-            painter.scale(sx, 1.0)
-            painter.setBrush(QColor(129, 83, 28, 210))
-            painter.setPen(Qt.NoPen)
-            painter.drawEllipse(QPoint(0, 0), 56, 56)
-            painter.restore()
-
-        painter.save()
-        painter.scale(sx, 1.0)
-        outer = QRadialGradient(-18, -22, 82)
-        outer.setColorAt(0, QColor(255, 248, 190))
-        outer.setColorAt(0.36, QColor(242, 190, 72))
-        outer.setColorAt(0.72, QColor(177, 111, 34))
-        outer.setColorAt(1, QColor(93, 58, 22))
-        painter.setPen(QPen(QColor(116, 76, 28), 3))
-        painter.setBrush(outer)
-        painter.drawEllipse(QPoint(0, 0), 56, 56)
-
-        inner = QRadialGradient(-14, -18, 58)
-        inner.setColorAt(0, QColor(255, 249, 205))
-        inner.setColorAt(0.52, QColor(233, 174, 57))
-        inner.setColorAt(1, QColor(148, 88, 27))
-        painter.setPen(QPen(QColor(255, 235, 148, 170), 2))
-        painter.setBrush(inner)
-        painter.drawEllipse(QPoint(0, 0), 45, 45)
-
-        painter.setPen(QPen(QColor(103, 68, 26, 150), 1))
-        for i in range(36):
-            a = math.radians(i * 10)
-            painter.drawLine(int(math.cos(a) * 47), int(math.sin(a) * 47), int(math.cos(a) * 54), int(math.sin(a) * 54))
-
-        painter.setPen(QPen(QColor(255, 242, 174, 155), 1.5))
-        painter.drawArc(-34, -38, 58, 48, 35 * 16, 105 * 16)
-        painter.setPen(QPen(QColor(96, 61, 24, 130), 1.5))
-        painter.drawArc(-30, -26, 66, 58, 210 * 16, 105 * 16)
-
-        if face == '正':
-            painter.setPen(QPen(QColor(119, 73, 24), 2))
-            painter.setBrush(QColor(215, 159, 54, 120))
-            painter.drawEllipse(QPoint(0, -5), 16, 20)
-            painter.setPen(QPen(QColor(255, 230, 150, 170), 2))
-            painter.drawLine(-8, -13, 6, 4)
-            painter.setPen(QColor(105, 66, 25))
-            painter.setFont(QFont('Georgia', 15, QFont.Bold))
-            painter.drawText(-28, 18, 56, 20, Qt.AlignCenter, 'HEAD')
-        else:
-            painter.setPen(QPen(QColor(113, 70, 25), 2))
-            painter.setBrush(Qt.NoBrush)
-            painter.drawLine(-22, 5, 22, 5)
-            painter.drawLine(-16, 5, -16, -18)
-            painter.drawLine(0, 5, 0, -24)
-            painter.drawLine(16, 5, 16, -18)
-            painter.drawArc(-25, -32, 50, 24, 0, 180 * 16)
-            painter.setPen(QColor(105, 66, 25))
-            painter.setFont(QFont('Georgia', 15, QFont.Bold))
-            painter.drawText(-28, 18, 56, 20, Qt.AlignCenter, 'TAIL')
-        painter.restore()
+            painter.setPen(QColor(116, 56, 82))
+            painter.drawText(0, 304, self.width(), 24, Qt.AlignCenter, f'结果：{self.result}')
 
 
 class GachaPopup(EasterGamePopup):
     title = '桌宠扭蛋机'
     PRIZES = [
         ('🌸 今日一句', '今天会遇见一件小好事。'),
+        ('🌸 今日一句', '代码一次跑通的概率今天翻倍。'),
+        ('🌸 今日一句', '今天写的注释会被未来的你感谢。'),
         ('🍀 今日好运', '幸运值 87%，适合提交代码。'),
+        ('🍀 今日好运', '今天的 Bug 都是表面问题，好修。'),
+        ('🍀 今日好运', '遇到的报错都能在前三条搜索结果里找到答案。'),
         ('🚀 今日 BUFF', '写代码效率 +20%，但只持续到下班。'),
+        ('🚀 今日 BUFF', '思路清晰 +50%，逻辑顺畅加成。'),
+        ('🚀 今日 BUFF', '专注力 MAX，摸鱼欲望 -80%。'),
+        ('🚀 今日 BUFF', '代码补全准确率 +30%，少打好多字。'),
         ('😴 今日 Debuff', '容易犯困，记得补水和休息。'),
+        ('😴 今日 Debuff', '容易手滑打错变量名，小心拼写。'),
+        ('😴 今日 Debuff', '今天可能遇到玄学问题，保持耐心。'),
         ('✨ 随机表情', '( •̀ ω •́ )✧'),
+        ('✨ 随机表情', '(｡•̀ᴗ-)✧'),
+        ('✨ 随机表情', '(๑•̀ㅂ•́)و✧'),
+        ('✨ 随机表情', 'ヾ(≧▽≦*)o'),
+        ('✨ 随机表情', '(๑˃ᴗ˂)ﻭ'),
         ('🎯 小任务', '把那个一直拖着的小功能做完。'),
+        ('🎯 小任务', '整理一下待办列表，删掉过期的。'),
+        ('🎯 小任务', '给最近的提交写个像样的 commit message。'),
+        ('🎯 小任务', '把上周说要优化的地方优化一下。'),
+        ('💡 灵感降临', '突然想到一个优雅的实现方案。'),
+        ('💡 灵感降临', '今天适合重构，思路会很清晰。'),
+        ('🎁 随机奖励', '获得一次免费摸鱼机会（限今日）。'),
+        ('🎁 随机奖励', '今天写的代码可以少测一轮（不推荐）。'),
+        ('🔧 开发者贴士', '记得定期提交，别攒到最后。'),
+        ('🔧 开发者贴士', '先写测试再写代码，会更快。'),
+        ('🔧 开发者贴士', '卡住超过 15 分钟就该求助了。'),
+        ('📦 神秘物品', '获得了一个万能的 console.log。'),
+        ('📦 神秘物品', '获得了传说中的「一次跑通」护身符。'),
     ]
 
     def __init__(self, x, y, parent=None):
@@ -741,11 +775,11 @@ class GachaPopup(EasterGamePopup):
         self._draw_card(painter, QColor(255, 247, 252, 250), QColor(238, 177, 210, 230))
         elapsed = self._elapsed() if self.started else 0.0
         if self.started:
-            self._play_once('gacha_turn', 'tick')
+            self._play_once("gacha_turn", "tick")
             if elapsed > 1.05:
-                self._play_once('gacha_drop', 'drop')
+                self._play_once("gacha_drop", "drop")
             if self.opened:
-                self._play_once('gacha_open', 'open')
+                self._play_once("gacha_open", "open")
         turn_p = min(1.0, elapsed / 1.1) if self.started else 0.0
         drop_p = self._ease_out((elapsed - 1.05) / 0.85) if self.started else 0.0
         shake = math.sin(elapsed * 38) * 3 * (1 - turn_p) if self.started and elapsed < 1.1 else 0
@@ -754,7 +788,6 @@ class GachaPopup(EasterGamePopup):
         painter.setBrush(QColor(95, 55, 88, 35))
         painter.drawEllipse(74, 284, 152, 18)
 
-        # machine body
         body_grad = QLinearGradient(74, 76, 226, 266)
         body_grad.setColorAt(0, QColor(255, 184, 215))
         body_grad.setColorAt(0.55, QColor(255, 126, 181))
@@ -775,7 +808,6 @@ class GachaPopup(EasterGamePopup):
         painter.setBrush(QColor(255, 249, 253))
         painter.drawRoundedRect(112 + shake, 210, 76, 16, 8, 8)
 
-        # balls inside
         colors = [QColor(255, 211, 91), QColor(117, 205, 255), QColor(155, 229, 131), QColor(195, 143, 255), QColor(255, 142, 142)]
         for i, color in enumerate(colors):
             bx = 112 + (i % 3) * 32 + math.sin(elapsed * 5 + i) * 3 + shake
@@ -784,7 +816,6 @@ class GachaPopup(EasterGamePopup):
             painter.setPen(QPen(QColor(255, 255, 255, 150), 1))
             painter.drawEllipse(QPoint(int(bx), int(by)), 15, 15)
 
-        # knob
         painter.save()
         painter.translate(150 + shake, 197)
         painter.rotate(360 * self._ease_out(turn_p))
@@ -795,7 +826,6 @@ class GachaPopup(EasterGamePopup):
         painter.drawLine(-13, 0, 13, 0)
         painter.restore()
 
-        # capsule
         cap_x = 150
         cap_y = 182 + 88 * drop_p
         if drop_p > 0:
@@ -835,7 +865,6 @@ class GachaPopup(EasterGamePopup):
         painter.setFont(QFont('Microsoft YaHei UI', 9))
         painter.setPen(QColor(91, 57, 78))
         painter.drawText(52, 238, 196, 30, Qt.AlignCenter | Qt.TextWordWrap, text)
-
 
 class GameNoticePopup(EasterGamePopup):
     def __init__(self, x, y, title, text, parent=None):
