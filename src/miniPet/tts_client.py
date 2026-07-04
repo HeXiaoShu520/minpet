@@ -148,29 +148,44 @@ def _build_ws_packet(payload):
     return bytes([0x11, 0x10, 0x10, 0x00]) + struct.pack('>I', len(body)) + body
 
 
+def _read_u32(data, offset, label):
+    if offset + 4 > len(data):
+        raise TtsPlaybackError('TTS WS response missing %s' % label)
+    return struct.unpack('>I', data[offset:offset + 4])[0]
+
+
 def _parse_ws_packet(data):
-    if len(data) < 8:
+    if len(data) < 4:
         raise TtsPlaybackError('TTS WS response too short')
     message_type = data[1] >> 4
     flags = data[1] & 0x0F
     serialization = data[2] >> 4
     offset = (data[0] & 0x0F) * 4
+    if offset > len(data):
+        raise TtsPlaybackError('TTS WS invalid header size')
     if message_type == 0xF:
-        code = struct.unpack('>I', data[offset:offset + 4])[0]
+        code = _read_u32(data, offset, 'error code')
         offset += 4
-        size = struct.unpack('>I', data[offset:offset + 4])[0]
+        size = _read_u32(data, offset, 'error payload size')
         offset += 4
-        raise TtsPlaybackError('TTS WS %s: %s' % (code, data[offset:offset + size].decode('utf-8', errors='replace')))
+        payload = data[offset:offset + size]
+        raise TtsPlaybackError('TTS WS %s: %s' % (code, payload.decode('utf-8', errors='replace')))
     if flags in (0x1, 0x3):
+        if offset + 4 > len(data):
+            return 'json', {}, ''
         offset += 4
     session_id = ''
     if flags == 0x4:
+        if offset + 8 > len(data):
+            return 'json', {}, ''
         offset += 4
-        session_size = struct.unpack('>I', data[offset:offset + 4])[0]
+        session_size = _read_u32(data, offset, 'session id size')
         offset += 4
         session_id = data[offset:offset + session_size].decode('utf-8', errors='replace')
         offset += session_size
-    size = struct.unpack('>I', data[offset:offset + 4])[0]
+    if offset + 4 > len(data):
+        return 'json', {}, session_id
+    size = _read_u32(data, offset, 'payload size')
     offset += 4
     payload = data[offset:offset + size]
     if message_type == 0xB:

@@ -123,7 +123,7 @@ class RealtimeWindow(QWidget):
         self.shared_screen = None
         self._drag_pos = None
         self._closing = False
-        self.setWindowTitle('实时通话')
+        self.setWindowTitle('豆包通话')
         self.setWindowIcon(QIcon(str(config.avatar_path('pet'))))
         self.setFixedSize(322, 520)
         self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
@@ -436,7 +436,7 @@ class RealtimeWindow(QWidget):
 
     def _on_error(self, text):
         self._set_state('idle', '通话出错')
-        InfoBar.error('实时通话错误', text[:120], duration=5000, position=InfoBarPosition.BOTTOM, parent=self)
+        InfoBar.error('豆包通话错误', text[:120], duration=5000, position=InfoBarPosition.BOTTOM, parent=self)
 
     def _on_finished(self):
         if self.current_reply and self.append_message:

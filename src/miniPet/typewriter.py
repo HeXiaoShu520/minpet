@@ -37,14 +37,11 @@ class Typewriter:
         from PySide6.QtWidgets import QTextEdit
         return not isinstance(self._w, QTextEdit)
 
-    _TRAIL_PUNCT = '，。！？、…,.!?；;'
-
     def _set(self, text):
-        display = text.rstrip(self._TRAIL_PUNCT) if text and text[-1] in self._TRAIL_PUNCT else text
         if self._is_label():
-            self._w.setText(display)
+            self._w.setText(text)
         else:
-            self._w.setHtml('<p style="margin:0">%s</p>' % display.replace('\n', '<br>'))
+            self._w.setHtml('<p style="margin:0">%s</p>' % text.replace('\n', '<br>'))
 
     def _calc_interval(self):
         remaining = len(self._target) - self._shown

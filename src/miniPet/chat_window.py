@@ -134,12 +134,13 @@ class ChatBridge(QWebChannel):
 
 
 class ChatWindow(QWidget):
-    def __init__(self, pet_name='', parent=None, history=None, append_message=None, content_for_llm=None):
+    def __init__(self, pet_name='', parent=None, history=None, append_message=None, content_for_llm=None, system_prompt_builder=None):
         super().__init__(parent)
         self.pet_name = pet_name
         self.history = history if history is not None else []
         self.append_message = append_message
         self.content_for_llm = content_for_llm
+        self.system_prompt_builder = system_prompt_builder
         self.worker = None
         self.tts_worker = None
         self._stream_id = None
@@ -349,8 +350,10 @@ class ChatWindow(QWidget):
 
     def _build_messages(self):
         messages = []
-        system_parts = [config.llm_config.get('system_prompt', ''), config.llm_config.get('memory_prompt', '')]
-        system = '\n\n'.join(p.strip() for p in system_parts if p and p.strip())
+        system = self.system_prompt_builder() if self.system_prompt_builder else ''
+        if not system:
+            system_parts = [config.llm_config.get('system_prompt', ''), config.llm_config.get('memory_prompt', '')]
+            system = '\n\n'.join(p.strip() for p in system_parts if p and p.strip())
         if system:
             messages.append({'role': 'system', 'content': system})
         for msg in self.history[-20:]:

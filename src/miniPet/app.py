@@ -5,7 +5,7 @@ import sys
 from datetime import datetime, timedelta
 
 from PySide6.QtCore import QLocale, QTimer
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QFont, QGuiApplication
 from PySide6.QtWidgets import QApplication, QInputDialog
 from qfluentwidgets import FluentTranslator, setThemeColor
 
@@ -27,6 +27,7 @@ class MiniPetApp(QApplication):
         super().__init__(argv)
         self.setQuitOnLastWindowClosed(False)
         config.load()
+        self.setFont(QFont('Microsoft YaHei UI'))
         translator = FluentTranslator(QLocale(config.app_config.get('language_code', 'zh_CN')))
         self.installTranslator(translator)
         if config.app_config.get('theme_color'):
