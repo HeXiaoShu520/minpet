@@ -1,4 +1,6 @@
-# MINIPET 通用事件协议
+# MINIPET 通用事件协议（Legacy）
+
+本文是旧版简化事件协议，继续用于兼容 miniClaw、脚本和早期 OpenClaw adapter。新后端优先阅读 `minipet交互协议设计.md`，使用 V1 的 `session` / `user` / `surface` / `agent` 核心协议。
 
 MINIPET 不强绑定飞书。miniClaw、飞书、脚本或其他软件都可以作为外部事件源，通过 WebSocket 向 MINIPET 推送事件。
 
@@ -14,7 +16,7 @@ MINIPET 收到事件后只做三件事：
 2. 按优先级触发宠物动作
 3. 用户点击气泡按钮时，把动作回传给外部服务
 
-动作回传地址：
+动作回传优先走当前 WebSocket 连接，miniPet 会发送兼容事件 `interaction.action`，payload 中同时带有 V1 元信息 `v1_type: user.action`。当 WebSocket 不可用时，才回退到 HTTP：
 
 ```text
 POST http://localhost:18888/actions/execute

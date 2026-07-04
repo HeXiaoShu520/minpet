@@ -5,7 +5,44 @@ miniPet 是一个独立桌面 AI 宠物应用。它由 MINIPET 简化整合而�
 ## 参考
 基于呆啵宠物 DyberPet开发 https://github.com/ChaozhongLiu/DyberPet
 
+木鱼小组件参考 CyberZen（赛博木鱼）工程的桌面悬浮木鱼交互、功德飘字和木鱼资源组织思路：https://github.com/Litt1eQ/cyber-zen
+
+木鱼音效参考 Electronic Wooden Fish 工程：https://github.com/xiwang-online/Electronic-Wooden-Fish
+
+第三方资源和许可证说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
 > 当前目标：`miniPet/` 是独立应用目录。源码、资源、文档、依赖样例和启动入口都已收敛到这里；后续功能不要再依赖外层 MINIPET 结构。
+
+## OpenClaw 中转
+
+miniPet 可以通过简化中转脚本接入 OpenClaw HTTP Responses API。这个脚本复用了 `OpenClaw Gui_new` 的调用方式：`POST http://127.0.0.1:18789/v1/responses`。
+
+1. 启动 OpenClaw Gateway，并启用 Responses API：
+
+```bash
+openclaw config set gateway.http.endpoints.responses.enabled true
+openclaw gateway run
+```
+
+2. 启动 miniPet adapter：
+
+```bash
+python tools/minipet_adapter.py
+```
+
+3. 启动 miniPet。miniPet 默认连接 `ws://localhost:18888/ws/pet`，会连到 adapter。用户对宠物输入或拖拽投喂后，adapter 会转发给 OpenClaw，并把回复发回宠物显示。
+
+可选环境变量：
+
+```text
+OPENCLAW_API_URL=http://127.0.0.1:18789/v1/responses
+OPENCLAW_GATEWAY_TOKEN=<token>
+OPENCLAW_USER=minipet_adapter_user
+MINIPET_ADAPTER_HOST=127.0.0.1
+MINIPET_ADAPTER_PORT=18888
+```
+
+如果未设置 `OPENCLAW_GATEWAY_TOKEN`，adapter 会自动读取 `~/.openclaw/openclaw.json` 中的 `gateway.auth.token`。
 
 ## 当前功能
 
@@ -36,6 +73,7 @@ miniPet 是一个独立桌面 AI 宠物应用。它由 MINIPET 简化整合而�
 - 支持 OpenAI 兼容接口
 - 支持 Anthropic Claude 原生接口（含多模态图片）
 - 可通过 System Prompt 定义宠物性格
+- 支持自动总结：不保存完整聊天历史，只从最近对话中提取少量长期有用信息
 - 可选 TTS 自动播报回复
 - 支持粘贴或拖入图片，发送时一并传给大模型（Anthropic 走 base64 原生图片块，OpenAI 走 image_url）
 - 快速输入浮层支持粘贴图片，弹窗内显示缩略图预览
@@ -137,6 +175,16 @@ volc.speech.dialog
 wss://openspeech.bytedance.com/api/v3/tts/unidirectional/stream
 ```
 
+### 自动总结
+
+- 不保存完整聊天历史，只在当前运行中保留最近对话作为短期上下文
+- 自动总结是可选功能，可在“设置 → 角色 → 自动总结”里开关
+- 开启后，每隔几次用户发言，会从最近对话中总结少量长期有用信息
+- 总结重点保存到 `data/memory/memories.json`，后续会拼入大模型系统提示
+- 设置页“角色”可查看、编辑和删除总结重点
+- 清空当前对话只清掉短期上下文，不会删除已保存的总结重点
+- 详细设计见 [自动总结设计](记忆与历史设计.md)
+
 ### 通知与外部事件
 
 miniPet 可以作为独立桌宠运行，也可以可选连接外部事件源。
@@ -175,11 +223,11 @@ miniPet QApplication
 ├─ SettingsWindow
 │  ├─ BasicPage           基础设置
 │  ├─ LLMPage             大模型配置
-│  ├─ RolePage            角色与记忆
+│  ├─ RolePage            角色、自动总结和总结重点管理
 │  ├─ TTSPage             火山豆包 TTS
 │  ├─ RealtimePage        豆包端到端实时通话配置
 │  └─ RoleToolsPage       角色资源
-├─ ChatStore              本地聊天历史和图片持久化
+├─ MemoryStore            自动总结重点持久化和系统提示拼接
 ├─ NotificationCenter     气泡与智能通知
 └─ EventClient            外部事件 WebSocket 客户端
 ```
@@ -234,7 +282,7 @@ miniPet/data/minipet_settings.json
 
 ### 大模型配置
 
-大模型配置从环境变量或 `.env` 读取，并可在设置页保存。
+大模型配置从环境变量或 `.env` 读取，并可在设置页保存。自动总结是可选功能，可在“设置 → 角色 → 自动总结”里开关；开关和频率也随大模型配置保存。
 
 ```text
 LLM_PROVIDER=openai
@@ -244,6 +292,10 @@ LLM_MODEL=gpt-4o-mini
 LLM_MAX_TOKENS=1024
 LLM_SYSTEM_PROMPT=你是一只可爱的桌面宠物，性格活泼亲切，会用简短、口语化、带点撒娇的语气陪伴主人聊天。
 LLM_MEMORY_PROMPT=
+LLM_AUTO_MEMORY_ENABLED=true
+LLM_AUTO_MEMORY_EVERY_N_USER_TURNS=3
+LLM_AUTO_MEMORY_RECENT_MESSAGES=12
+LLM_AUTO_MEMORY_MAX_ITEMS_PER_PASS=3
 ```
 
 `LLM_PROVIDER` 可选：
@@ -307,6 +359,8 @@ REALTIME_SPEAKING_STYLE=语气活泼、亲切、口语化。
 - 调整通话窗口字幕：用户识别文本显示在状态行，AI 回复显示在下方区域
 - 调整实时通话设置页，固定 O2.0 模型并精简启用、模型和 Bot 名称配置项
 - 基础设置头像选择增加图片预览
+- 新增自动总结重点管理
+- 去掉默认历史记录逻辑，只保留当前运行短期上下文和自动总结重点
 - 更新桌宠快捷菜单、右键菜单、退出清理逻辑
 
 ## 目录职责
@@ -316,8 +370,9 @@ miniPet/
   run_miniPet.py       # 启动入口
   requirements.txt     # Python 依赖
   README.md            # 项目说明
-  MINIPET_INTERFACE_PROTOCOL.md
-  PET_EVENT_PROTOCOL.md
+  minipet交互协议设计.md   # V1 核心交互协议
+  minipet交互协议展望.md   # 后续能力展望
+  PET_EVENT_PROTOCOL.md    # 旧事件协议兼容说明
   src/
     miniPet/
       app.py                 # QApplication 组装入口
@@ -326,6 +381,7 @@ miniPet/
       pet_assets.py          # 角色资源、动作配置加载
       settings_window.py     # 系统设置窗口
       chat_window.py         # 文本 AI 对话窗口
+      memory_store.py        # 自动总结重点存储与 USER PROFILE / MEMORY / WORKING CONTEXT 拼接
       voice_chat_window.py   # 语音聊天窗口，本地 AI 模式
       realtime_window.py     # 实时通话窗口，豆包端到端模式
       llm_client.py          # OpenAI/Anthropic 聊天客户端，支持流式输出
@@ -338,7 +394,7 @@ miniPet/
       config.py              # 配置、路径和环境变量
   res/                  # 图标、角色、宠物、道具资源
   docs/                 # 资源制作文档
-  data/                 # 本地运行配置、聊天历史、音频预览缓存
+  data/                 # 本地运行配置、总结重点、音频预览缓存
 ```
 
 ## 资源目录
