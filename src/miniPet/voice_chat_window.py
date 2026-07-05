@@ -179,7 +179,7 @@ class VoiceChatWindow(QWidget):
         controls.setContentsMargins(18, 0, 18, 0)
         controls.setSpacing(34)
         controls.addStretch(1)
-        self.share_btn = self._tool_button(FIF.VIDEO.icon(), '共享屏幕', checkable=True)
+        self.share_btn = self._tool_button(QIcon(str(config.RES_DIR / 'icons' / 'system' / 'screen_share.svg')), '共享屏幕', checkable=True)
         self.mic_btn = VoiceMicButton(self)
         self.mic_btn.setChecked(True)
         self.mic_btn.setMuted(False)
@@ -289,10 +289,23 @@ class VoiceChatWindow(QWidget):
             self.share_btn.setChecked(True)
             self._set_state(self.call_state, '已共享屏幕')
             return
-        screen = self.screen() or QApplication.primaryScreen()
-        self.shared_screen = screen or screens[0]
+        # 多屏幕：显示选择菜单
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        for index, screen in enumerate(screens, 1):
+            geometry = screen.geometry()
+            name = screen.name() or f'屏幕 {index}'
+            text = f'{name}  {geometry.width()}x{geometry.height()}'
+            action = menu.addAction(text)
+            action.triggered.connect(lambda checked=False, s=screen: self._select_screen(s))
+        menu.exec(self.share_btn.mapToGlobal(self.share_btn.rect().bottomLeft()))
+
+    def _select_screen(self, screen):
+        self.shared_screen = screen
         self.share_btn.setChecked(True)
-        self._set_state(self.call_state, '已共享当前屏幕')
+        geometry = screen.geometry()
+        name = screen.name() or '屏幕'
+        self._set_state(self.call_state, f'已共享 {name}（{geometry.width()}x{geometry.height()}）')
 
     def _capture_shared_screen(self):
         if self.shared_screen is None:
@@ -403,12 +416,13 @@ class VoiceChatWindow(QWidget):
         if self.append_message:
             self.append_message('user', text, 'voice_chat')
         stop_tts()
-        self.chat_worker = ChatWorker(self._build_messages(text), parent=self)
+        screenshot = self._capture_shared_screen()
+        self.chat_worker = ChatWorker(self._build_messages(text, screenshot), parent=self)
         self.chat_worker.delta_ready.connect(self._on_llm_delta)
         self.chat_worker.result_ready.connect(self._on_llm_reply)
         self.chat_worker.start()
 
-    def _build_messages(self, text):
+    def _build_messages(self, text, screenshot=''):
         messages = []
         system_parts = [config.llm_config.get('system_prompt', ''), config.llm_config.get('memory_prompt', '')]
         system = '\n\n'.join(part.strip() for part in system_parts if part and part.strip())
@@ -419,7 +433,14 @@ class VoiceChatWindow(QWidget):
             if self.content_for_llm:
                 content = self.content_for_llm(content)
             messages.append({'role': message.get('role'), 'content': content})
-        messages.append({'role': 'user', 'content': text})
+        if screenshot:
+            user_content = [
+                {'type': 'image_url', 'image_url': {'url': screenshot}},
+                {'type': 'text', 'text': text},
+            ]
+        else:
+            user_content = text
+        messages.append({'role': 'user', 'content': user_content})
         return messages
 
     def _on_llm_delta(self, text):

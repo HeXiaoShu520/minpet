@@ -380,6 +380,9 @@ class VoiceOrbWidget(QWidget):
         self._orb_width = self.min_orb_width
         self._target_width = self.min_orb_width
         self.width_anim = None
+        # 涟漪状态（供父级 PetVoicePopup 绘制）
+        self._ripples = []        # 每项为 progress float 0.0→1.0
+        self._ripple_tick = 0
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setFixedSize(self.min_orb_width, self.orb_height)
 
@@ -411,6 +414,19 @@ class VoiceOrbWidget(QWidget):
     def set_phase(self, phase):
         self.phase = phase
         self.update()
+
+    def _tick_ripples(self):
+        # 推进所有涟漪，progress 0.0→1.0
+        self._ripples = [p + 0.022 for p in self._ripples if p + 0.022 < 1.0]
+        # listening/speaking 状态每隔一定 tick 生成新涟漪，最多同时 3 个
+        if self.state in ('listening', 'speaking'):
+            self._ripple_tick += 1
+            interval = 22 if self.state == 'listening' else 18
+            if self._ripple_tick >= interval and len(self._ripples) < 3:
+                self._ripples.append(0.0)
+                self._ripple_tick = 0
+        else:
+            self._ripple_tick = 0
 
     def _animate_to_text_width(self):
         target = self.min_orb_width
@@ -734,6 +750,8 @@ class PetVoicePopup(QFrame):
     def _tick_animation(self):
         self.anim_index = (self.anim_index + 1) % 24
         self.anim_widget.set_phase(self.anim_index)
+        self.anim_widget._tick_ripples()
+        self.update()  # 触发 PetVoicePopup.paintEvent 绘制涟漪
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -749,6 +767,32 @@ class PetVoicePopup(QFrame):
             event.accept()
             return
         super().mouseDoubleClickEvent(event)
+
+    def paintEvent(self, event):
+        ripples = self.anim_widget._ripples
+        if not ripples:
+            return
+        orb = self.anim_widget
+        # orb 相对于 popup 的位置
+        orb_pos = orb.mapTo(self, QPoint(0, 0))
+        cx = orb_pos.x() + orb.width() / 2
+        cy = orb_pos.y() + orb.height() / 2
+        orb_r = orb.orb_height / 2 - 1
+        max_extra = orb_r * 1.6
+        ring_color = orb._color('ring')
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setBrush(Qt.NoBrush)
+        for t in ripples:
+            radius = orb_r + t * max_extra
+            alpha = int((1.0 - t) ** 2 * 80)
+            if alpha <= 0:
+                continue
+            color = QColor(ring_color.red(), ring_color.green(), ring_color.blue(), alpha)
+            pen_w = 2.0 * (1.0 - t * 0.5)
+            painter.setPen(QPen(color, pen_w))
+            painter.drawEllipse(QRectF(cx - radius, cy - radius, radius * 2, radius * 2))
+        painter.end()
 
     def closeEvent(self, event):
         self.click_timer.stop()
@@ -1035,7 +1079,7 @@ class PetEasterMenu(QFrame):
 
 
 class PetQuickMenu(QFrame):
-    def __init__(self, x, top_y, bottom_y, on_settings, on_chat, on_voice_chat, on_realtime, on_quit, parent=None):
+    def __init__(self, x, top_y, bottom_y, on_settings, on_chat, on_voice_chat, on_realtime, on_quit, on_share_screen, share_screen_active=False, parent=None):
         super().__init__(parent)
         self.anim_group = None
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.NoDropShadowWindowHint)
@@ -1055,6 +1099,7 @@ class PetQuickMenu(QFrame):
             }
             QPushButton:hover { background: #eef6ff; }
             QPushButton:pressed { background: #dbeeff; }
+            QPushButton#ShareScreenBtn:checked { background: #dbeeff; }
         ''')
         card = QFrame(self)
         card.setObjectName('QuickMenuCard')
@@ -1064,29 +1109,37 @@ class PetQuickMenu(QFrame):
         settings_btn = QPushButton(card)
         chat_btn = QPushButton(card)
         voice_chat_btn = QPushButton(card)
+        share_screen_btn = QPushButton(card)
+        share_screen_btn.setObjectName('ShareScreenBtn')
+        share_screen_btn.setCheckable(True)
         realtime_btn = QPushButton(card)
         quit_btn = QPushButton(card)
         settings_btn.setIcon(QIcon(str(config.RES_DIR / 'icons' / 'SystemPanel.png')))
         chat_btn.setIcon(QIcon(str(config.RES_DIR / 'icons' / 'Dialogue_icon.png')))
         voice_chat_btn.setIcon(FIF.CHAT.icon())
+        share_screen_btn.setIcon(QIcon(str(config.RES_DIR / 'icons' / 'system' / 'screen_share.svg')))
         realtime_btn.setIcon(FIF.PHONE.icon())
         quit_btn.setIcon(FIF.POWER_BUTTON.icon())
-        for btn in (settings_btn, chat_btn, voice_chat_btn, realtime_btn, quit_btn):
+        for btn in (settings_btn, chat_btn, voice_chat_btn, share_screen_btn, realtime_btn, quit_btn):
             btn.setIconSize(QSize(18, 18))
             btn.setFixedSize(30, 30)
         settings_btn.setToolTip('设置')
         chat_btn.setToolTip('聊天')
         voice_chat_btn.setToolTip('语音聊天')
+        share_screen_btn.setToolTip('共享屏幕（语音时附带截图）')
+        share_screen_btn.setChecked(share_screen_active)
         realtime_btn.setToolTip('豆包通话')
         quit_btn.setToolTip('退出')
         settings_btn.clicked.connect(lambda: self._trigger(on_settings))
         chat_btn.clicked.connect(lambda: self._trigger(on_chat))
         voice_chat_btn.clicked.connect(lambda: self._trigger(on_voice_chat))
+        share_screen_btn.clicked.connect(lambda checked: on_share_screen(checked))
         realtime_btn.clicked.connect(lambda: self._trigger(on_realtime))
         quit_btn.clicked.connect(lambda: self._trigger(on_quit))
         row.addWidget(settings_btn)
         row.addWidget(chat_btn)
         row.addWidget(voice_chat_btn)
+        row.addWidget(share_screen_btn)
         row.addWidget(realtime_btn)
         row.addWidget(quit_btn)
         outer = QHBoxLayout(self)
@@ -1148,6 +1201,7 @@ class DesktopPet(QWidget):
     chat_requested = Signal()
     voice_chat_requested = Signal()
     voice_pause_requested = Signal()
+    share_screen_requested = Signal(bool)
     realtime_requested = Signal()
     pet_changed = Signal(str)
     quit_requested = Signal()
@@ -1168,6 +1222,7 @@ class DesktopPet(QWidget):
         self.input_popup = None
         self.voice_popup = None
         self.quick_menu = None
+        self._share_screen_active = False
         self.drop_popup = None
         self.wooden_fish_popup = None
         self.fortune_stick_popup = None
@@ -1672,8 +1727,12 @@ class DesktopPet(QWidget):
             self.quick_menu.close()
             return
         x, top_y, bottom_y = self.quick_menu_anchor()
-        self.quick_menu = PetQuickMenu(x, top_y, bottom_y, self.show_settings.emit, self.chat_requested.emit, self.voice_chat_requested.emit, self.realtime_requested.emit, self.quit, self)
+        self.quick_menu = PetQuickMenu(x, top_y, bottom_y, self.show_settings.emit, self.chat_requested.emit, self.voice_chat_requested.emit, self.realtime_requested.emit, self.quit, self._on_share_screen_toggle, share_screen_active=self._share_screen_active, parent=self)
         self.quick_menu.destroyed.connect(lambda: setattr(self, 'quick_menu', None))
+
+    def _on_share_screen_toggle(self, checked):
+        self._share_screen_active = checked
+        self.share_screen_requested.emit(checked)
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.LeftButton:

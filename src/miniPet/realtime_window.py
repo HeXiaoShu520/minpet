@@ -194,7 +194,7 @@ class RealtimeWindow(QWidget):
         controls.setContentsMargins(18, 0, 18, 0)
         controls.setSpacing(34)
         controls.addStretch(1)
-        self.share_btn = self._tool_button(FIF.VIDEO.icon(), '共享屏幕', checkable=True)
+        self.share_btn = self._tool_button(QIcon(str(config.RES_DIR / 'icons' / 'system' / 'screen_share.svg')), '共享屏幕', checkable=True)
         self.mic_btn = MicLevelButton(FIF.MICROPHONE.icon(), self)
         self.end_btn = EndCallButton(self)
         controls.addWidget(self.share_btn)

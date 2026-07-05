@@ -26,6 +26,25 @@ from miniPet.tts_client import stop_tts
 from miniPet import config
 
 
+def _markdown_to_html(text):
+    """简单的Markdown到HTML转换，支持基本格式"""
+    if not text:
+        return ''
+    # 转义HTML特殊字符（除了即将处理的标记）
+    html = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    # 代码块 ```code```
+    html = re.sub(r'```([^`]+)```', r'<pre style="background:#f5f5f5;padding:8px;border-radius:4px;margin:4px 0;">\1</pre>', html, flags=re.DOTALL)
+    # 行内代码 `code`
+    html = re.sub(r'`([^`]+)`', r'<code style="background:#f0f0f0;padding:2px 4px;border-radius:3px;">\1</code>', html)
+    # 粗体 **text**
+    html = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', html)
+    # 斜体 *text*
+    html = re.sub(r'\*([^*]+)\*', r'<i>\1</i>', html)
+    # 换行保留
+    html = html.replace('\n', '<br>')
+    return html
+
+
 def _bubble_style_qss(style):
     styles = {
         'glass': ('rgba(255,255,255,225)', 'rgba(255,255,255,210)', '#5f6675', '#1f2328', '#eef6ff'),
@@ -175,10 +194,21 @@ class BubbleText(QFrame):
         title_label.setObjectName('BubbleTitle')
         msg_label = QLabel('', card)
         msg_label.setObjectName('BubbleMessage')
+        msg_label.setTextFormat(Qt.RichText)  # 启用富文本模式
         msg_label.setWordWrap(True)
         msg_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         msg_label.setMinimumWidth(180)
-        msg_label.setMaximumWidth(340)
+        # 根据内容长度自适应宽度：短内容窄一些，长内容宽一些
+        content_length = len(message or '')
+        if content_length < 30:
+            max_width = 260
+        elif content_length < 100:
+            max_width = 340
+        elif content_length < 200:
+            max_width = 420
+        else:
+            max_width = 500
+        msg_label.setMaximumWidth(max_width)
         text_box.addWidget(title_label)
         text_box.addWidget(msg_label, 0, Qt.AlignTop)
         text_box.setAlignment(Qt.AlignTop)
@@ -188,7 +218,8 @@ class BubbleText(QFrame):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(card)
         wrapped = message or ''
-        msg_label.setText(wrapped)
+        html_text = _markdown_to_html(wrapped)
+        msg_label.setText(html_text)
         self.adjustSize()
         msg_label.clear()
         self._tw = Typewriter(msg_label)
@@ -306,7 +337,7 @@ class SmartBubble(QFrame):
     def __init__(self, bubble_id, event, timeout=SMART_BUBBLE_TIMEOUT_MS, parent=None):
         super().__init__(parent)
         self.bubble_id = bubble_id
-        self.event = dict(event)
+        self.event_data = dict(event)
         self.anim_group = None
         self.closing = False
         self.closed_emitted = False
@@ -545,7 +576,7 @@ class SmartBubble(QFrame):
         return 'AI 建议'
 
     def _click_action(self, action):
-        self.action_clicked.emit(self.event, action)
+        self.action_clicked.emit(self.event_data, action)
         self.request_close()
 
     def closeEvent(self, event):
