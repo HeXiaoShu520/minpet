@@ -294,16 +294,8 @@ class BasicPage(MiniPetScrollPage):
     pet_changed = Signal(str)
 
     def __init__(self, parent=None):
-        super().__init__('基本设置', parent)
+        super().__init__('基本设置', parent, save_callback=lambda: self._save())
         self.personalGroup = SettingCardGroup('个性化', self.scrollWidget)
-        self.onTopCard = SwitchSettingCard(FIF.PIN, '置顶宠物', '宠物将始终显示在其他应用程序的上方', parent=self.personalGroup)
-        self.onTopCard.setChecked(bool(config.app_config.get('on_top', True)))
-        self.allowDropCard = SwitchSettingCard(_icon('falldown.svg'), '允许掉落', '鼠标释放时，宠物会掉落到地面；关闭后停留在原地', parent=self.personalGroup)
-        self.allowDropCard.setChecked(bool(config.app_config.get('allow_drop', True)))
-        self.volumeCard = RangeSettingCard(0, 100, 0.01, _icon('speaker.svg'), '音量', '通知和语音的音量', self.personalGroup)
-        self.volumeCard.setValue(int(float(config.app_config.get('volume', 0.4)) * 100))
-        self.scaleCard = RangeSettingCard(20, 500, 0.01, _icon('resize.svg'), '宠物大小', '调整宠物的显示比例', self.personalGroup)
-        self.scaleCard.setValue(int(float(config.app_config.get('scale', 1.0)) * 100))
         self.petCard = ComboSettingCard(config.get_pet_list(), _icon('homestar.svg'), '默认宠物', '应用启动时显示的宠物', self.personalGroup)
         self.petCard.setCurrentText(config.app_config.get('default_pet', ''))
         self.petAvatarCard = AvatarPathSettingCard(_icon('character.svg'), '宠物头像', '聊天、语音聊天和豆包通话中显示的宠物头像', self.personalGroup)
@@ -325,17 +317,9 @@ class BasicPage(MiniPetScrollPage):
         self.voiceFollowLevelCard = ComboSettingCard(VOICE_FOLLOW_LEVEL_OPTIONS, FIF.SPEED_HIGH, '语音球跟随档位', '柔和更飘，标准均衡，灵敏更跟手', self.visualGroup)
         self.voiceFollowLevelCard.setCurrentValue(config.app_config.get('voice_follow_level', 'normal'))
 
-        self.saveCard = PushSettingCard('保存', FIF.SAVE, '保存设置', '应用基础设置并刷新宠物', self.personalGroup)
-        self.saveCard.clicked.connect(self._save)
-
-        self.personalGroup.addSettingCard(self.onTopCard)
-        self.personalGroup.addSettingCard(self.allowDropCard)
-        self.personalGroup.addSettingCard(self.volumeCard)
-        self.personalGroup.addSettingCard(self.scaleCard)
         self.personalGroup.addSettingCard(self.petCard)
         self.personalGroup.addSettingCard(self.petAvatarCard)
         self.personalGroup.addSettingCard(self.userAvatarCard)
-        self.personalGroup.addSettingCard(self.saveCard)
         self.visualGroup.addSettingCard(self.bubbleStyleCard)
         self.visualGroup.addSettingCard(self.smartBubbleStyleCard)
         self.visualGroup.addSettingCard(self.voiceOrbStyleCard)
@@ -346,14 +330,24 @@ class BasicPage(MiniPetScrollPage):
 
     def _save(self):
         old_pet = config.app_config.get('default_pet')
+
+        # 处理用户头像：如果是完整路径，复制到data/avatars并保存文件名
+        user_avatar_value = self.userAvatarCard.text()
+        if user_avatar_value:
+            from pathlib import Path
+            import shutil
+            avatar_path = Path(user_avatar_value)
+            # 如果是完整路径且文件存在
+            if avatar_path.is_absolute() and avatar_path.is_file():
+                # 复制到data/avatars目录
+                dest_path = config.AVATARS_DIR / avatar_path.name
+                shutil.copy2(avatar_path, dest_path)
+                user_avatar_value = avatar_path.name  # 只保存文件名
+
         config.app_config.update({
-            'on_top': self.onTopCard.isChecked(),
-            'allow_drop': self.allowDropCard.isChecked(),
-            'volume': self.volumeCard.value(),
-            'scale': self.scaleCard.value(),
             'default_pet': self.petCard.currentText(),
             'pet_avatar': self.petAvatarCard.text(),
-            'user_avatar': self.userAvatarCard.text(),
+            'user_avatar': user_avatar_value,
             'bubble_style': self.bubbleStyleCard.currentValue() or 'soft',
             'smart_bubble_style': self.smartBubbleStyleCard.currentValue() or 'aurora',
             'voice_orb_style': self.voiceOrbStyleCard.currentValue() or 'jade',
@@ -377,7 +371,7 @@ class AgentPage(MiniPetScrollPage):
     ]
 
     def __init__(self, parent=None):
-        super().__init__('智能体设置', parent)
+        super().__init__('智能体设置', parent, save_callback=lambda: self._save())
         cfg = config.app_config
         self.agentGroup = SettingCardGroup('桌宠大脑', self.scrollWidget)
         self.backendCard = ComboSettingCard(self.BACKENDS, FIF.ROBOT, '智能体选项', '选择桌宠输入、语音和投喂交给哪个大脑处理', self.agentGroup)
@@ -386,11 +380,9 @@ class AgentPage(MiniPetScrollPage):
         self.openclawWsCard.setText(cfg.get('openclaw_ws_url', 'ws://127.0.0.1:18888/ws/pet'))
         self.customWsCard = LineEditSettingCard(FIF.LINK, '通用 AI 后端地址', '完全体后端的 WebSocket 地址，遵循 miniPet 通用智能体协议', placeholder='ws://127.0.0.1:18889/ws/minipet', parent=self.agentGroup)
         self.customWsCard.setText(cfg.get('custom_agent_ws_url', 'ws://127.0.0.1:18889/ws/minipet'))
-        self.noteCard = SettingCard(FIF.MESSAGE, '说明', '内置模式使用“大模型”页配置；OpenClaw 和通用后端模式会通过 WebSocket 双向通信', self.agentGroup)
-        self.saveCard = PushSettingCard('保存', FIF.SAVE, '保存智能体设置', '切换后会重新连接外置智能体', self.agentGroup)
-        self.saveCard.clicked.connect(self._save)
+        self.noteCard = SettingCard(FIF.MESSAGE, '说明', '内置模式使用”大模型”页配置；OpenClaw 和通用后端模式会通过 WebSocket 双向通信', self.agentGroup)
 
-        for card in [self.backendCard, self.openclawWsCard, self.customWsCard, self.noteCard, self.saveCard]:
+        for card in [self.backendCard, self.openclawWsCard, self.customWsCard, self.noteCard]:
             self.agentGroup.addSettingCard(card)
         self.expandLayout.addWidget(self.agentGroup)
 
@@ -407,7 +399,7 @@ class AgentPage(MiniPetScrollPage):
 
 class LLMPage(MiniPetScrollPage):
     def __init__(self, parent=None):
-        super().__init__('大模型设置', parent)
+        super().__init__('大模型设置', parent, save_callback=lambda: self._save())
         self.worker = None
         cfg = config.llm_config
 
@@ -423,15 +415,11 @@ class LLMPage(MiniPetScrollPage):
         self.maxTokenCard = LineEditSettingCard(FIF.FONT_SIZE, '最大 Token', '单次回复的最大 token 数', placeholder='1024', parent=self.apiGroup)
         self.maxTokenCard.setText(cfg.get('max_tokens', 1024))
 
-        self.actionCard = SettingCard(FIF.SAVE, '保存 / 测试', '保存配置或测试连接是否正常', self.apiGroup)
+        self.actionCard = SettingCard(FIF.LINK, '测试连接', '测试大模型连接是否正常', self.apiGroup)
         self.testBtn = PrimaryPushButton('测试连接', self.actionCard)
-        self.saveBtn = PrimaryPushButton('保存', self.actionCard)
         self.actionCard.hBoxLayout.addStretch(1)
         self.actionCard.hBoxLayout.addWidget(self.testBtn, 0, Qt.AlignRight)
-        self.actionCard.hBoxLayout.addSpacing(8)
-        self.actionCard.hBoxLayout.addWidget(self.saveBtn, 0, Qt.AlignRight)
         self.actionCard.hBoxLayout.addSpacing(16)
-        self.saveBtn.clicked.connect(self._save)
         self.testBtn.clicked.connect(self._test)
 
         for card in [self.providerCard, self.apiBaseCard, self.apiKeyCard, self.modelCard, self.maxTokenCard, self.actionCard]:
@@ -571,7 +559,7 @@ class RolePage(MiniPetScrollPage):
     clear_history_requested = Signal()
 
     def __init__(self, memory_store=None, parent=None):
-        super().__init__('角色设定', parent)
+        super().__init__('角色设定', parent, save_callback=lambda: self._save())
         cfg = config.llm_config
         self.memory_store = memory_store or MemoryStore(config.DATA_DIR / 'memory')
 
@@ -621,8 +609,6 @@ class RolePage(MiniPetScrollPage):
         self.manageGroup = SettingCardGroup('保存', self.scrollWidget)
         self.clearCard = PushSettingCard('清空', FIF.DELETE, '当前对话', '清空本次运行中的短期上下文，不删除已总结的重点', self.manageGroup)
         self.clearCard.clicked.connect(self._clear_history)
-        self.saveCard = PushSettingCard('保存', FIF.SAVE, '保存角色设定', '保存宠物性格和自动总结设置', self.manageGroup)
-        self.saveCard.clicked.connect(self._save)
 
         self.roleGroup.addSettingCard(self.roleCard)
         self.roleGroup.addSettingCard(self.memoryCard)
@@ -632,7 +618,6 @@ class RolePage(MiniPetScrollPage):
         for card in [self.restoreEnabledCard, self.restoreMaxMsgCard, self.restoreMaxDaysCard]:
             self.chatRestoreGroup.addSettingCard(card)
         self.manageGroup.addSettingCard(self.clearCard)
-        self.manageGroup.addSettingCard(self.saveCard)
         self.expandLayout.addWidget(self.roleGroup)
         self.expandLayout.addWidget(self.autoMemoryGroup)
         self.expandLayout.addWidget(self.memoryListGroup)
@@ -771,7 +756,7 @@ class RolePage(MiniPetScrollPage):
 
 class TTSPage(MiniPetScrollPage):
     def __init__(self, parent=None):
-        super().__init__('语音设置', parent)
+        super().__init__('语音设置', parent, save_callback=lambda: self._save())
         self.worker = None
         self.preview_worker = None
         self._initializing = True
@@ -809,15 +794,11 @@ class TTSPage(MiniPetScrollPage):
         self.experienceBtn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl('https://console.volcengine.com/speech/new/experience/tts?projectName=default')))
         self.apiDocBtn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl('https://www.volcengine.com/docs/6561/2528925?lang=zh')))
 
-        self.actionCard = SettingCard(FIF.SAVE, '保存 / 测试', '保存配置或播放一段测试语音', self.apiGroup)
-        self.testBtn = PrimaryPushButton('测试连接', self.actionCard)
-        self.saveBtn = PrimaryPushButton('保存', self.actionCard)
+        self.actionCard = SettingCard(FIF.VOLUME, '测试语音', '播放一段测试语音', self.apiGroup)
+        self.testBtn = PrimaryPushButton('测试语音', self.actionCard)
         self.actionCard.hBoxLayout.addStretch(1)
         self.actionCard.hBoxLayout.addWidget(self.testBtn, 0, Qt.AlignRight)
-        self.actionCard.hBoxLayout.addSpacing(8)
-        self.actionCard.hBoxLayout.addWidget(self.saveBtn, 0, Qt.AlignRight)
         self.actionCard.hBoxLayout.addSpacing(16)
-        self.saveBtn.clicked.connect(self._save)
         self.testBtn.clicked.connect(self._test)
 
         for card in [self.enabledCard, self.apiKeyCard, self.voiceCard, self.maxCharsCard, self.disableEmojiFilterCard, self.parenthesisFilterCard, self.actionCard]:
@@ -901,7 +882,7 @@ class TTSPage(MiniPetScrollPage):
 
 class ReplyDisplayPage(MiniPetScrollPage):
     def __init__(self, parent=None):
-        super().__init__('回复显示设置', parent)
+        super().__init__('回复显示设置', parent, save_callback=lambda: self._save())
         cfg = config.typewriter_config
         defaults = config.DEFAULT_TYPEWRITER_CONFIG
 
@@ -914,10 +895,8 @@ class ReplyDisplayPage(MiniPetScrollPage):
         self.maxDurationCard.setValue(int(cfg.get('max_duration_ms', defaults['max_duration_ms'])))
         self.ttsDelayCard = RangeSettingCard(0, 3000, 1, FIF.VOLUME, '语音播报文字延迟', '开启语音播报时，回复文字延迟显示的时间，单位毫秒', self.displayGroup)
         self.ttsDelayCard.setValue(int(cfg.get('tts_delay_ms', defaults['tts_delay_ms'])))
-        self.saveCard = PushSettingCard('保存', FIF.SAVE, '保存回复显示设置', '保存 AI 回复逐字显示相关配置', self.displayGroup)
-        self.saveCard.clicked.connect(self._save)
 
-        for card in [self.enabledCard, self.speedCard, self.maxDurationCard, self.ttsDelayCard, self.saveCard]:
+        for card in [self.enabledCard, self.speedCard, self.maxDurationCard, self.ttsDelayCard]:
             self.displayGroup.addSettingCard(card)
         self.expandLayout.addWidget(self.displayGroup)
 
@@ -936,7 +915,7 @@ class ReplyDisplayPage(MiniPetScrollPage):
 
 class RealtimePage(MiniPetScrollPage):
     def __init__(self, parent=None):
-        super().__init__('豆包通话设置', parent)
+        super().__init__('豆包通话设置', parent, save_callback=lambda: self._save())
         cfg = config.realtime_config
         self.apiGroup = SettingCardGroup('豆包 Realtime API', self.scrollWidget)
         self.keyHintCard = SettingCard(FIF.VPN, '认证方式', '豆包通话复用语音设置里的 TTS API Key', self.apiGroup)
@@ -957,14 +936,7 @@ class RealtimePage(MiniPetScrollPage):
         self.speakingStyleCard.hBoxLayout.addWidget(self.speakingStyleEdit, 0, Qt.AlignRight)
         self.speakingStyleCard.hBoxLayout.addSpacing(16)
 
-        self.actionCard = SettingCard(FIF.SAVE, '保存', '保存豆包通话配置到本地 .env', self.apiGroup)
-        self.saveBtn = PrimaryPushButton('保存', self.actionCard)
-        self.actionCard.hBoxLayout.addStretch(1)
-        self.actionCard.hBoxLayout.addWidget(self.saveBtn, 0, Qt.AlignRight)
-        self.actionCard.hBoxLayout.addSpacing(16)
-        self.saveBtn.clicked.connect(self._save)
-
-        for card in [self.keyHintCard, self.speakerCard, self.systemRoleCard, self.speakingStyleCard, self.actionCard]:
+        for card in [self.keyHintCard, self.speakerCard, self.systemRoleCard, self.speakingStyleCard]:
             self.apiGroup.addSettingCard(card)
         self.expandLayout.addWidget(self.apiGroup)
 

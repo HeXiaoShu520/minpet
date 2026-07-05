@@ -567,17 +567,19 @@ class CoinPopup(EasterGamePopup):
 
     def __init__(self, x, y, parent=None):
         self.result = random.choice(['正面', '反面'])
+        self.coin_y = -50  # 硬币初始位置（屏幕上方）
+        self.coin_vy = 0   # 硬币垂直速度
+        self.rotation = 0  # 硬币旋转角度（0-360度）
+        self.rotation_speed = 28  # 旋转速度
+        self.settled = False  # 是否已落定
         super().__init__(x, y, parent)
         self.setFixedSize(280, 408)
         self.move_to_anchor(x, y)
-        self.web = QWebEngineView(self)
-        self.web.setGeometry(20, 52, 240, 252)
-        self.web.setContextMenuPolicy(Qt.NoContextMenu)
-        self.web.setStyleSheet('background: #fff7fa; border: none;')
-        self.web.page().setBackgroundColor(QColor(255, 247, 250))
-        self.web.setHtml(self._html(self.result), QUrl.fromLocalFile(str(config.RES_DIR / 'items' / 'easter' / '3d' / 'dice.html')))
-        self.web.show()
-        self.web.raise_()
+
+        self.anim_timer = QTimer(self)
+        self.anim_timer.timeout.connect(self._animate_coin)
+        self.anim_timer.start(16)  # 约60fps
+
         self.button = QPushButton('重新抛掷', self)
         self.button.setGeometry(86, 334, 108, 32)
         self.button.setCursor(Qt.PointingHandCursor)
@@ -588,120 +590,136 @@ class CoinPopup(EasterGamePopup):
 
     def toss(self):
         self.result = random.choice(['正面', '反面'])
+        self.coin_y = -50
+        self.coin_vy = 0
+        self.rotation = 0
+        self.settled = False
         self.started_at = time.monotonic()
         self.played_sounds.discard('coin_land')
         self.played_sounds.discard('coin_start')
-        self.web.setHtml(self._html(self.result), QUrl.fromLocalFile(str(config.RES_DIR / 'items' / 'easter' / '3d' / 'dice.html')))
         self._play_once('coin_start', 'coin')
         self.update()
 
-    def _html(self, result):
-        three_path = (config.RES_DIR / 'items' / 'easter' / '3d' / 'three.min.js').as_posix()
-        front_path = (config.RES_DIR / 'items' / 'easter' / 'coin_front.png').as_posix()
-        back_path  = (config.RES_DIR / 'items' / 'easter' / 'coin_back.png').as_posix()
-        final_x = 0 if result == '正面' else 180
-        final_y = random.randint(0, 359)
-        return f"""<!doctype html><html><head><meta charset='utf-8'><style>
-html,body{{margin:0;width:100%;height:100%;overflow:hidden;background:#fff7fa;}}
-#stage{{width:240px;height:252px;}}
-</style></head><body><div id='stage'></div>
-<script src='file:///{three_path}'></script><script>
-const W=240,H=252,OA=W/H,OH=5.8;
-const scene=new THREE.Scene();
-const camera=new THREE.OrthographicCamera(-OH*OA/2,OH*OA/2,OH/2,-OH/2,0.1,100);
-camera.position.set(1.5,3.8,5.5); camera.lookAt(0,0.25,0);
-const renderer=new THREE.WebGLRenderer({{alpha:true,antialias:true}});
-renderer.setSize(W,H); renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
-document.getElementById('stage').appendChild(renderer.domElement);
-scene.add(new THREE.AmbientLight(0xffffff,2.6));
-const dL=new THREE.DirectionalLight(0xffffff,2.2); dL.position.set(-1.5,5,4); scene.add(dL);
-const fL=new THREE.DirectionalLight(0xfff0f8,0.8); fL.position.set(4,1,-2); scene.add(fL);
-// 柔和点光源做辉光（不遮挡贴图）
-const pL=new THREE.PointLight(0xffb8e0,0.0,8); pL.position.set(0,1,2); scene.add(pL);
-const shadowMesh=new THREE.Mesh(
-  new THREE.CircleGeometry(1.5,64),
-  new THREE.MeshBasicMaterial({{color:0x6b3a55,transparent:true,opacity:0.0,depthWrite:false}})
-);
-shadowMesh.rotation.x=-Math.PI/2; shadowMesh.position.set(0,-0.36,0); scene.add(shadowMesh);
-function makeFaceTex(isFront){{
-  const loader=new THREE.TextureLoader();
-  const url=isFront?'file:///{front_path}':'file:///{back_path}';
-  const t=loader.load(url,()=>{{renderer.render(scene,camera);}});
-  t.colorSpace=THREE.SRGBColorSpace;
-  t.anisotropy=renderer.capabilities.getMaxAnisotropy();
-  return t;
-}}
-function makeEdgeTex(){{
-  const c=document.createElement('canvas'); c.width=256; c.height=32;
-  const g=c.getContext('2d');
-  const eg=g.createLinearGradient(0,0,0,32);
-  eg.addColorStop(0,'#f0c8b0'); eg.addColorStop(0.25,'#d4907a'); eg.addColorStop(0.5,'#c07860'); eg.addColorStop(0.75,'#d4907a'); eg.addColorStop(1,'#f0c8b0');
-  g.fillStyle=eg; g.fillRect(0,0,256,32);
-  g.strokeStyle='rgba(255,220,200,0.40)'; g.lineWidth=1;
-  for(let x=0;x<256;x+=4){{ g.beginPath(); g.moveTo(x,0); g.lineTo(x,32); g.stroke(); }}
-  const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; return t;
-}}
-const coinGeo=new THREE.CylinderGeometry(1.32,1.32,0.26,96);
-const coinMats=[
-  new THREE.MeshStandardMaterial({{map:makeEdgeTex(),roughness:0.15,metalness:0.75}}),
-  new THREE.MeshStandardMaterial({{map:makeFaceTex(true),roughness:0.10,metalness:0.0}}),
-  new THREE.MeshStandardMaterial({{map:makeFaceTex(false),roughness:0.10,metalness:0.0}}),
-];
-const coin=new THREE.Mesh(coinGeo,coinMats);
-scene.add(coin);
-const finalRad={{x:{final_x}*Math.PI/180,y:{final_y}*Math.PI/180,z:0}};
-const GROUND=-0.35,THROW_H=3.8;
-const DUR_FLY=900,DUR_B1=300,DUR_B2=200,DUR_SETTLE=180;
-const TOTAL=DUR_FLY+DUR_B1+DUR_B2+DUR_SETTLE;
-const spinX0=(Math.random()*3+2.5)*Math.PI*2;
-const spinY0=(Math.random()*0.8+0.5)*Math.PI*2;
-const T0=performance.now();
-function tick(now){{
-  const el=now-T0;
-  let worldY,rx,ry2,rz=0,sOp,sS,glowI;
-  if(el<DUR_FLY){{
-    const p=el/DUR_FLY,fp=p*p,h=THROW_H*(1-fp);
-    worldY=GROUND+h;
-    rx=finalRad.x+spinX0*(1-p); ry2=finalRad.y+spinY0*(1-p);
-    sOp=0.04+(1-h/THROW_H)*0.22; sS=0.3+(1-h/THROW_H)*0.75;
-    glowI=0.0;
-  }} else if(el<DUR_FLY+DUR_B1){{
-    const p=(el-DUR_FLY)/DUR_B1,f=Math.pow(1-p,2);
-    worldY=GROUND+Math.sin(p*Math.PI)*0.45;
-    rx=finalRad.x+spinX0*f*0.08; ry2=finalRad.y+spinY0*f*0.06;
-    sOp=0.22-Math.sin(p*Math.PI)*0.06; sS=1.0-Math.sin(p*Math.PI)*0.16;
-    glowI=p*1.2;
-  }} else if(el<DUR_FLY+DUR_B1+DUR_B2){{
-    const p=(el-DUR_FLY-DUR_B1)/DUR_B2;
-    worldY=GROUND+Math.sin(p*Math.PI)*0.14;
-    rx=finalRad.x; ry2=finalRad.y;
-    sOp=0.22; sS=1.0-Math.sin(p*Math.PI)*0.05;
-    glowI=1.2+p*0.6;
-  }} else {{
-    const p=Math.min(1,(el-DUR_FLY-DUR_B1-DUR_B2)/DUR_SETTLE);
-    const j=Math.sin(p*Math.PI*4)*(1-p)*0.012;
-    worldY=GROUND; rx=finalRad.x+j; ry2=finalRad.y; rz=j*0.3;
-    sOp=0.24; sS=1.0;
-    glowI=1.4+Math.sin((el-TOTAL)*0.004)*0.4;
-  }}
-  coin.position.y=worldY; coin.rotation.x=rx; coin.rotation.y=ry2; coin.rotation.z=rz;
-  pL.intensity=glowI; pL.position.set(0,worldY+0.5,1.8);
-  shadowMesh.material.opacity=Math.min(sOp,0.30);
-  const s=Math.max(0.3,sS); shadowMesh.scale.set(s,s,s);
-  renderer.render(scene,camera);
-  requestAnimationFrame(tick);
-}}
-requestAnimationFrame(tick);
-</script></body></html>"""
+
+    def _animate_coin(self):
+        """更新硬币动画"""
+        if self.settled:
+            return
+
+        # 重力和弹跳物理
+        self.coin_vy += 0.8  # 重力加速度
+        self.coin_y += self.coin_vy
+
+        # 旋转
+        self.rotation += self.rotation_speed
+        if self.rotation >= 360:
+            self.rotation -= 360
+
+        # 落地检测和弹跳
+        target_y = 150  # 落地位置
+        if self.coin_y >= target_y:
+            self.coin_y = target_y
+            if abs(self.coin_vy) > 2:
+                self.coin_vy = -self.coin_vy * 0.5  # 弹起，能量损失
+                self.rotation_speed *= 0.7  # 旋转减速
+            else:
+                self.coin_vy = 0
+                self.rotation_speed = 0
+                # 落定到最终面
+                if self.result == '正面':
+                    self.rotation = 0
+                else:
+                    self.rotation = 180
+                self.settled = True
+
+        self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
         self._draw_card(painter, QColor(255, 247, 250, 248), QColor(238, 180, 202, 230))
-        if self._elapsed() > 1.6:
+
+        # 绘制硬币
+        self._draw_coin(painter)
+
+        # 显示结果文字
+        if self.settled and self._elapsed() > 0.3:
             self._play_once('coin_land', 'drop')
             painter.setFont(QFont('Microsoft YaHei UI', 12, QFont.Bold))
             painter.setPen(QColor(116, 56, 82))
             painter.drawText(0, 304, self.width(), 24, Qt.AlignCenter, f'结果：{self.result}')
+
+    def _draw_coin(self, painter):
+        """绘制二次元风格的硬币"""
+        cx = self.width() / 2
+        cy = 52 + 126 + self.coin_y
+
+        # 根据旋转角度计算椭圆宽度（模拟3D翻转）
+        rotation_rad = math.radians(self.rotation)
+        width_scale = abs(math.cos(rotation_rad))
+        coin_width = int(80 * width_scale)
+        coin_height = 80
+
+        # 判断当前显示正面还是反面
+        is_front = (self.rotation % 360) < 180
+
+        # 绘制阴影
+        shadow_offset = 8
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(139, 85, 108, 60))
+        painter.drawEllipse(int(cx - 45), int(cy + coin_height/2 + shadow_offset), 90, 16)
+
+        if coin_width > 8:  # 只在不是完全侧面时绘制
+            # 硬币外圈（金色边框）
+            painter.setPen(QPen(QColor(180, 130, 60), 3))
+            grad = QLinearGradient(cx - coin_width/2, cy - coin_height/2,
+                                  cx + coin_width/2, cy + coin_height/2)
+            grad.setColorAt(0, QColor(255, 220, 120))
+            grad.setColorAt(0.5, QColor(255, 200, 80))
+            grad.setColorAt(1, QColor(220, 170, 90))
+            painter.setBrush(grad)
+            painter.drawEllipse(int(cx - coin_width/2), int(cy - coin_height/2),
+                              coin_width, coin_height)
+
+            # 内圈图案
+            inner_width = int(coin_width * 0.7)
+            inner_height = int(coin_height * 0.7)
+            painter.setPen(QPen(QColor(200, 140, 50), 2))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawEllipse(int(cx - inner_width/2), int(cy - inner_height/2),
+                              inner_width, inner_height)
+
+            # 绘制图案
+            painter.setPen(QPen(QColor(180, 110, 40), 2.5))
+            if is_front:
+                # 正面：星星
+                self._draw_star(painter, cx, cy, inner_width * 0.4)
+            else:
+                # 反面：月亮
+                self._draw_moon(painter, cx, cy, inner_width * 0.35)
+
+    def _draw_star(self, painter, cx, cy, size):
+        """绘制五角星"""
+        from PySide6.QtGui import QPolygonF
+        from PySide6.QtCore import QPointF
+        points = []
+        for i in range(5):
+            angle = math.radians(i * 72 - 90)
+            points.append(QPointF(cx + size * math.cos(angle),
+                                cy + size * math.sin(angle)))
+            angle2 = math.radians(i * 72 - 90 + 36)
+            points.append(QPointF(cx + size * 0.4 * math.cos(angle2),
+                                cy + size * 0.4 * math.sin(angle2)))
+        painter.setBrush(QColor(200, 130, 50))
+        painter.drawPolygon(QPolygonF(points))
+
+    def _draw_moon(self, painter, cx, cy, size):
+        """绘制月牙"""
+        painter.setBrush(QColor(200, 130, 50))
+        painter.drawEllipse(int(cx - size), int(cy - size), int(size * 2), int(size * 2))
+        painter.setBrush(QColor(255, 200, 80))
+        painter.drawEllipse(int(cx - size * 0.5), int(cy - size),
+                          int(size * 2), int(size * 2))
 
 
 class GachaPopup(EasterGamePopup):

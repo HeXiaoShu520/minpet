@@ -13,10 +13,9 @@ from miniPet import config
 from miniPet.animation import AnimationThread
 from miniPet.chat_window import ChatWindow
 from miniPet.pet_assets import load_pet_profile
-from miniPet.realtime_window import RealtimeWindow
+from miniPet.realtime_window import RealtimeWindow as DoubaoCallWindow
 from miniPet.easter_games import CoinPopup, DicePopup, GachaPopup, MagicConchPopup
 from miniPet.fortune_stick import FortuneStickPopup
-from miniPet.voice_chat_window import VoiceChatWindow
 from miniPet.wooden_fish import WoodenFishPopup
 
 
@@ -1090,7 +1089,7 @@ class PetEasterMenu(QFrame):
 
 
 class PetQuickMenu(QFrame):
-    def __init__(self, x, top_y, bottom_y, on_settings, on_chat, on_voice_chat, on_realtime, on_quit, on_share_screen, share_screen_active=False, voice_chat_active=False, parent=None):
+    def __init__(self, x, top_y, bottom_y, on_settings, on_chat, on_voice_chat, on_quit, on_share_screen, share_screen_active=False, voice_chat_active=False, parent=None):
         super().__init__(parent)
         self.anim_group = None
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.NoDropShadowWindowHint)
@@ -1129,15 +1128,13 @@ class PetQuickMenu(QFrame):
         share_screen_btn = QPushButton(card)
         share_screen_btn.setObjectName('ShareScreenBtn')
         share_screen_btn.setCheckable(True)
-        realtime_btn = QPushButton(card)
         quit_btn = QPushButton(card)
-        settings_btn.setIcon(QIcon(str(config.RES_DIR / 'icons' / 'SystemPanel.png')))
+        settings_btn.setIcon(FIF.SETTING.icon())
         chat_btn.setIcon(QIcon(str(config.RES_DIR / 'icons' / 'Dialogue_icon.png')))
         voice_chat_btn.setIcon(FIF.MICROPHONE.icon())
         share_screen_btn.setIcon(QIcon(str(config.RES_DIR / 'icons' / 'system' / 'screen_share.svg')))
-        realtime_btn.setIcon(FIF.PHONE.icon())
         quit_btn.setIcon(FIF.POWER_BUTTON.icon())
-        for btn in (settings_btn, chat_btn, voice_chat_btn, share_screen_btn, realtime_btn, quit_btn):
+        for btn in (settings_btn, chat_btn, share_screen_btn, voice_chat_btn, quit_btn):
             btn.setIconSize(QSize(18, 18))
             btn.setFixedSize(30, 30)
         settings_btn.setToolTip('设置')
@@ -1146,19 +1143,26 @@ class PetQuickMenu(QFrame):
         share_screen_btn.setToolTip('共享屏幕（语音时附带截图）')
         share_screen_btn.setChecked(share_screen_active)
         voice_chat_btn.setChecked(voice_chat_active)
-        realtime_btn.setToolTip('豆包通话')
         quit_btn.setToolTip('退出')
+
+        def update_voice_chat_icon(checked):
+            if checked:
+                voice_chat_btn.setIcon(FIF.MICROPHONE.icon())
+            else:
+                voice_chat_btn.setIcon(QIcon(str(config.RES_DIR / 'icons' / 'system' / 'microphone_off.png')))
+
+        voice_chat_btn.toggled.connect(update_voice_chat_icon)
+        update_voice_chat_icon(voice_chat_active)
+
         settings_btn.clicked.connect(lambda: self._trigger(on_settings))
         chat_btn.clicked.connect(lambda: self._trigger(on_chat))
         voice_chat_btn.clicked.connect(lambda checked: on_voice_chat(checked))
         share_screen_btn.clicked.connect(lambda checked: on_share_screen(checked))
-        realtime_btn.clicked.connect(lambda: self._trigger(on_realtime))
         quit_btn.clicked.connect(lambda: self._trigger(on_quit))
         row.addWidget(settings_btn)
         row.addWidget(chat_btn)
-        row.addWidget(voice_chat_btn)
         row.addWidget(share_screen_btn)
-        row.addWidget(realtime_btn)
+        row.addWidget(voice_chat_btn)
         row.addWidget(quit_btn)
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -1220,7 +1224,7 @@ class DesktopPet(QWidget):
     voice_chat_requested = Signal()
     voice_pause_requested = Signal()
     share_screen_requested = Signal(bool)
-    realtime_requested = Signal()
+    doubao_call_requested = Signal()
     pet_changed = Signal(str)
     quit_requested = Signal()
 
@@ -1233,8 +1237,7 @@ class DesktopPet(QWidget):
         self.profile = None
         self.anim_thread = None
         self.chat_window = None
-        self.voice_chat_window = None
-        self.realtime_window = None
+        self.doubao_call_window = None
         self.tray = None
         self.context_menu = None
         self.input_popup = None
@@ -1387,11 +1390,10 @@ class DesktopPet(QWidget):
             return
         if not self.tray:
             self.tray = QSystemTrayIcon(QIcon(str(config.avatar_path('pet'))), self)
-            self.tray.activated.connect(lambda reason: self.fetch_back() if reason == QSystemTrayIcon.Trigger else None)
-        self.tray.setContextMenu(self._build_menu(include_actions=True, include_fetch=True))
+        self.tray.setContextMenu(self._build_menu(include_actions=True))
         self.tray.show()
 
-    def _build_menu(self, include_actions=False, include_fetch=False):
+    def _build_menu(self, include_actions=False):
         self.context_menu = QMenu(self)
         menu = self.context_menu
         icon_dir = config.RES_DIR / 'icons'
@@ -1408,12 +1410,9 @@ class DesktopPet(QWidget):
         chat_action.triggered.connect(self.chat_requested.emit)
         voice_chat_action = QAction(FIF.CHAT.icon(), '语音聊天', menu)
         voice_chat_action.triggered.connect(self.voice_chat_requested.emit)
-        realtime_action = QAction(FIF.PHONE.icon(), '豆包通话', menu)
-        realtime_action.triggered.connect(self.realtime_requested.emit)
         menu.addAction(system_action)
         menu.addAction(chat_action)
         menu.addAction(voice_chat_action)
-        menu.addAction(realtime_action)
         menu.addSeparator()
 
         if include_actions:
@@ -1435,12 +1434,6 @@ class DesktopPet(QWidget):
             action.setChecked(pet == config.current_pet)
             action.triggered.connect(lambda checked=False, p=pet: self.load_pet(p))
             role_menu.addAction(action)
-
-        if include_fetch:
-            fetch_action = QAction(QIcon(str(icon_dir / 'backpack.svg')), '找回宠物', menu)
-            fetch_action.triggered.connect(self.fetch_back)
-            menu.addAction(fetch_action)
-            menu.addSeparator()
         quit_action = QAction(FIF.POWER_BUTTON.icon(), '退出', menu)
         quit_action.triggered.connect(self.quit)
         menu.addAction(quit_action)
@@ -1687,6 +1680,7 @@ class DesktopPet(QWidget):
             ('🎋', '今日求签', '摇一支今日运势', self.show_fortune),
             ('🎲', '摇骰子', '交给随机数决定', self.show_dice),
             ('res/icons/easter/coin.png', '抛硬币', '正反之间做选择', self.show_coin),
+            ('📞', '豆包通话', '与豆包实时语音对话', self.show_doubao_call),
             ('🐟', '电子木鱼', '功德 +1，Bug -1', self.toggle_wooden_fish),
             ('🎁', '桌宠扭蛋', '胶囊里有今日惊喜', self.show_gacha),
         ]
@@ -1746,7 +1740,7 @@ class DesktopPet(QWidget):
             self.quick_menu.close()
             return
         x, top_y, bottom_y = self.quick_menu_anchor()
-        self.quick_menu = PetQuickMenu(x, top_y, bottom_y, self.show_settings.emit, self.chat_requested.emit, self._on_voice_chat_toggle, self.realtime_requested.emit, self.quit, self._on_share_screen_toggle, share_screen_active=self._share_screen_active, voice_chat_active=self._voice_chat_active, parent=self)
+        self.quick_menu = PetQuickMenu(x, top_y, bottom_y, self.show_settings.emit, self.chat_requested.emit, self._on_voice_chat_toggle, self.quit, self._on_share_screen_toggle, share_screen_active=self._share_screen_active, voice_chat_active=self._voice_chat_active, parent=self)
         self.quick_menu.destroyed.connect(lambda: setattr(self, 'quick_menu', None))
 
     def _on_share_screen_toggle(self, checked):
@@ -1758,7 +1752,7 @@ class DesktopPet(QWidget):
         if checked:
             self.voice_chat_requested.emit()
         else:
-            pass  # 关闭语音聊天窗口的逻辑
+            self.close_voice_popup()
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -1878,38 +1872,17 @@ class DesktopPet(QWidget):
                 self.chat_window.reload_history()
         self.chat_window.show_window()
 
-    def show_voice_chat(self, history=None, append_message=None, content_for_llm=None):
-        if self.voice_chat_window is None:
-            self.voice_chat_window = VoiceChatWindow(config.current_pet, self, history=history, append_message=append_message, content_for_llm=content_for_llm)
-            self.voice_chat_window.closed_signal.connect(self._on_voice_chat_closed)
+    def show_doubao_call(self, append_message=None):
+        if self.doubao_call_window is None:
+            self.doubao_call_window = DoubaoCallWindow(config.current_pet, self, append_message=append_message)
+            self.doubao_call_window.closed_signal.connect(self._on_doubao_call_closed)
         else:
-            self.voice_chat_window.pet_name = config.current_pet
-            self.voice_chat_window.history = history if history is not None else self.voice_chat_window.history
-            self.voice_chat_window.append_message = append_message
-            self.voice_chat_window.content_for_llm = content_for_llm
-        self.voice_chat_window.show_window()
+            self.doubao_call_window.pet_name = config.current_pet
+            self.doubao_call_window.append_message = append_message
+        self.doubao_call_window.show_window()
 
-    def _on_voice_chat_closed(self):
-        self.voice_chat_window = None
-
-    def show_realtime(self, append_message=None):
-        if self.realtime_window is None:
-            self.realtime_window = RealtimeWindow(config.current_pet, self, append_message=append_message)
-            self.realtime_window.closed_signal.connect(self._on_realtime_closed)
-        else:
-            self.realtime_window.pet_name = config.current_pet
-            self.realtime_window.append_message = append_message
-        self.realtime_window.show_window()
-
-    def _on_realtime_closed(self):
-        self.realtime_window = None
-
-    def fetch_back(self):
-        screen = self._set_current_screen_from_point(QCursor.pos())
-        self.move(screen.center().x() - self.width() // 2, self.floor_y)
-        self.show()
-        self.raise_()
-        self.activateWindow()
+    def _on_doubao_call_closed(self):
+        self.doubao_call_window = None
 
     def _current_visible_bounds(self):
         return self.visible_bounds if not self.visible_bounds.isNull() else QRect(0, 0, self.width(), self.height())

@@ -14,15 +14,15 @@ ENV_FILE = ROOT_DIR / '.env'
 DEFAULT_THEME_COLOR = '#009faa'
 
 DEFAULT_APP_CONFIG = {
-    'on_top': True,
-    'allow_drop': True,
+    'on_top': True,      # 宠物窗口置顶：固定为True，始终显示在其他窗口上方
+    'allow_drop': True,  # 允许宠物掉落：固定为True，释放鼠标时宠物会掉落到地面
     'volume': 0.4,
     'language_code': QLocale().name(),
     'theme_color': None,
     'default_pet': '',
     'scale': 1.0,
     'pet_avatar': '',
-    'user_avatar': '',
+    'user_avatar': 'user_avatar_5.png',  # 默认使用中心位置的头像
     'agent_backend': 'builtin',
     'openclaw_ws_url': 'ws://127.0.0.1:18888/ws/pet',
     'custom_agent_ws_url': 'ws://127.0.0.1:18889/ws/minipet',
@@ -66,6 +66,11 @@ CHAT_RESTORE_ENV_KEYS = {
     'enabled': 'CHAT_RESTORE_ENABLED',
     'max_messages': 'CHAT_RESTORE_MAX_MESSAGES',
     'max_days': 'CHAT_RESTORE_MAX_DAYS',
+}
+
+APP_BASIC_ENV_KEYS = {
+    'volume': 'APP_VOLUME',
+    'scale': 'APP_SCALE',
 }
 
 DEFAULT_TYPEWRITER_CONFIG = {
@@ -241,6 +246,20 @@ def load():
             app_config.update(json.loads(SETTINGS_FILE.read_text(encoding='utf-8')))
         except Exception:
             pass
+    # 强制固定置顶和掉落配置（不可通过设置界面或.env修改）
+    # on_top=True: 保证宠物窗口始终在最上层，不会被其他窗口遮挡
+    # allow_drop=True: 保证拖拽释放后宠物会自然掉落到屏幕底部，符合物理效果
+    app_config['on_top'] = True
+    app_config['allow_drop'] = True
+    # 从.env加载音量和宠物大小配置（优先级高于JSON）
+    env_data = _parse_env_file()
+    for field, env_key in APP_BASIC_ENV_KEYS.items():
+        value = os.environ.get(env_key, env_data.get(env_key))
+        if value is not None:
+            try:
+                app_config[field] = float(value)
+            except ValueError:
+                pass  # 保持默认值
     if not app_config.get('default_pet') and pets:
         app_config['default_pet'] = pets[0]
     if app_config.get('default_pet') not in pets and pets:

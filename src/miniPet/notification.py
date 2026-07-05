@@ -40,6 +40,8 @@ def _markdown_to_html(text):
     html = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', html)
     # 斜体 *text*
     html = re.sub(r'\*([^*]+)\*', r'<i>\1</i>', html)
+    # 段落间的空行（连续换行）压缩为单个换行
+    html = re.sub(r'\n\n+', '\n', html)
     # 换行保留
     html = html.replace('\n', '<br>')
     return html
@@ -216,13 +218,13 @@ class BubbleText(QFrame):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(card)
         wrapped = message or ''
-        # 先用纯文本计算窗口大小，避免HTML标签影响尺寸
-        msg_label.setText(wrapped)
+        # 先转换为HTML并计算窗口大小
+        html_text = _markdown_to_html(wrapped)
+        msg_label.setText(html_text)
         self.adjustSize()
         msg_label.clear()
-        # 然后启用富文本并使用打字机效果显示
+        # 然后使用打字机效果显示
         self._tw = Typewriter(msg_label)
-        html_text = _markdown_to_html(wrapped)
         tts_on = config.tts_config.get('enabled') and config.tts_config.get('api_key')
         delay = int(config.typewriter_config.get('tts_delay_ms', 500)) if tts_on else 0
         if delay > 0:

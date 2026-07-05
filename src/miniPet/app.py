@@ -66,10 +66,10 @@ class MiniPetApp(QApplication):
         self.pet.chat_prompt_submitted.connect(self._on_quick_chat_prompt)
         self.pet.drop_intent_submitted.connect(self._on_drop_intent)
         self.pet.chat_requested.connect(self._show_chat_window)
-        self.pet.voice_chat_requested.connect(self._show_voice_chat_window)
+        self.pet.voice_chat_requested.connect(self._toggle_pet_voice_chat)
         self.pet.voice_pause_requested.connect(self._pause_pet_voice_chat)
         self.pet.share_screen_requested.connect(self._on_voice_share_screen_toggled)
-        self.pet.realtime_requested.connect(self._show_realtime_window)
+        self.pet.doubao_call_requested.connect(self._show_doubao_call_window)
         self.pet.quit_requested.connect(self._on_quit_requested)
         self.settings.settings_changed.connect(self.pet.apply_settings)
         self.settings.settings_changed.connect(self._apply_agent_settings)
@@ -155,9 +155,6 @@ class MiniPetApp(QApplication):
 
     def _show_chat_window(self):
         self.pet.show_chat(self.chat_history, self._append_chat_message, self.chat_store.content_for_llm, self._build_system_prompt)
-
-    def _show_voice_chat_window(self):
-        self._toggle_pet_voice_chat()
 
     def _toggle_pet_voice_chat(self):
         if self.pet_voice_active:
@@ -281,8 +278,8 @@ class MiniPetApp(QApplication):
     def _on_pet_voice_finished(self):
         self.pet_voice_asr_worker = None
 
-    def _show_realtime_window(self):
-        self.pet.show_realtime(None)
+    def _show_doubao_call_window(self):
+        self.pet.show_doubao_call(None)
 
     def _on_quit_requested(self):
         if self.is_quitting:
@@ -819,10 +816,8 @@ class MiniPetApp(QApplication):
         self.settings.shutdown()
         if self.pet.chat_window is not None:
             self.pet.chat_window.shutdown()
-        if self.pet.voice_chat_window is not None:
-            self.pet.voice_chat_window.shutdown()
-        if self.pet.realtime_window is not None:
-            self.pet.realtime_window.shutdown()
+        if self.pet.doubao_call_window is not None:
+            self.pet.doubao_call_window.shutdown()
         self.pet.close_voice_popup()
         if self.pet_voice_asr_worker is not None:
             self.pet_voice_asr_worker.finish()

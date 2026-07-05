@@ -5,17 +5,23 @@ miniPet 设置页面基类，单独放置以避免循环导入。
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QWidget
-from qfluentwidgets import ExpandLayout, ScrollArea
+from qfluentwidgets import ExpandLayout, PrimaryPushButton, ScrollArea
+from qfluentwidgets import FluentIcon as FIF
 
 from miniPet import config
 
 
 class MiniPetScrollPage(ScrollArea):
-    def __init__(self, title, parent=None):
+    def __init__(self, title, parent=None, save_callback=None):
         super().__init__(parent=parent)
         self.scrollWidget = QWidget()
         self.expandLayout = ExpandLayout(self.scrollWidget)
         self.settingLabel = QLabel(title, self)
+        self.saveButton = None
+        if save_callback:
+            self.saveButton = PrimaryPushButton('保存', self)
+            self.saveButton.setIcon(FIF.SAVE)
+            self.saveButton.clicked.connect(save_callback)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setViewportMargins(0, 74, 0, 20)
         self.setWidget(self.scrollWidget)
@@ -29,6 +35,8 @@ class MiniPetScrollPage(ScrollArea):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.settingLabel.move(50, 20)
+        if self.saveButton:
+            self.saveButton.move(self.width() - self.saveButton.width() - 60, 20)
 
     def _set_qss(self):
         qss = config.RES_DIR / 'icons' / 'system' / 'qss' / 'light' / 'setting_interface.qss'
