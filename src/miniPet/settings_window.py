@@ -11,8 +11,10 @@ from qfluentwidgets import (ComboBox, ExpandLayout, FluentWindow, InfoBar, InfoB
 from qfluentwidgets import FluentIcon as FIF
 
 from miniPet import config
+from miniPet.base_page import MiniPetScrollPage
 from miniPet.llm_client import ChatWorker
 from miniPet.memory_store import CATEGORY_LABELS, MEMORY_CATEGORIES, MemoryStore
+from miniPet.protocol_test_page import ProtocolTestPage
 from miniPet.tts_client import TtsCacheWorker, TtsPreviewWorker, stop_tts
 
 
@@ -285,31 +287,6 @@ class AvatarPathSettingCard(LineEditSettingCard):
         self.preview.setPixmap(pm)
         self.name_label.setText(self._filename)
 
-
-class MiniPetScrollPage(ScrollArea):
-    def __init__(self, title, parent=None):
-        super().__init__(parent=parent)
-        self.scrollWidget = QWidget()
-        self.expandLayout = ExpandLayout(self.scrollWidget)
-        self.settingLabel = QLabel(title, self)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setViewportMargins(0, 74, 0, 20)
-        self.setWidget(self.scrollWidget)
-        self.setWidgetResizable(True)
-        self.scrollWidget.setObjectName('scrollWidget')
-        self.settingLabel.setObjectName('settingLabel')
-        self.expandLayout.setSpacing(26)
-        self.expandLayout.setContentsMargins(60, 10, 60, 0)
-        self._set_qss()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.settingLabel.move(50, 20)
-
-    def _set_qss(self):
-        qss = config.RES_DIR / 'icons' / 'system' / 'qss' / 'light' / 'setting_interface.qss'
-        if qss.is_file():
-            self.setStyleSheet(qss.read_text(encoding='utf-8'))
 
 
 class BasicPage(MiniPetScrollPage):
@@ -630,6 +607,17 @@ class RolePage(MiniPetScrollPage):
 
         self.memoryListGroup = SettingCardGroup('总结重点管理', self.scrollWidget)
 
+        self.chatRestoreGroup = SettingCardGroup('历史对话', self.scrollWidget)
+        rc = config.chat_restore_config
+        self.restoreEnabledCard = SwitchSettingCard(FIF.HISTORY, '启动时恢复对话', '上电后自动加载之前的聊天记录作为上下文', parent=self.chatRestoreGroup)
+        self.restoreEnabledCard.setChecked(bool(rc.get('enabled', True)))
+        self.restoreMaxMsgCard = LineEditSettingCard(FIF.FONT_SIZE, '最多加载条数', '最多恢复多少条历史消息（最新的优先）', placeholder='20', parent=self.chatRestoreGroup)
+        self.restoreMaxMsgCard.lineEdit.setFixedWidth(120)
+        self.restoreMaxMsgCard.setText(rc.get('max_messages', 20))
+        self.restoreMaxDaysCard = LineEditSettingCard(FIF.CALENDAR, '往前追溯天数', '最多往前查找几天的记录（1=仅今天）', placeholder='1', parent=self.chatRestoreGroup)
+        self.restoreMaxDaysCard.lineEdit.setFixedWidth(120)
+        self.restoreMaxDaysCard.setText(rc.get('max_days', 1))
+
         self.manageGroup = SettingCardGroup('保存', self.scrollWidget)
         self.clearCard = PushSettingCard('清空', FIF.DELETE, '当前对话', '清空本次运行中的短期上下文，不删除已总结的重点', self.manageGroup)
         self.clearCard.clicked.connect(self._clear_history)
@@ -641,11 +629,14 @@ class RolePage(MiniPetScrollPage):
         for card in [self.autoMemoryCard, self.memoryEveryCard, self.memoryRecentCard, self.memoryMaxItemsCard]:
             self.autoMemoryGroup.addSettingCard(card)
         self.reload_memories()
+        for card in [self.restoreEnabledCard, self.restoreMaxMsgCard, self.restoreMaxDaysCard]:
+            self.chatRestoreGroup.addSettingCard(card)
         self.manageGroup.addSettingCard(self.clearCard)
         self.manageGroup.addSettingCard(self.saveCard)
         self.expandLayout.addWidget(self.roleGroup)
         self.expandLayout.addWidget(self.autoMemoryGroup)
         self.expandLayout.addWidget(self.memoryListGroup)
+        self.expandLayout.addWidget(self.chatRestoreGroup)
         self.expandLayout.addWidget(self.manageGroup)
 
     def _style_editor(self, editor):
@@ -766,7 +757,12 @@ class RolePage(MiniPetScrollPage):
         cfg['auto_memory_recent_messages'] = self._parse_int_card(self.memoryRecentCard, 12)
         cfg['auto_memory_max_items_per_pass'] = self._parse_int_card(self.memoryMaxItemsCard, 3)
         config.save_llm_config(cfg)
-        InfoBar.success('保存成功', '角色和自动总结设置已保存', duration=2000, position=InfoBarPosition.BOTTOM, parent=self.window())
+        rc = dict(config.chat_restore_config)
+        rc['enabled'] = self.restoreEnabledCard.isChecked()
+        rc['max_messages'] = self._parse_int_card(self.restoreMaxMsgCard, 20)
+        rc['max_days'] = self._parse_int_card(self.restoreMaxDaysCard, 1)
+        config.save_chat_restore_config(rc)
+        InfoBar.success('保存成功', '角色、自动总结和对话恢复设置已保存', duration=2000, position=InfoBarPosition.BOTTOM, parent=self.window())
 
     def _clear_history(self):
         self.clear_history_requested.emit()
@@ -841,8 +837,14 @@ class TTSPage(MiniPetScrollPage):
         return '你好呀，我是%s，有什么需要帮助的吗' % preview_name
 
     def _preview_voice(self):
-        if self._initializing or self.preview_worker is not None:
+        if self._initializing:
             return
+        # 打断正在进行的预览，换新角色
+        if self.preview_worker is not None:
+            self.preview_worker.result_ready.disconnect(self._on_preview_result)
+            stop_tts()
+            self.preview_worker.wait(500)
+            self.preview_worker = None
         voice_value = self.voiceCard.currentValue() or config.DEFAULT_TTS_CONFIG['voice_name']
         self.preview_worker = TtsPreviewWorker(self._voice_preview_path(voice_value), parent=self)
         self.preview_worker.result_ready.connect(self._on_preview_result)
@@ -1031,6 +1033,8 @@ class SettingsWindow(FluentWindow):
         self.realtime.setObjectName('RealtimePage')
         self.role_tools = RoleToolsPage(self)
         self.role_tools.setObjectName('RoleToolsPage')
+        self.protocol_test = ProtocolTestPage(self)
+        self.protocol_test.setObjectName('ProtocolTestPage')
         self.basic.settings_changed.connect(self.settings_changed)
         self.agent.settings_changed.connect(self.settings_changed)
         self.basic.pet_changed.connect(self.pet_changed)
@@ -1043,6 +1047,7 @@ class SettingsWindow(FluentWindow):
         self.addSubInterface(self.reply_display, FIF.MESSAGE, '回复显示')
         self.addSubInterface(self.realtime, FIF.PHONE, '豆包通话')
         self.addSubInterface(self.role_tools, _icon('minipet.svg'), '角色资源')
+        self.addSubInterface(self.protocol_test, FIF.DEVELOPER_TOOLS, '协议测试')
         self.navigationInterface.setExpandWidth(180)
         self.navigationInterface.setMinimumExpandWidth(180)
         self.navigationInterface.setCollapsible(False)

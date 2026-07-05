@@ -47,6 +47,7 @@ class MiniPetApp(QApplication):
         if self.events:
             self.events.set_url(self._agent_ws_url())
         self.chat_history = []
+        self._restore_chat_history()
         self.memory_worker = None
         self.user_turns_since_memory_check = 0
         self.quick_chat_worker = None
@@ -58,6 +59,7 @@ class MiniPetApp(QApplication):
         self.pet_voice_asr_worker = None
         self.pet_voice_waiting_reply = False
         self.pet_voice_paused = False
+        self.pet_voice_shared_screen = None  # 语音球屏幕共享
         self.is_quitting = False
 
         self.pet.show_settings.connect(self.settings.show_window)
@@ -66,6 +68,7 @@ class MiniPetApp(QApplication):
         self.pet.chat_requested.connect(self._show_chat_window)
         self.pet.voice_chat_requested.connect(self._show_voice_chat_window)
         self.pet.voice_pause_requested.connect(self._pause_pet_voice_chat)
+        self.pet.share_screen_requested.connect(self._on_voice_share_screen_toggled)
         self.pet.realtime_requested.connect(self._show_realtime_window)
         self.pet.quit_requested.connect(self._on_quit_requested)
         self.settings.settings_changed.connect(self.pet.apply_settings)
@@ -79,6 +82,23 @@ class MiniPetApp(QApplication):
             if self._agent_backend() != 'builtin':
                 self.events.start()
         QTimer.singleShot(0, self._show_startup_greeting)
+
+    def _restore_chat_history(self):
+        cfg = config.chat_restore_config
+        if not cfg.get('enabled', True):
+            return
+        max_messages = max(1, int(cfg.get('max_messages') or 20))
+        max_days = max(1, int(cfg.get('max_days') or 1))
+        from datetime import date, timedelta
+        collected = []
+        for delta in range(max_days):
+            day = date.today() - timedelta(days=delta)
+            date_text = day.strftime('%Y-%m-%d')
+            messages = self.chat_store.load_date(date_text)
+            collected = messages + collected
+            if len(collected) >= max_messages:
+                break
+        self.chat_history = collected[-max_messages:]
 
     def _agent_backend(self):
         return config.app_config.get('agent_backend', 'builtin') or 'builtin'
@@ -196,12 +216,39 @@ class MiniPetApp(QApplication):
         self.pet_voice_active = False
         self.pet_voice_waiting_reply = False
         self.pet_voice_paused = False
+        self.pet_voice_shared_screen = None
         if self.pet_voice_asr_worker is not None:
             self.pet_voice_asr_worker.finish()
             self.pet_voice_asr_worker.wait(1200)
             self.pet_voice_asr_worker = None
         stop_tts()
         self.pet.close_voice_popup()
+
+    def _on_voice_share_screen_toggled(self, enabled):
+        if enabled:
+            screen = QApplication.primaryScreen()
+            self.pet_voice_shared_screen = screen
+        else:
+            self.pet_voice_shared_screen = None
+
+    def _capture_voice_screenshot(self):
+        import base64
+        from PySide6.QtCore import QByteArray, QBuffer, QIODevice
+        from PySide6.QtCore import Qt as _Qt
+        screen = self.pet_voice_shared_screen
+        if screen is None:
+            return ''
+        pixmap = screen.grabWindow(0)
+        if pixmap.isNull():
+            return ''
+        image = pixmap.toImage()
+        if image.width() > 1280:
+            image = image.scaledToWidth(1280, _Qt.SmoothTransformation)
+        data = QByteArray()
+        buf = QBuffer(data)
+        buf.open(QIODevice.WriteOnly)
+        image.save(buf, 'JPEG', 85)
+        return 'data:image/jpeg;base64,' + base64.b64encode(bytes(data)).decode('ascii')
 
     def _on_pet_voice_status(self, text):
         if self.pet_voice_active and not self.pet_voice_paused and text in ('ASR已连接', '正在识别') and self.quick_chat_worker is None and self.quick_tts_worker is None:
@@ -218,7 +265,8 @@ class MiniPetApp(QApplication):
         self._stop_pet_voice_recording()
         self.pet_voice_waiting_reply = True
         self.pet.update_voice_popup('thinking', text)
-        if not self._submit_quick_chat(text, 'voice_chat'):
+        screenshot = self._capture_voice_screenshot()
+        if not self._submit_quick_chat(text, 'voice_chat', screenshot=screenshot):
             self.pet_voice_waiting_reply = False
             if self.pet_voice_active:
                 QTimer.singleShot(800, self._start_pet_voice_recording)
@@ -250,11 +298,13 @@ class MiniPetApp(QApplication):
             self.pet.quit_now()
 
     def _append_chat_message(self, role, content, source):
-        message = {'role': role, 'content': content, 'source': source}
-        self.chat_history.append(message)
+        # 保存到磁盘（ChatStore）
+        stored_message = self.chat_store.append(role, content, source, pet_name=config.current_pet)
+        # 同时追加到内存中的运行时历史
+        self.chat_history.append(stored_message)
         if role == 'user':
             self._maybe_schedule_memory_extraction()
-        return message
+        return stored_message
 
     def _build_system_prompt(self):
         parts = [
@@ -445,7 +495,7 @@ class MiniPetApp(QApplication):
                 lines.append('- ' + json.dumps(item, ensure_ascii=False))
         return '\n'.join(lines)
 
-    def _submit_quick_chat(self, text, source='quick_chat'):
+    def _submit_quick_chat(self, text, source='quick_chat', screenshot=''):
         if self.quick_chat_worker is not None:
             if source == 'quick_chat' and self.pet.input_popup is not None:
                 self.pet.input_popup.finish_thinking()
@@ -457,7 +507,7 @@ class MiniPetApp(QApplication):
         self._append_chat_message('user', text, source)
         if self.pet.chat_window is not None and self.pet.chat_window.isVisible():
             self.pet.chat_window.reload_history()
-        self.quick_chat_worker = ChatWorker(self._build_quick_chat_messages(), parent=self)
+        self.quick_chat_worker = ChatWorker(self._build_quick_chat_messages(screenshot=screenshot), parent=self)
         self.quick_chat_worker.result_ready.connect(self._on_quick_chat_reply)
         self.quick_chat_worker.start()
         return True
@@ -474,13 +524,27 @@ class MiniPetApp(QApplication):
         else:
             self.chat_history.clear()
 
-    def _build_quick_chat_messages(self):
+    def _build_quick_chat_messages(self, screenshot=''):
         messages = []
         system = self._build_system_prompt()
         if system:
             messages.append({'role': 'system', 'content': system})
-        for message in self.chat_history[-10:]:
+        history = list(self.chat_history[-10:])
+        # 历史消息除最后一条外都用纯文本
+        for message in history[:-1]:
             messages.append({'role': message.get('role'), 'content': self.chat_store.content_for_llm(message.get('content', ''))})
+        # 最后一条（刚刚说的那句话）附加截图
+        if history:
+            last = history[-1]
+            text = self.chat_store.content_for_llm(last.get('content', ''))
+            if screenshot and last.get('role') == 'user':
+                content = [
+                    {'type': 'image_url', 'image_url': {'url': screenshot}},
+                    {'type': 'text', 'text': text},
+                ]
+            else:
+                content = text
+            messages.append({'role': last.get('role'), 'content': content})
         return messages
 
     def _on_quick_chat_reply(self, success, text):

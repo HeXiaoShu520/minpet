@@ -56,6 +56,18 @@ DEFAULT_TTS_CONFIG = {
     'max_length_to_filter_parenthesis': 0,
 }
 
+DEFAULT_CHAT_RESTORE_CONFIG = {
+    'enabled': True,             # 启动时是否恢复上次对话
+    'max_messages': 20,          # 最多加载最近多少条消息
+    'max_days': 1,               # 最多往前追溯多少天
+}
+
+CHAT_RESTORE_ENV_KEYS = {
+    'enabled': 'CHAT_RESTORE_ENABLED',
+    'max_messages': 'CHAT_RESTORE_MAX_MESSAGES',
+    'max_days': 'CHAT_RESTORE_MAX_DAYS',
+}
+
 DEFAULT_TYPEWRITER_CONFIG = {
     'enabled': True,        # 打字机效果总开关
     'speed_ms': 28,         # 每字间隔上限（毫秒）
@@ -116,6 +128,7 @@ llm_config = dict(DEFAULT_LLM_CONFIG)
 tts_config = dict(DEFAULT_TTS_CONFIG)
 realtime_config = dict(DEFAULT_REALTIME_CONFIG)
 typewriter_config = dict(DEFAULT_TYPEWRITER_CONFIG)
+chat_restore_config = dict(DEFAULT_CHAT_RESTORE_CONFIG)
 current_image = None
 previous_anchor = [0, 0]
 current_anchor = [0, 0]
@@ -219,7 +232,7 @@ def _save_env_config(config, env_keys, defaults, section_title):
 
 
 def load():
-    global app_config, llm_config, tts_config, realtime_config, typewriter_config, current_pet
+    global app_config, llm_config, tts_config, realtime_config, typewriter_config, chat_restore_config, current_pet
     ensure_data_dir()
     pets = get_pet_list()
     app_config = dict(DEFAULT_APP_CONFIG)
@@ -237,6 +250,7 @@ def load():
     tts_config = _load_env_config(DEFAULT_TTS_CONFIG, TTS_ENV_KEYS)
     realtime_config = _load_env_config(DEFAULT_REALTIME_CONFIG, REALTIME_ENV_KEYS)
     typewriter_config = _load_env_config(DEFAULT_TYPEWRITER_CONFIG, TYPEWRITER_ENV_KEYS)
+    chat_restore_config = _load_env_config(DEFAULT_CHAT_RESTORE_CONFIG, CHAT_RESTORE_ENV_KEYS)
     save_app_config()
 
 
@@ -267,3 +281,9 @@ def save_realtime_config(config):
     global realtime_config
     realtime_config = dict(config)
     _save_env_config(realtime_config, REALTIME_ENV_KEYS, DEFAULT_REALTIME_CONFIG, '# MINIPET Realtime settings')
+
+
+def save_chat_restore_config(config):
+    global chat_restore_config
+    chat_restore_config = dict(config)
+    _save_env_config(chat_restore_config, CHAT_RESTORE_ENV_KEYS, DEFAULT_CHAT_RESTORE_CONFIG, '# MINIPET ChatRestore settings')
