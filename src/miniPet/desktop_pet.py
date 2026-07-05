@@ -956,10 +956,21 @@ class EasterActionButton(QPushButton):
         painter.setPen(QPen(QColor(232, 191, 112, 120), 1))
         painter.drawEllipse(icon_rect)
 
-        font = QFont('Microsoft YaHei UI', 19)
-        painter.setFont(font)
-        painter.setPen(QColor(92, 59, 24))
-        painter.drawText(icon_rect, Qt.AlignCenter, self.icon_text)
+        if '/' in self.icon_text or '\\' in self.icon_text or '.png' in self.icon_text.lower():
+            from pathlib import Path
+            icon_path = Path(self.icon_text) if not self.icon_text.startswith('res/') else config.RES_DIR / self.icon_text.replace('res/', '')
+            if icon_path.exists():
+                pixmap = QPixmap(str(icon_path))
+                if not pixmap.isNull():
+                    scaled = pixmap.scaled(int(icon_rect.width()), int(icon_rect.height()), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    x_offset = (icon_rect.width() - scaled.width()) / 2
+                    y_offset = (icon_rect.height() - scaled.height()) / 2
+                    painter.drawPixmap(int(icon_rect.x() + x_offset), int(icon_rect.y() + y_offset), scaled)
+        else:
+            font = QFont('Microsoft YaHei UI', 19)
+            painter.setFont(font)
+            painter.setPen(QColor(92, 59, 24))
+            painter.drawText(icon_rect, Qt.AlignCenter, self.icon_text)
 
         font = QFont('Microsoft YaHei UI', 10, QFont.Bold)
         painter.setFont(font)
@@ -1079,7 +1090,7 @@ class PetEasterMenu(QFrame):
 
 
 class PetQuickMenu(QFrame):
-    def __init__(self, x, top_y, bottom_y, on_settings, on_chat, on_voice_chat, on_realtime, on_quit, on_share_screen, share_screen_active=False, parent=None):
+    def __init__(self, x, top_y, bottom_y, on_settings, on_chat, on_voice_chat, on_realtime, on_quit, on_share_screen, share_screen_active=False, voice_chat_active=False, parent=None):
         super().__init__(parent)
         self.anim_group = None
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.NoDropShadowWindowHint)
@@ -1100,6 +1111,10 @@ class PetQuickMenu(QFrame):
             QPushButton:hover { background: #eef6ff; }
             QPushButton:pressed { background: #dbeeff; }
             QPushButton#ShareScreenBtn:checked { background: #dbeeff; }
+            QPushButton#VoiceChatBtn { background: #fee; border: 1px solid #fcc; }
+            QPushButton#VoiceChatBtn:hover { background: #fdd; }
+            QPushButton#VoiceChatBtn:checked { background: #dbeeff; border: none; }
+            QPushButton#VoiceChatBtn:checked:hover { background: #c8e5ff; }
         ''')
         card = QFrame(self)
         card.setObjectName('QuickMenuCard')
@@ -1109,6 +1124,8 @@ class PetQuickMenu(QFrame):
         settings_btn = QPushButton(card)
         chat_btn = QPushButton(card)
         voice_chat_btn = QPushButton(card)
+        voice_chat_btn.setObjectName('VoiceChatBtn')
+        voice_chat_btn.setCheckable(True)
         share_screen_btn = QPushButton(card)
         share_screen_btn.setObjectName('ShareScreenBtn')
         share_screen_btn.setCheckable(True)
@@ -1116,7 +1133,7 @@ class PetQuickMenu(QFrame):
         quit_btn = QPushButton(card)
         settings_btn.setIcon(QIcon(str(config.RES_DIR / 'icons' / 'SystemPanel.png')))
         chat_btn.setIcon(QIcon(str(config.RES_DIR / 'icons' / 'Dialogue_icon.png')))
-        voice_chat_btn.setIcon(FIF.CHAT.icon())
+        voice_chat_btn.setIcon(FIF.MICROPHONE.icon())
         share_screen_btn.setIcon(QIcon(str(config.RES_DIR / 'icons' / 'system' / 'screen_share.svg')))
         realtime_btn.setIcon(FIF.PHONE.icon())
         quit_btn.setIcon(FIF.POWER_BUTTON.icon())
@@ -1128,11 +1145,12 @@ class PetQuickMenu(QFrame):
         voice_chat_btn.setToolTip('语音聊天')
         share_screen_btn.setToolTip('共享屏幕（语音时附带截图）')
         share_screen_btn.setChecked(share_screen_active)
+        voice_chat_btn.setChecked(voice_chat_active)
         realtime_btn.setToolTip('豆包通话')
         quit_btn.setToolTip('退出')
         settings_btn.clicked.connect(lambda: self._trigger(on_settings))
         chat_btn.clicked.connect(lambda: self._trigger(on_chat))
-        voice_chat_btn.clicked.connect(lambda: self._trigger(on_voice_chat))
+        voice_chat_btn.clicked.connect(lambda checked: on_voice_chat(checked))
         share_screen_btn.clicked.connect(lambda checked: on_share_screen(checked))
         realtime_btn.clicked.connect(lambda: self._trigger(on_realtime))
         quit_btn.clicked.connect(lambda: self._trigger(on_quit))
@@ -1223,6 +1241,7 @@ class DesktopPet(QWidget):
         self.voice_popup = None
         self.quick_menu = None
         self._share_screen_active = False
+        self._voice_chat_active = False
         self.drop_popup = None
         self.wooden_fish_popup = None
         self.fortune_stick_popup = None
@@ -1667,7 +1686,7 @@ class DesktopPet(QWidget):
             ('🐚', '魔法海螺', '问一个是/否问题', self.show_magic_conch),
             ('🎋', '今日求签', '摇一支今日运势', self.show_fortune),
             ('🎲', '摇骰子', '交给随机数决定', self.show_dice),
-            ('🪙', '抛硬币', '正反之间做选择', self.show_coin),
+            ('res/icons/easter/coin.png', '抛硬币', '正反之间做选择', self.show_coin),
             ('🐟', '电子木鱼', '功德 +1，Bug -1', self.toggle_wooden_fish),
             ('🎁', '桌宠扭蛋', '胶囊里有今日惊喜', self.show_gacha),
         ]
@@ -1727,12 +1746,19 @@ class DesktopPet(QWidget):
             self.quick_menu.close()
             return
         x, top_y, bottom_y = self.quick_menu_anchor()
-        self.quick_menu = PetQuickMenu(x, top_y, bottom_y, self.show_settings.emit, self.chat_requested.emit, self.voice_chat_requested.emit, self.realtime_requested.emit, self.quit, self._on_share_screen_toggle, share_screen_active=self._share_screen_active, parent=self)
+        self.quick_menu = PetQuickMenu(x, top_y, bottom_y, self.show_settings.emit, self.chat_requested.emit, self._on_voice_chat_toggle, self.realtime_requested.emit, self.quit, self._on_share_screen_toggle, share_screen_active=self._share_screen_active, voice_chat_active=self._voice_chat_active, parent=self)
         self.quick_menu.destroyed.connect(lambda: setattr(self, 'quick_menu', None))
 
     def _on_share_screen_toggle(self, checked):
         self._share_screen_active = checked
         self.share_screen_requested.emit(checked)
+
+    def _on_voice_chat_toggle(self, checked):
+        self._voice_chat_active = checked
+        if checked:
+            self.voice_chat_requested.emit()
+        else:
+            pass  # 关闭语音聊天窗口的逻辑
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.LeftButton:

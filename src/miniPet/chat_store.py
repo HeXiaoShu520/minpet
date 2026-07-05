@@ -249,7 +249,10 @@ class ChatStore:
 
     def _src_to_path(self, src):
         if src.startswith('file:///'):
-            return Path(src.replace('file:///', '', 1))
+            # URL解码，处理中文路径
+            from urllib.parse import unquote
+            decoded = unquote(src.replace('file:///', '', 1))
+            return Path(decoded)
         path = Path(src)
         if path.is_absolute():
             return path

@@ -1,0 +1,36 @@
+# coding:utf-8
+"""
+miniPet 设置页面基类，单独放置以避免循环导入。
+"""
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLabel, QWidget
+from qfluentwidgets import ExpandLayout, ScrollArea
+
+from miniPet import config
+
+
+class MiniPetScrollPage(ScrollArea):
+    def __init__(self, title, parent=None):
+        super().__init__(parent=parent)
+        self.scrollWidget = QWidget()
+        self.expandLayout = ExpandLayout(self.scrollWidget)
+        self.settingLabel = QLabel(title, self)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setViewportMargins(0, 74, 0, 20)
+        self.setWidget(self.scrollWidget)
+        self.setWidgetResizable(True)
+        self.scrollWidget.setObjectName('scrollWidget')
+        self.settingLabel.setObjectName('settingLabel')
+        self.expandLayout.setSpacing(26)
+        self.expandLayout.setContentsMargins(60, 10, 60, 0)
+        self._set_qss()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.settingLabel.move(50, 20)
+
+    def _set_qss(self):
+        qss = config.RES_DIR / 'icons' / 'system' / 'qss' / 'light' / 'setting_interface.qss'
+        if qss.is_file():
+            self.setStyleSheet(qss.read_text(encoding='utf-8'))

@@ -198,16 +198,14 @@ class BubbleText(QFrame):
         msg_label.setWordWrap(True)
         msg_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         msg_label.setMinimumWidth(180)
-        # 根据内容长度自适应宽度：短内容窄一些，长内容宽一些
+        # 根据内容长度适度调整宽度，避免过宽
         content_length = len(message or '')
         if content_length < 30:
             max_width = 260
-        elif content_length < 100:
-            max_width = 340
-        elif content_length < 200:
-            max_width = 420
+        elif content_length < 80:
+            max_width = 320
         else:
-            max_width = 500
+            max_width = 360  # 长内容也不要太宽，保持合理宽度让文字换行
         msg_label.setMaximumWidth(max_width)
         text_box.addWidget(title_label)
         text_box.addWidget(msg_label, 0, Qt.AlignTop)
@@ -218,17 +216,19 @@ class BubbleText(QFrame):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(card)
         wrapped = message or ''
-        html_text = _markdown_to_html(wrapped)
-        msg_label.setText(html_text)
+        # 先用纯文本计算窗口大小，避免HTML标签影响尺寸
+        msg_label.setText(wrapped)
         self.adjustSize()
         msg_label.clear()
+        # 然后启用富文本并使用打字机效果显示
         self._tw = Typewriter(msg_label)
+        html_text = _markdown_to_html(wrapped)
         tts_on = config.tts_config.get('enabled') and config.tts_config.get('api_key')
         delay = int(config.typewriter_config.get('tts_delay_ms', 500)) if tts_on else 0
         if delay > 0:
-            QTimer.singleShot(delay, lambda: self._tw.typewrite(wrapped))
+            QTimer.singleShot(delay, lambda: self._tw.typewrite(html_text))
         else:
-            self._tw.typewrite(wrapped)
+            self._tw.typewrite(html_text)
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.request_close)

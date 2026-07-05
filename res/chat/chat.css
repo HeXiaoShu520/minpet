@@ -62,9 +62,18 @@ body:hover ::-webkit-scrollbar-thumb{background:rgba(120,128,140,0.35);}
 .card-btn{background:#f0f7ff;border:1px solid #bfdbfe;color:#1677ff;border-radius:6px;padding:4px 14px;font-size:13px;cursor:pointer;transition:background .15s;}
 .card-btn:hover{background:#dbeafe;}
 
-/* 流式光标 */
-.typing-cursor::after{content:"▋";animation:blink .7s steps(1) infinite;}
-@keyframes blink{0%,100%{opacity:1;}50%{opacity:0;}}
+/* 流式光标 - 改进为打点动画 */
+.typing-cursor::after{
+  content:"";
+  display:inline-block;
+  width:20px;
+  animation:typing-dots 1.4s infinite;
+}
+@keyframes typing-dots{
+  0%{content:"·";}
+  33%{content:"··";}
+  66%{content:"···";}
+}
 
 /* 灯箱 */
 #lightbox{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9999;align-items:center;justify-content:center;cursor:zoom-out;}
