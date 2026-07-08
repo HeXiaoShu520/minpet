@@ -1,10 +1,16 @@
 # coding:utf-8
+"""
+豆包端到端 Realtime 客户端。
+
+负责 Realtime WebSocket 会话、麦克风采集、服务端音频播放和事件分发。
+窗口层只接收状态、ASR 文本、AI 文本和输入音量，不直接处理协议细节。
+"""
+
 import asyncio
 import audioop
 import inspect
 import queue
 import threading
-import time
 import uuid
 
 from PySide6.QtCore import QThread, Signal
@@ -20,7 +26,7 @@ except Exception:
     websockets = None
 
 from miniPet import config
-from miniPet.realtime_protocol import (
+from miniPet.protocols.realtime_protocol import (
     EVENT_ASR_INFO,
     EVENT_ASR_RESPONSE,
     EVENT_CHAT_ENDED,
@@ -29,7 +35,6 @@ from miniPet.realtime_protocol import (
     EVENT_CONNECTION_FAILED,
     EVENT_CONNECTION_STARTED,
     EVENT_DIALOG_COMMON_ERROR,
-    EVENT_END_ASR,
     EVENT_FINISH_CONNECTION,
     EVENT_FINISH_SESSION,
     EVENT_SESSION_CANCELED,
@@ -41,12 +46,11 @@ from miniPet.realtime_protocol import (
     EVENT_START_SESSION,
     EVENT_TTS_ENDED,
     EVENT_TTS_RESPONSE,
-    EVENT_TTS_SENTENCE_START,
     build_audio_event,
     build_json_event,
     parse_packet,
 )
-from miniPet.tts_client import PcmStreamPlayer, stop_tts
+from miniPet.clients.tts_client import PcmStreamPlayer, stop_tts
 
 REALTIME_URL = 'wss://openspeech.bytedance.com/api/v3/realtime/dialogue'
 REALTIME_RESOURCE_ID = 'volc.speech.dialog'
@@ -59,10 +63,12 @@ INPUT_CHUNK_BYTES = int(INPUT_SAMPLE_RATE * INPUT_CHUNK_MS / 1000) * SAMPLE_WIDT
 
 
 class RealtimeError(Exception):
-    pass
+    """Realtime 通话链路异常。"""
 
 
 class MicrophoneStreamer:
+    """把麦克风 PCM 块推给上层回调的轻量封装。"""
+
     def __init__(self, on_audio):
         if sd is None:
             raise RealtimeError('缺少 sounddevice，请执行：pip install sounddevice')

@@ -1,4 +1,11 @@
 # coding:utf-8
+"""
+外部智能体事件客户端。
+
+miniPet 可选连接 OpenClaw 或通用后端 WebSocket。这个模块负责维持连接、发送
+session hello、接收事件并规范化为协议 V1 的内部事件字典。
+"""
+
 import asyncio
 import json
 import os
@@ -7,10 +14,12 @@ import urllib.request
 import websockets
 from PySide6.QtCore import QThread, Signal
 
-from miniPet.protocol_v1 import SESSION_HELLO, USER_ACTION, hello_payload, normalize_inbound_event
+from miniPet.protocols.protocol_v1 import SESSION_HELLO, USER_ACTION, hello_payload, normalize_inbound_event
 
 
 class EventClient(QThread):
+    """后台 WebSocket 客户端，向 UI 线程发出规范化事件。"""
+
     event_received = Signal(dict)
     connection_changed = Signal(bool)
 

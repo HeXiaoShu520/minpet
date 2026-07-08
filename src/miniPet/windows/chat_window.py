@@ -1,9 +1,18 @@
 # coding:utf-8
-import html
+"""
+文本聊天窗口。
+
+聊天内容由 res/chat/chat.html 渲染，Python 侧负责：
+- 收集输入文本和粘贴/拖入图片。
+- 通过 ChatWorker 调用 LLM，并把流式增量推给 WebEngine。
+- 按配置触发 TTS 播放。
+- 与 ChatStore/MiniPetApp 共享历史消息。
+"""
+
 import json
 import uuid
 
-from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QFont, QIcon, QKeyEvent, QPixmap
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -12,8 +21,8 @@ from qfluentwidgets import TitleLabel, TransparentToolButton
 from qfluentwidgets import FluentIcon as FIF
 
 from miniPet import config
-from miniPet.llm_client import ChatWorker
-from miniPet.tts_client import TtsWorker, stop_tts
+from miniPet.clients.llm_client import ChatWorker
+from miniPet.clients.tts_client import TtsWorker, stop_tts
 
 try:
     from PySide6.QtTextEdit import QTextEdit
@@ -22,6 +31,8 @@ except ImportError:
 
 
 class ChatInput(QTextEdit):
+    """支持回车发送、Shift+Enter 换行、粘贴/拖入图片的输入框。"""
+
     image_pasted = Signal(str)
 
     def __init__(self, parent=None):
@@ -94,6 +105,8 @@ def _scaled_pixmap(pixmap, w, h, mode=Qt.KeepAspectRatio):
 
 
 class Avatar(QLabel):
+    """聊天消息头像，图片加载失败时回退为单字文本。"""
+
     def __init__(self, pixmap_path, fallback_text, is_user=False, parent=None, size=38, icon_size=30):
         super().__init__(parent)
         self.setFixedSize(size, size)
@@ -134,6 +147,13 @@ class ChatBridge(QWebChannel):
 
 
 class ChatWindow(QWidget):
+    """完整文本聊天窗口。
+
+    这个窗口把 Qt 输入区和 WebEngine 消息区组合在一起。history 由外层
+    MiniPetApp 传入时，窗口只负责展示和提交消息；没有外部 append_message 时
+    则在本地列表里维护临时历史，便于独立测试。
+    """
+
     def __init__(self, pet_name='', parent=None, history=None, append_message=None, content_for_llm=None, system_prompt_builder=None):
         super().__init__(parent)
         self.pet_name = pet_name
@@ -323,6 +343,7 @@ class ChatWindow(QWidget):
         return blocks
 
     def _send(self):
+        """发送用户输入，启动一条流式 assistant 消息。"""
         text = self.input.toPlainText().strip()
         if (not text and not self.pending_images) or self.worker is not None:
             return
@@ -349,6 +370,7 @@ class ChatWindow(QWidget):
         self.worker.start()
 
     def _build_messages(self):
+        """构造发给 LLM 的上下文，保留最近 20 条聊天记录。"""
         messages = []
         system = self.system_prompt_builder() if self.system_prompt_builder else ''
         if not system:

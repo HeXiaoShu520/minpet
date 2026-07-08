@@ -1,4 +1,12 @@
 # coding:utf-8
+"""
+聊天记录持久化。
+
+每天一个 JSONL 会话文件，消息里的图片会落盘到 data/chat/images，运行时再转换
+成可展示/可发送给 LLM 的内容。SQLite 搜索库和 summaries.json 预留给历史搜索
+和摘要能力。
+"""
+
 import base64
 import hashlib
 import json
@@ -12,6 +20,8 @@ SCHEMA_VERSION = 1
 
 
 class ChatStore:
+    """聊天消息、图片附件和历史索引的本地存储。"""
+
     def __init__(self, root_dir):
         self.root_dir = Path(root_dir)
         self.sessions_dir = self.root_dir / 'sessions'

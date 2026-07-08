@@ -1,4 +1,12 @@
 # coding:utf-8
+"""
+miniPet 应用组装入口。
+
+MiniPetApp 是整个桌宠程序的协调层，负责把桌宠窗口、设置窗口、聊天记录、
+通知气泡、外部智能体事件、语音识别和 TTS 串在一起。具体 UI 和协议实现
+分散在各自模块中，这里只保留跨模块流程编排。
+"""
+
 import json
 import signal
 import sys
@@ -10,19 +18,29 @@ from PySide6.QtWidgets import QApplication, QInputDialog
 from qfluentwidgets import FluentTranslator, setThemeColor
 
 from miniPet import config
-from miniPet.asr_client import AsrWorker
-from miniPet.chat_store import ChatStore
-from miniPet.desktop_pet import DesktopPet
-from miniPet.event_client import EventClient
-from miniPet.llm_client import ChatWorker
-from miniPet.memory_store import MEMORY_CATEGORIES, MemoryStore
-from miniPet.notification import NotificationCenter
-from miniPet.protocol_v1 import AGENT_STATE, SESSION_PING, SESSION_PONG, SESSION_READY, SURFACE_KINDS, SURFACE_SHOW, USER_COMMAND, USER_DROP, USER_INPUT, V1_CAPABILITIES, normalize_inbound_event
+from miniPet.clients.asr_client import AsrWorker
+from miniPet.storage.chat_store import ChatStore
+from miniPet.pet.desktop_pet import DesktopPet
+from miniPet.clients.event_client import EventClient
+from miniPet.clients.llm_client import ChatWorker
+from miniPet.storage.memory_store import MEMORY_CATEGORIES, MemoryStore
+from miniPet.widgets.notifications.center import NotificationCenter
+from miniPet.protocols.protocol_v1 import AGENT_STATE, SESSION_PING, SESSION_PONG, SESSION_READY, SURFACE_KINDS, SURFACE_SHOW, USER_COMMAND, USER_DROP, USER_INPUT, V1_CAPABILITIES, normalize_inbound_event
 from miniPet.settings_window import SettingsWindow
-from miniPet.tts_client import TtsPreviewWorker, TtsWorker, stop_tts
+from miniPet.clients.tts_client import TtsPreviewWorker, TtsWorker, stop_tts
 
 
 class MiniPetApp(QApplication):
+    """miniPet 主应用对象。
+
+    这个类是跨模块的“胶水层”：它不直接绘制桌宠或聊天窗口，而是负责创建
+    DesktopPet、SettingsWindow、NotificationCenter 等对象，并通过 Qt 信号把
+    用户操作、LLM 回复、TTS 播放和外部事件连接起来。
+
+    运行时聊天上下文只保存在 self.chat_history 中；长期有用的信息由
+    MemoryStore 管理并拼入系统提示。
+    """
+
     def __init__(self, argv, start_event_client=True):
         super().__init__(argv)
         self.setQuitOnLastWindowClosed(False)
@@ -33,6 +51,7 @@ class MiniPetApp(QApplication):
         if config.app_config.get('theme_color'):
             setThemeColor(config.app_config['theme_color'])
 
+        # 多屏环境下把主屏放到第一位，桌宠初始定位和找回逻辑都会优先参考它。
         screens = self.screens()
         primary = self.primaryScreen()
         if primary in screens:
@@ -46,15 +65,19 @@ class MiniPetApp(QApplication):
         self.events = EventClient() if start_event_client else None
         if self.events:
             self.events.set_url(self._agent_ws_url())
+        # 当前运行中的短期上下文；可选从磁盘恢复最近消息，但不会替代长期记忆。
         self.chat_history = []
         self._restore_chat_history()
         self.memory_worker = None
         self.user_turns_since_memory_check = 0
+        # quick_chat_* 管理桌宠头顶快速输入：LLM 请求、回复气泡和可选 TTS 播报。
         self.quick_chat_worker = None
         self.quick_tts_worker = None
         self.event_tts_worker = None
         self.quick_chat_source = 'quick_chat'
         self.quick_thinking_bubble_id = None
+
+        # pet_voice_* 是桌宠旁边的轻量语音聊天状态，不等同于独立 Realtime 通话窗口。
         self.pet_voice_active = False
         self.pet_voice_asr_worker = None
         self.pet_voice_waiting_reply = False
@@ -84,6 +107,7 @@ class MiniPetApp(QApplication):
         QTimer.singleShot(0, self._show_startup_greeting)
 
     def _restore_chat_history(self):
+        """按配置恢复最近聊天消息，作为本次运行的短期上下文。"""
         cfg = config.chat_restore_config
         if not cfg.get('enabled', True):
             return
@@ -157,6 +181,7 @@ class MiniPetApp(QApplication):
         self.pet.show_chat(self.chat_history, self._append_chat_message, self.chat_store.content_for_llm, self._build_system_prompt)
 
     def _toggle_pet_voice_chat(self):
+        """切换桌宠旁边的轻量语音聊天，不打开独立 Realtime 通话窗口。"""
         if self.pet_voice_active:
             self._stop_pet_voice_chat()
             return
@@ -295,15 +320,15 @@ class MiniPetApp(QApplication):
             self.pet.quit_now()
 
     def _append_chat_message(self, role, content, source):
-        # 保存到磁盘（ChatStore）
+        """保存一条聊天消息，并同步到当前运行中的短期上下文。"""
         stored_message = self.chat_store.append(role, content, source, pet_name=config.current_pet)
-        # 同时追加到内存中的运行时历史
         self.chat_history.append(stored_message)
         if role == 'user':
             self._maybe_schedule_memory_extraction()
         return stored_message
 
     def _build_system_prompt(self):
+        """组合角色设定、用户手写记忆和自动总结记忆，作为 LLM system prompt。"""
         parts = [
             config.llm_config.get('system_prompt', ''),
             config.llm_config.get('memory_prompt', ''),
@@ -312,6 +337,7 @@ class MiniPetApp(QApplication):
         return '\n\n'.join(part.strip() for part in parts if part and part.strip())
 
     def _maybe_schedule_memory_extraction(self):
+        """按用户发言次数触发自动记忆抽取，避免每轮对话都调用一次 LLM。"""
         if not config.llm_config.get('auto_memory_enabled', True):
             return
         self.user_turns_since_memory_check += 1
@@ -327,6 +353,7 @@ class MiniPetApp(QApplication):
         self.memory_worker.start()
 
     def _build_memory_extraction_messages(self):
+        """构造自动记忆抽取请求，要求模型只返回严格 JSON。"""
         recent_count = max(4, int(config.llm_config.get('auto_memory_recent_messages') or 12))
         stored = self.chat_history[-recent_count:]
         recent = []
@@ -493,6 +520,7 @@ class MiniPetApp(QApplication):
         return '\n'.join(lines)
 
     def _submit_quick_chat(self, text, source='quick_chat', screenshot=''):
+        """提交桌宠快速输入或语音识别文本到内置 LLM。"""
         if self.quick_chat_worker is not None:
             if source == 'quick_chat' and self.pet.input_popup is not None:
                 self.pet.input_popup.finish_thinking()
@@ -522,6 +550,7 @@ class MiniPetApp(QApplication):
             self.chat_history.clear()
 
     def _build_quick_chat_messages(self, screenshot=''):
+        """构造快速聊天的 LLM 消息，只保留最近 10 条上下文。"""
         messages = []
         system = self._build_system_prompt()
         if system:
@@ -545,6 +574,7 @@ class MiniPetApp(QApplication):
         return messages
 
     def _on_quick_chat_reply(self, success, text):
+        """处理快速聊天回复：保存历史、展示气泡，并按配置触发 TTS。"""
         self.quick_chat_worker = None
         if self.quick_thinking_bubble_id:
             self.note.close_bubble(self.quick_thinking_bubble_id)

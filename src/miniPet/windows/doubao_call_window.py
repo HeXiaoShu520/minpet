@@ -1,4 +1,12 @@
 # coding:utf-8
+"""
+豆包 Realtime 通话窗口。
+
+这个模块只负责端到端实时通话的窗口表现：头像、状态、字幕、麦克风音量、
+屏幕共享选择和挂断/打断按钮。真正的 WebSocket 协议、音频采集和播放逻辑
+在 realtime_client.py 中实现。
+"""
+
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QIcon, QMouseEvent, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QMenu, QPushButton, QVBoxLayout, QWidget
@@ -6,11 +14,13 @@ from qfluentwidgets import InfoBar, InfoBarPosition
 from qfluentwidgets import FluentIcon as FIF
 
 from miniPet import config
-from miniPet.realtime_client import RealtimeWorker
+from miniPet.clients.realtime_client import RealtimeWorker
 from miniPet.typewriter import Typewriter
 
 
 class InterruptButton(QPushButton):
+    """播放 AI 语音时显示的打断按钮。"""
+
     def __init__(self, parent=None):
         super().__init__('打断', parent)
         self.setFixedSize(68, 34)
@@ -19,6 +29,8 @@ class InterruptButton(QPushButton):
 
 
 class EndCallButton(QPushButton):
+    """自绘挂断按钮，避免依赖额外图标资源。"""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(44, 44)
@@ -38,6 +50,8 @@ class EndCallButton(QPushButton):
 
 
 class MicLevelButton(QPushButton):
+    """圆形麦克风按钮，同时展示输入音量和静音状态。"""
+
     def __init__(self, icon, parent=None):
         super().__init__(parent)
         self.level = 0
@@ -102,7 +116,14 @@ class MicLevelButton(QPushButton):
         painter.drawLine(center.x() - 7, center.y() + 17, center.x() + 7, center.y() + 17)
 
 
-class RealtimeWindow(QWidget):
+class DoubaoCallWindow(QWidget):
+    """豆包端到端实时通话窗口。
+
+    窗口维护 UI 状态和 RealtimeWorker 生命周期：开始录音、显示 ASR、追加 AI
+    回复、控制静音、共享屏幕和安全关闭。append_message 用于把最终 ASR/回复写回
+    主聊天历史。
+    """
+
     closed_signal = Signal()
 
     def __init__(self, pet_name='', parent=None, append_message=None):
@@ -112,9 +133,6 @@ class RealtimeWindow(QWidget):
         self.worker = None
         self.current_asr = ''
         self.current_reply = ''
-        self._asr_debounce = QTimer()
-        self._asr_debounce.setSingleShot(True)
-        self._asr_debounce.timeout.connect(self._flush_asr)
         self.captions_enabled = True
         self.call_state = 'idle'
         self.input_level = 0
@@ -136,7 +154,7 @@ class RealtimeWindow(QWidget):
         root.setContentsMargins(18, 24, 18, 24)
         root.setSpacing(0)
         self.setStyleSheet('''
-            RealtimeWindow{background:transparent;}
+            DoubaoCallWindow{background:transparent;}
             QWidget{font-family:"Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;background:transparent;color:#202124;}
             QLabel#AvatarLabel{background:transparent;border-radius:54px;}
             QLabel#AnimLabel{color:#3d3d3d;font-size:22px;font-weight:700;letter-spacing:3px;}
@@ -269,12 +287,6 @@ class RealtimeWindow(QWidget):
     def _escape(self, text):
         return str(text).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('\n', '<br>')
 
-    def _refresh_caption(self):
-        pass  # 由 _on_chat 直接调 _tw.append_chunk 驱动
-
-    def _flush_asr(self):
-        pass  # 保留 timer 引用，不再使用
-
     def _set_caption(self, text):
         self.current_asr = str(text or '').strip()
         if self.current_asr:
@@ -290,6 +302,7 @@ class RealtimeWindow(QWidget):
         return cfg
 
     def _ensure_session(self):
+        """懒启动 RealtimeWorker；窗口显示后第一次录音才建立会话。"""
         if self.worker is not None:
             return True
         if not config.tts_config.get('api_key'):
@@ -382,6 +395,7 @@ class RealtimeWindow(QWidget):
         self.close()
 
     def _on_status(self, text):
+        """把底层 Worker 状态文本映射成窗口状态和用户可见文案。"""
         if self.mic_muted and text in ('会话中', '正在听', '麦克风已关闭'):
             self._set_state('idle', '已静音')
             return
@@ -417,7 +431,6 @@ class RealtimeWindow(QWidget):
             return
         self.current_reply = ''
         self._tw.set_text('')
-        self._refresh_caption()
         self.call_state = 'thinking'
         if self.append_message:
             self.append_message('user', text, 'realtime')

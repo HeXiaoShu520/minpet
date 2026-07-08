@@ -1,4 +1,11 @@
 # coding:utf-8
+"""
+自动总结记忆存储。
+
+MemoryStore 保存从聊天中抽取出的长期有用信息，并按类别拼接成系统提示。
+它不保存完整聊天记录，只维护 memories.json 中的结构化记忆项。
+"""
+
 import json
 import uuid
 from datetime import datetime, timedelta
@@ -15,6 +22,8 @@ CATEGORY_LABELS = {
 
 
 class MemoryStore:
+    """长期记忆的增删改查、过期判断和 Prompt 拼接工具。"""
+
     def __init__(self, root_dir):
         self.root_dir = Path(root_dir)
         self.index_file = self.root_dir / 'memories.json'

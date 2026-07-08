@@ -1,13 +1,20 @@
 # coding:utf-8
+"""
+桌宠动画播放线程。
+
+AnimationWorker 按角色资源中的动作配置循环播放帧图，向 DesktopPet 发出当前
+pixmap、锚点和移动偏移。它只负责节奏和动作选择，不直接操作窗口。
+"""
+
 import random
 import time
 
 from PySide6.QtCore import QObject, QThread, Signal
 
-from miniPet import config
-
 
 class AnimationWorker(QObject):
+    """在工作线程中按动作配置播放宠物动画帧。"""
+
     image_changed = Signal(object, list, object)  # pixmap, anchor, act
     move_requested = Signal(float, float)
     finished = Signal()

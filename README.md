@@ -211,41 +211,47 @@ POST http://localhost:18888/actions/execute
 
 ## 系统架构
 
+当前源码已经按功能目录解耦，不再把所有模块堆在 `src/miniPet/` 根目录。详细说明见 [软件架构文档](ARCHITECTURE.md)。
+
 ```text
 miniPet QApplication
-├─ DesktopPet
-│  ├─ 桌宠透明窗口
-│  ├─ 快捷图标菜单
-│  ├─ 右键/托盘菜单
-│  ├─ ChatWindow          文本聊天
-│  ├─ VoiceChatWindow     语音聊天：ASR → 本地 LLM → TTS
-│  └─ RealtimeWindow      实时通话：豆包端到端
-├─ SettingsWindow
-│  ├─ BasicPage           基础设置
-│  ├─ LLMPage             大模型配置
-│  ├─ RolePage            角色、自动总结和总结重点管理
-│  ├─ TTSPage             火山豆包 TTS
-│  ├─ RealtimePage        豆包端到端实时通话配置
-│  └─ RoleToolsPage       角色资源
-├─ MemoryStore            自动总结重点持久化和系统提示拼接
-├─ NotificationCenter     气泡与智能通知
-└─ EventClient            外部事件 WebSocket 客户端
+├─ app.py                         应用组装和跨模块流程编排
+├─ pet/desktop_pet.py             桌宠主窗口和事件转发入口
+├─ pet/desktop_actions.py         动画线程、帧应用、尺寸重算和动作播放
+├─ pet/desktop_tray.py            系统托盘创建、菜单刷新和退出隐藏
+├─ pet/desktop_easter.py          彩蛋菜单和各彩蛋弹窗打开逻辑
+├─ pet/desktop_hover.py           鼠标横向进入检测和 hover 快捷菜单状态机
+├─ pet/desktop_interactions.py     拖放 payload、拖拽状态机、位置限制和掉落物理
+├─ pet/desktop_windows.py          聊天窗口和豆包通话窗口打开逻辑
+├─ settings_window.py             设置窗口入口
+├─ clients/                       LLM / TTS / ASR / Realtime / 外部事件客户端
+├─ storage/                       聊天记录和自动总结记忆存储
+├─ windows/                       文本聊天、豆包通话、设置页等顶层窗口
+├─ widgets/                       快速输入、语音球、菜单、通知、彩蛋等 UI 组件
+├─ pet/                           动画线程和角色资源加载
+└─ protocols/                     miniPet V1 协议和豆包 Realtime 二进制协议
 ```
 
 核心数据流：
 
 ```text
 文本聊天：
-用户输入 → ChatWorker → LLM API → ChatWindow/气泡 → 可选 TTS
+windows.chat_window.ChatWindow / widgets.pet_input_popup.PetInputPopup
+→ clients.llm_client.ChatWorker → LLM API → storage.chat_store.ChatStore
+→ ChatWindow/气泡 → 可选 clients.tts_client.TtsWorker
 
 语音聊天：
-麦克风 → AsrWorker → ASR WebSocket → ChatWorker → LLM API → TtsWorker → 播放
+widgets.pet_voice_popup.PetVoicePopup
+→ clients.asr_client.AsrWorker → ASR WebSocket
+→ clients.llm_client.ChatWorker → clients.tts_client.TtsWorker → 播放
 
 实时通话：
-麦克风 → RealtimeWorker → 豆包端到端 WebSocket → 远端音频流 → 播放
+windows.doubao_call_window.DoubaoCallWindow
+→ clients.realtime_client.RealtimeWorker → 豆包端到端 WebSocket → 远端音频流 → 播放
 
 外部事件：
-EventClient → NotificationCenter → 气泡/动作/聊天入口
+clients.event_client.EventClient → protocols.protocol_v1
+→ NotificationCenter → 气泡/动作/聊天入口
 ```
 
 ## 运行
@@ -367,34 +373,75 @@ REALTIME_SPEAKING_STYLE=语气活泼、亲切、口语化。
 
 ```text
 miniPet/
-  run_miniPet.py       # 启动入口
-  requirements.txt     # Python 依赖
-  README.md            # 项目说明
-  minipet交互协议设计.md   # V1 核心交互协议
-  minipet交互协议展望.md   # 后续能力展望
-  PET_EVENT_PROTOCOL.md    # 旧事件协议兼容说明
+  run_miniPet.py          # 启动入口
+  requirements.txt        # Python 依赖
+  README.md               # 项目说明
+  ARCHITECTURE.md        # 软件架构、模块边界和重构原则
+  docs/
+    art_dev.md            # 角色资源制作文档
   src/
     miniPet/
-      app.py                 # QApplication 组装入口
-      desktop_pet.py         # 桌面宠物窗口、菜单、拖拽和掉落
-      animation.py           # 动画线程和动作播放
-      pet_assets.py          # 角色资源、动作配置加载
-      settings_window.py     # 系统设置窗口
-      chat_window.py         # 文本 AI 对话窗口
-      memory_store.py        # 自动总结重点存储与 USER PROFILE / MEMORY / WORKING CONTEXT 拼接
-      voice_chat_window.py   # 语音聊天窗口，本地 AI 模式
-      realtime_window.py     # 实时通话窗口，豆包端到端模式
-      llm_client.py          # OpenAI/Anthropic 聊天客户端，支持流式输出
-      asr_client.py          # 豆包流式 ASR WebSocket 客户端
-      tts_client.py          # 火山豆包 TTS 单向流式 WebSocket 客户端和 PCM 播放
-      realtime_client.py     # 豆包端到端 Realtime WebSocket 客户端
-      realtime_protocol.py   # Realtime 二进制协议封装
-      notification.py        # 通知、气泡、智能气泡
-      event_client.py        # 外部事件 WebSocket 客户端
-      config.py              # 配置、路径和环境变量
-  res/                  # 图标、角色、宠物、道具资源
-  docs/                 # 资源制作文档
-  data/                 # 本地运行配置、总结重点、音频预览缓存
+      app.py              # QApplication 组装入口
+      config.py           # 配置、路径和环境变量
+      settings_window.py  # 设置窗口入口，页面逐步拆入 windows/settings/
+      base_page.py        # 设置页滚动基类
+      typewriter.py       # 打字机文字显示效果
+      clients/            # 外部 API、WebSocket、音频设备客户端
+        llm_client.py
+        tts_client.py
+        asr_client.py
+        realtime_client.py
+        event_client.py
+      storage/            # 本地持久化
+        chat_store.py
+        memory_store.py
+      windows/            # 独立顶层窗口
+        chat_window.py
+        doubao_call_window.py
+        settings/
+          basic_pages.py
+          llm_page.py
+          role_page.py
+          voice_pages.py
+          resource_page.py
+      widgets/            # 可复用 UI 组件和弹窗
+        pet_input_popup.py
+        pet_voice_popup.py
+        setting_cards.py
+        ui_utils.py
+        menus/
+          pet_menus.py
+        easter/
+          base.py
+          magic_conch.py
+          gacha.py
+          dice.py
+          coin.py
+          fortune_stick.py
+          wooden_fish.py
+          daily_tip.py
+          notice.py
+        notifications/
+          center.py
+          toast.py
+          bubble.py
+          smart_bubble.py
+          constants.py
+      pet/                # 桌宠主窗口、动画与资源
+        desktop_pet.py
+        desktop_actions.py
+        desktop_tray.py
+        desktop_easter.py
+        desktop_hover.py
+        desktop_interactions.py
+        desktop_windows.py
+        animation.py
+        pet_assets.py
+      protocols/          # 协议常量和编解码
+        protocol_v1.py
+        realtime_protocol.py
+  res/                    # 图标、角色、宠物、道具资源
+  data/                   # 本地运行配置、总结重点、音频预览缓存
 ```
 
 ## 资源目录
@@ -444,9 +491,13 @@ miniPet 收到后会显示智能气泡，并根据 `priority` 或 `pet_action` �
 
 ## 开发原则
 
-- 新功能代码进入 `miniPet/src/miniPet/`，资源进入 `miniPet/res/`，文档进入 `miniPet/docs/`。
+- 新功能代码必须按职责进入功能目录，不能继续把所有 `.py` 堆在 `src/miniPet/` 根目录。
+- 入口层保持薄：`app.py`、`desktop_pet.py`、`settings_window.py` 负责组装，具体窗口、控件、客户端、存储逻辑下沉到子目录。
+- UI 与服务解耦：窗口/控件通过 Signal、回调或 Worker 使用 `clients/`，不要把协议细节写进 UI。
+- 存储与网络解耦：`storage/` 不调用网络，`clients/` 不直接操作 UI。
+- 新功能代码进入 `src/miniPet/` 下合适目录，资源进入 `res/`，文档进入 `docs/`。
 - 不再依赖外层 `MINIPET/` 的 Python 模块。
-- 复用原 MINIPET 的资源格式，但资源最终要迁移到 `miniPet/res/`。
+- 复用原 MINIPET 的资源格式，但资源最终要迁移到 `res/`。
 - 设置页、菜单、聊天窗口和语音窗口要保持完整视觉体验，不使用裸表单堆控件。
 - 外部事件源是可选插件，不是 miniPet 的运行依赖。
 

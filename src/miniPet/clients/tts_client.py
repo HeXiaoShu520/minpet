@@ -1,4 +1,13 @@
 # coding:utf-8
+"""
+火山豆包 TTS 客户端和 PCM 播放器。
+
+提供三层能力：
+- PcmStreamPlayer：把服务端返回的 PCM 流写入本地声卡。
+- tts_to_pcm()/play_tts()：通过 WebSocket 合成语音并播放/缓存。
+- TtsWorker/TtsCacheWorker/TtsPreviewWorker：供 Qt UI 后台线程调用。
+"""
+
 import asyncio
 import audioop
 import inspect
@@ -36,10 +45,12 @@ _active_lock = threading.Lock()
 
 
 class TtsPlaybackError(Exception):
-    pass
+    """TTS 播放链路异常。"""
 
 
 class PcmStreamPlayer:
+    """基于 sounddevice 的 PCM 流式播放器。"""
+
     def __init__(self, sample_rate=SAMPLE_RATE):
         if sd is None:
             raise TtsPlaybackError('缺少 sounddevice，请执行：pip install sounddevice')

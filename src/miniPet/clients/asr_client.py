@@ -1,4 +1,11 @@
 # coding:utf-8
+"""
+火山豆包流式 ASR 客户端。
+
+这个模块把麦克风 PCM 音频按火山 SAUC 协议打包，经 WebSocket 发送到 ASR
+服务，并把中间识别结果、最终识别结果和错误通过 Qt 信号返回给 UI。
+"""
+
 import asyncio
 import gzip
 import inspect
@@ -45,7 +52,7 @@ FLAG_LAST_NEG_SEQUENCE = 0x3
 
 
 class AsrError(Exception):
-    pass
+    """ASR 采集或协议调用异常。"""
 
 
 def _header(message_type, flags, serialization, compression):

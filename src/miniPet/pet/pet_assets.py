@@ -1,4 +1,11 @@
 # coding:utf-8
+"""
+角色资源加载模块。
+
+负责读取 res/role/<pet>/pet_conf.json、动作帧图片和锚点配置，组装成
+PetProfile/Act。DesktopPet 和 AnimationWorker 只消费这里返回的结构化对象。
+"""
+
 import glob
 import json
 import os
