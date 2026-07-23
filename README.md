@@ -44,6 +44,65 @@ MINIPET_ADAPTER_PORT=18888
 
 如果未设置 `OPENCLAW_GATEWAY_TOKEN`，adapter 会自动读取 `~/.openclaw/openclaw.json` 中的 `gateway.auth.token`。
 
+## miniClaw 接入
+
+miniPet 可以把桌宠输入交给相邻项目 miniClaw 处理。此模式下 miniPet 作为 WebSocket 客户端，miniClaw 作为本地 FastAPI/WebSocket 服务端。
+
+1. 启动 miniClaw：
+
+```bash
+cd E:/源丶工程/miniClaw
+python main.py
+```
+
+miniClaw 默认会同时启动 miniPet 网关：
+
+```text
+ws://127.0.0.1:18889/ws/minipet
+```
+
+可用健康检查确认网关已启动：
+
+```bash
+curl http://127.0.0.1:18889/health
+```
+
+预期返回：
+
+```json
+{"ok": true}
+```
+
+2. 启动 miniPet，打开“设置 → 智能体设置”：
+
+- 智能体选项：`miniClaw / 通用 AI 后端`
+- miniClaw / 通用后端地址：`ws://127.0.0.1:18889/ws/minipet`
+
+保存后，miniPet 会连接 miniClaw。连接成功时会显示“后端已就绪：miniClaw”。
+
+3. 在桌宠输入框中发送内容。
+
+链路如下：
+
+```text
+miniPet user.command
+→ miniClaw /ws/minipet
+→ miniClaw LLM/Agent
+→ surface.show 创建气泡
+→ surface.update 流式更新气泡
+→ surface.update done=true 完成
+```
+
+miniPet 使用 `surface_id` 追踪同一个气泡，因此 miniClaw 的流式回复会在同一个气泡里持续刷新，不会生成多条气泡。
+
+miniClaw 侧可选环境变量：
+
+```text
+DESKTOP_API_ENABLED=true
+DESKTOP_API_HOST=127.0.0.1
+DESKTOP_API_PORT=18889
+```
+
 ## 当前功能
 
 ### 桌面宠物
