@@ -128,6 +128,9 @@ class RealtimeSession:
         self.received_audio_bytes = 0
         self.last_send_audio_log_time = 0
         self.last_recv_audio_log_time = 0
+        self.text_query = (self.cfg.get('text_query') or '').strip()
+        self.single_turn = bool(self.cfg.get('single_turn', False))
+        self.skip_welcome = bool(self.cfg.get('skip_welcome', False) or self.text_query)
 
     def command(self, name):
         self.commands.put(name)
@@ -239,6 +242,11 @@ class RealtimeSession:
             'content': '你好呀，有什么需要帮忙的吗？',
         })
 
+    async def _send_text_query(self, text):
+        await self._send_json(EVENT_CHAT_TEXT_QUERY, {
+            'content': text,
+        })
+
     async def _send_audio(self, audio):
         packet = build_audio_event(audio, self.session_id)
         self.sent_audio_bytes += len(audio or b'')
@@ -258,10 +266,14 @@ class RealtimeSession:
                 payload = packet.payload or {}
                 self.dialog_id = payload.get('dialog_id') or self.dialog_id
                 self.session_started = True
-                self.say_hello_finished = False
-                await self._send_say_hello()
-                self._emit_status('会话中')
-                if self.recording_requested:
+                self.say_hello_finished = self.skip_welcome
+                if self.text_query:
+                    await self._send_text_query(self.text_query)
+                    self._emit_status('唱歌中')
+                else:
+                    await self._send_say_hello()
+                    self._emit_status('会话中')
+                if self.recording_requested and not self.say_hello_finished:
                     self._log('recording pending until welcome finished')
             elif packet.event == EVENT_ASR_INFO:
                 self._interrupt_playback()
@@ -281,6 +293,13 @@ class RealtimeSession:
                 asyncio.create_task(self._finish_tts_playback())
             elif packet.event == EVENT_CHAT_ENDED:
                 self._emit_status('回复结束')
+                if self.single_turn:
+                    await self._wait_playback_done()
+                    await self._send_json(EVENT_FINISH_SESSION, {})
+                    await asyncio.sleep(0.1)
+                    await self._send_json(EVENT_FINISH_CONNECTION, {})
+                    self.closed = True
+                    return
             elif packet.event == EVENT_SESSION_CANCELED:
                 self._emit_status('会话已取消')
                 self.closed = True
@@ -361,17 +380,20 @@ class RealtimeSession:
         if dropped:
             self._log('dropped audio frames=%d' % dropped)
 
+    async def _wait_playback_done(self):
+        player = self.player
+        if player is not None:
+            self._log('waiting local playback to finish')
+            await asyncio.to_thread(player.wait_done)
+        self._close_player()
+        self.playing_tts = False
+
     async def _finish_tts_playback(self):
         if self.resuming_recording:
             return
         self.resuming_recording = True
         try:
-            player = self.player
-            if player is not None:
-                self._log('waiting local playback to finish')
-                await asyncio.to_thread(player.wait_done)
-            self._close_player()
-            self.playing_tts = False
+            await self._wait_playback_done()
             if not self.say_hello_finished:
                 self.say_hello_finished = True
             if self.recording_requested and not self.closed:

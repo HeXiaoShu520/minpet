@@ -29,6 +29,10 @@ from miniPet.protocols.protocol_v1 import AGENT_STATE, SESSION_PING, SESSION_PON
 from miniPet.settings_window import SettingsWindow
 from miniPet.clients.tts_client import TtsPreviewWorker, TtsWorker, stop_tts
 from miniPet.clients.wake_word_client import WakeWordWorker
+from miniPet.clients.realtime_client import RealtimeWorker
+
+
+SINGING_KEYWORDS = ('唱歌', '唱一首', '来首歌', '唱两句', '哼一段', '哼首歌')
 
 
 class MiniPetApp(QApplication):
@@ -87,6 +91,7 @@ class MiniPetApp(QApplication):
         self.pet_voice_paused = False
         self.pet_voice_shared_screen = None  # 语音球屏幕共享
         self.wake_word_worker = None
+        self.singing_worker = None
         self.is_quitting = False
 
         self.pet.show_settings.connect(self.settings.show_window)
@@ -327,6 +332,10 @@ class MiniPetApp(QApplication):
             self.pet_voice_asr_worker.finish()
             self.pet_voice_asr_worker.wait(1200)
             self.pet_voice_asr_worker = None
+        if self.singing_worker is not None:
+            self.singing_worker.finish()
+            self.singing_worker.wait(1500)
+            self.singing_worker = None
         stop_tts()
         self.pet.close_voice_popup()
         if not self.is_quitting:
@@ -371,6 +380,9 @@ class MiniPetApp(QApplication):
         if not text or not self.pet_voice_active or self.pet_voice_paused or self.pet_voice_waiting_reply:
             return
         self._stop_pet_voice_recording()
+        if self._is_singing_request(text):
+            self._start_singing_once(text)
+            return
         self.pet_voice_waiting_reply = True
         self.pet.update_voice_popup('thinking', text)
         screenshot = self._capture_voice_screenshot()
@@ -378,6 +390,50 @@ class MiniPetApp(QApplication):
             self.pet_voice_waiting_reply = False
             if self.pet_voice_active:
                 QTimer.singleShot(800, self._start_pet_voice_recording)
+
+    def _is_singing_request(self, text):
+        return any(keyword in (text or '') for keyword in SINGING_KEYWORDS)
+
+    def _start_singing_once(self, user_text):
+        if self.singing_worker is not None:
+            self.pet.update_voice_popup('thinking', '正在准备唱歌')
+            return
+        cfg = dict(config.realtime_config)
+        cfg.update({
+            'enabled': True,
+            'model': config.DEFAULT_REALTIME_CONFIG['model'],
+            'text_query': '用户想听唱歌，请只响应这一次，并根据用户要求直接唱出来。用户原话：' + user_text,
+            'single_turn': True,
+            'skip_welcome': True,
+        })
+        self.pet_voice_waiting_reply = True
+        self.pet.update_voice_popup('speaking', '唱歌中')
+        self._append_chat_message('user', user_text, 'voice_singing')
+        self.singing_worker = RealtimeWorker(cfg, parent=self)
+        self.singing_worker.status_changed.connect(self._on_singing_status)
+        self.singing_worker.chat_received.connect(self._on_singing_chat)
+        self.singing_worker.error_received.connect(self._on_singing_error)
+        self.singing_worker.finished_signal.connect(self._on_singing_finished)
+        self.singing_worker.start()
+
+    def _on_singing_status(self, text):
+        if self.pet_voice_active and text:
+            self.pet.update_voice_popup('speaking', text)
+
+    def _on_singing_chat(self, text):
+        if text and self.pet_voice_active:
+            self.pet.update_voice_popup('speaking', text)
+
+    def _on_singing_error(self, text):
+        x, y = self.pet.bubble_anchor()
+        self.note.setup_bubble('唱歌失败：' + str(text), x, y, 5000, title=config.current_pet or '宠物')
+        if self.pet_voice_active:
+            self.pet.update_voice_popup('error', str(text)[:60])
+
+    def _on_singing_finished(self):
+        self.singing_worker = None
+        if self.pet_voice_active:
+            self._finish_voice_turn(delay_ms=800)
 
     def _on_pet_voice_error(self, text):
         if self.pet_voice_active:
@@ -398,7 +454,7 @@ class MiniPetApp(QApplication):
         self.is_quitting = True
         if self.pet.quick_menu is not None:
             self.pet.quick_menu.close()
-        if self.pet_voice_active or self.pet_voice_asr_worker is not None:
+        if self.pet_voice_active or self.pet_voice_asr_worker is not None or self.singing_worker is not None:
             self._stop_pet_voice_chat()
         self._stop_wake_word_listener()
         x, y = self.pet.bubble_anchor()
@@ -1007,7 +1063,7 @@ class MiniPetApp(QApplication):
             self.pet_voice_asr_worker.finish()
             self.pet_voice_asr_worker.wait(1500)
             self.pet_voice_asr_worker = None
-        for worker_name in ('quick_chat_worker', 'quick_tts_worker', 'event_tts_worker', 'memory_worker'):
+        for worker_name in ('quick_chat_worker', 'quick_tts_worker', 'event_tts_worker', 'memory_worker', 'singing_worker'):
             worker = getattr(self, worker_name, None)
             if worker is not None and worker.isRunning():
                 worker.requestInterruption()

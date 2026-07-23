@@ -161,6 +161,7 @@ DESKTOP_API_PORT=18889
 - 可选离线唤醒词监听：打开语音球后，本地 Vosk 小模型识别“小月小月”，命中后再打开火山流式 ASR，避免云端 ASR 常驻计费
 - 如果未开启唤醒词，打开语音球后会直接启动一次火山流式接听
 - 可选连续对话：回复完成后自动进入下一轮接听；关闭时回到语音球待机
+- 识别到“唱歌、唱一首、来首歌、唱两句、哼一段”等关键词时，会临时切到 Realtime O2.0 单次唱歌模式，播放完成后自动回到语音球待机，不受连续对话影响
 - 进入语音聊天会先播放欢迎语“你好呀，有什么需要帮忙的吗”，播放完成后再开始语音识别
 - 欢迎语按音色缓存到 `data/tts_welcome/`，已有缓存会直接播放，没有时才合成一次
 - 回复后复用现有 TTS 播放
@@ -307,6 +308,11 @@ windows.chat_window.ChatWindow / widgets.pet_input_popup.PetInputPopup
 widgets.pet_voice_popup.PetVoicePopup
 → clients.asr_client.AsrWorker → ASR WebSocket
 → clients.llm_client.ChatWorker → clients.tts_client.TtsWorker → 播放
+
+唱歌关键词：
+widgets.pet_voice_popup.PetVoicePopup
+→ clients.asr_client.AsrWorker → 命中唱歌意图
+→ clients.realtime_client.RealtimeWorker 单次文本任务 → O2.0 enable_music 音频流 → 播放
 
 实时通话：
 windows.doubao_call_window.DoubaoCallWindow
