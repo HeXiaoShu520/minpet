@@ -137,10 +137,23 @@ class BubbleText(QFrame):
             QTimer.singleShot(delay, lambda: self._tw.typewrite(html_text))
         else:
             self._tw.typewrite(html_text)
+        self.message_label = msg_label
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.request_close)
         self.timer.start(timeout)
+
+    def update_message(self, message, timeout=None):
+        """更新气泡文本，用于流式输出。"""
+        if self.closing:
+            return
+        if hasattr(self, '_tw'):
+            self._tw.set_text(_markdown_to_html(message or ''))
+        else:
+            self.message_label.setText(_markdown_to_html(message or ''))
+        self.adjustSize()
+        if timeout is not None:
+            self.timer.start(int(timeout))
 
     def animate_in(self, end_pos):
         if self.anim_group is not None:

@@ -25,7 +25,7 @@ from miniPet.clients.event_client import EventClient
 from miniPet.clients.llm_client import ChatWorker
 from miniPet.storage.memory_store import MEMORY_CATEGORIES, MemoryStore
 from miniPet.widgets.notifications.center import NotificationCenter
-from miniPet.protocols.protocol_v1 import AGENT_STATE, SESSION_PING, SESSION_PONG, SESSION_READY, SURFACE_KINDS, SURFACE_SHOW, USER_COMMAND, USER_DROP, USER_INPUT, V1_CAPABILITIES, normalize_inbound_event
+from miniPet.protocols.protocol_v1 import AGENT_STATE, SESSION_PING, SESSION_PONG, SESSION_READY, SURFACE_KINDS, SURFACE_SHOW, SURFACE_UPDATE, USER_COMMAND, USER_DROP, USER_INPUT, V1_CAPABILITIES, normalize_inbound_event
 from miniPet.settings_window import SettingsWindow
 from miniPet.clients.tts_client import TtsPreviewWorker, TtsWorker, stop_tts
 from miniPet.clients.wake_word_client import WakeWordWorker
@@ -77,6 +77,7 @@ class MiniPetApp(QApplication):
         self.event_tts_worker = None
         self.quick_chat_source = 'quick_chat'
         self.quick_thinking_bubble_id = None
+        self._surface_bubbles = {}
 
         # pet_voice_* 是桌宠旁边的轻量语音聊天状态，不等同于独立 Realtime 通话窗口。
         self.pet_voice_active = False
@@ -731,6 +732,8 @@ class MiniPetApp(QApplication):
             self.note.setup_bubble('后端已就绪：' + str(server.get('name') or payload.get('name') or '智能体'), x, y, 3000, title=config.current_pet or '宠物')
         elif event_type == SURFACE_SHOW:
             self._handle_surface_show(payload)
+        elif event_type == SURFACE_UPDATE:
+            self._handle_surface_update(payload)
         elif event_type == AGENT_STATE:
             self._handle_agent_status(event_type, payload)
         elif event_type == SESSION_PING:
@@ -747,11 +750,32 @@ class MiniPetApp(QApplication):
             return
         if kind == 'bubble' and not payload.get('actions'):
             timeout = payload.get('timeout_ms') or (payload.get('lifetime') or {}).get('ttl_ms') or int(payload.get('timeout', 6)) * 1000
-            self.note.setup_bubble(payload.get('text') or payload.get('message') or payload.get('summary') or payload.get('content') or '', x, y, int(timeout), title=payload.get('title') or config.current_pet or '宠物')
+            bubble_id = self.note.setup_bubble(payload.get('text') or payload.get('message') or payload.get('summary') or payload.get('content') or '', x, y, int(timeout), title=payload.get('title') or config.current_pet or '宠物')
+            surface_id = payload.get('surface_id')
+            if surface_id:
+                self._surface_bubbles[surface_id] = bubble_id
             return
         card_event = self._normalize_display_event(SURFACE_SHOW, payload)
         self.note.setup_smart_bubble(card_event, x, y)
         self._trigger_pet_reaction(card_event)
+
+    def _handle_surface_update(self, payload):
+        surface_id = payload.get('surface_id')
+        if not surface_id:
+            return
+        bubble_id = self._surface_bubbles.get(surface_id)
+        content = payload.get('text') or payload.get('message') or payload.get('summary') or payload.get('content') or ''
+        timeout = payload.get('timeout_ms') or (6000 if payload.get('done') else 60000)
+        if bubble_id and self.note.update_bubble(bubble_id, content, timeout=timeout):
+            if payload.get('done'):
+                self._surface_bubbles.pop(surface_id, None)
+            return
+        x, y = self.pet.bubble_anchor()
+        title = payload.get('title') or config.current_pet or '宠物'
+        bubble_id = self.note.setup_bubble(content, x, y, int(timeout), title=title)
+        self._surface_bubbles[surface_id] = bubble_id
+        if payload.get('done'):
+            self._surface_bubbles.pop(surface_id, None)
 
     def _handle_input_request(self, payload):
         title = payload.get('title') or '需要你的输入'

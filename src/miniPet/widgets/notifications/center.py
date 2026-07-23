@@ -52,6 +52,14 @@ class NotificationCenter(QWidget):
         if bubble is not None:
             bubble.request_close()
 
+    def update_bubble(self, bubble_id, message, timeout=None):
+        bubble = self.bubbles.get(bubble_id)
+        if bubble is None or not hasattr(bubble, 'update_message'):
+            return False
+        bubble.update_message(message, timeout=timeout)
+        self._reflow_bubbles(animate=True)
+        return True
+
     def setup_smart_bubble(self, event, x, y):
         bubble_id = str(uuid.uuid4())
         timeout = int(event.get('timeout_ms', SMART_BUBBLE_TIMEOUT_MS) or 0)
