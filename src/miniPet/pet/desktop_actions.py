@@ -34,10 +34,10 @@ def set_image(owner, pixmap, anchor, act=None):
         owner.visible_bounds = QRect(0, 0, width, height)
     owner.label.setFixedSize(width, height)
     owner.label.setPixmap(pixmap.scaled(width, height, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-    reset_size(owner, keep_position=True, set_image=False)
+    reset_size(owner, keep_position=True, apply_image=False)
 
 
-def reset_size(owner, keep_position=True, set_image=True):
+def reset_size(owner, keep_position=True, apply_image=True):
     if not owner.profile:
         return
     old_pos = owner.pos()
@@ -49,7 +49,7 @@ def reset_size(owner, keep_position=True, set_image=True):
     else:
         owner.floor_y = owner.current_screen.bottom() - owner.height() + 1
         owner.move(owner.current_screen.center().x() - owner.width() // 2, owner.floor_y)
-    if set_image and config.current_image:
+    if apply_image and config.current_image:
         set_image(owner, config.current_image, config.current_anchor)
     owner._sync_voice_popup_position()
 

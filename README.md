@@ -98,6 +98,10 @@ MINIPET_ADAPTER_PORT=18888
 - 复用 `TTS_API_KEY` 鉴权
 - 使用当前 `LLM_PROVIDER / LLM_API_BASE / LLM_MODEL` 配置生成回复
 - 能吃到 miniPet 的角色设定、记忆和本地聊天上下文
+- 菜单语音入口会打开语音球；语音球存在时才启用语音功能
+- 可选离线唤醒词监听：打开语音球后，本地 Vosk 小模型识别“小月小月”，命中后再打开火山流式 ASR，避免云端 ASR 常驻计费
+- 如果未开启唤醒词，打开语音球后会直接启动一次火山流式接听
+- 可选连续对话：回复完成后自动进入下一轮接听；关闭时回到语音球待机
 - 进入语音聊天会先播放欢迎语“你好呀，有什么需要帮忙的吗”，播放完成后再开始语音识别
 - 欢迎语按音色缓存到 `data/tts_welcome/`，已有缓存会直接播放，没有时才合成一次
 - 回复后复用现有 TTS 播放
@@ -318,6 +322,9 @@ TTS_ENABLED=false
 TTS_API_KEY=
 TTS_VOICE_NAME=zh_female_vv_uranus_bigtts
 TTS_MAX_CHARS=500
+VOICE_CHAT_CONTINUOUS=false
+WAKE_WORD_ENABLED=false
+WAKE_WORDS=小月小月
 ```
 
 用途：
@@ -325,6 +332,9 @@ TTS_MAX_CHARS=500
 - `TTS_API_KEY` 用于豆包 TTS 单向流式 WebSocket
 - `TTS_API_KEY` 同时用于豆包 ASR WebSocket
 - `TTS_API_KEY` 同时用于豆包 Realtime WebSocket
+- `VOICE_CHAT_CONTINUOUS` 控制回复完成后是否继续接听下一轮；关闭时回到语音球待机
+- `WAKE_WORD_ENABLED` 开启后，语音球打开时使用本地 Vosk 模型监听唤醒词，不调用火山 ASR
+- Vosk 中文小模型固定读取 `data/vosk/vosk-model-small-cn-0.22`
 
 ### 实时通话配置
 

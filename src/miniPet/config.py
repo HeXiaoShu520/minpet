@@ -78,6 +78,32 @@ DEFAULT_CHAT_RESTORE_CONFIG = {
     'max_days': 1,       # 最多往前追溯多少天
 }
 
+DEFAULT_VOICE_CHAT_CONFIG = {
+    'continuous': False,
+}
+
+VOICE_CHAT_ENV_KEYS = {
+    'continuous': 'VOICE_CHAT_CONTINUOUS',
+}
+
+DEFAULT_WAKE_WORD_CONFIG = {
+    'enabled': False,
+    'words': '小月小月',
+    'model_dir': 'data/vosk/vosk-model-small-cn-0.22',
+    'sample_rate': 16000,
+    'chunk_ms': 160,
+    'restart_delay_ms': 1200,
+}
+
+WAKE_WORD_ENV_KEYS = {
+    'enabled': 'WAKE_WORD_ENABLED',
+    'words': 'WAKE_WORDS',
+    'model_dir': 'WAKE_WORD_MODEL_DIR',
+    'sample_rate': 'WAKE_WORD_SAMPLE_RATE',
+    'chunk_ms': 'WAKE_WORD_CHUNK_MS',
+    'restart_delay_ms': 'WAKE_WORD_RESTART_DELAY_MS',
+}
+
 CHAT_RESTORE_ENV_KEYS = {
     'enabled': 'CHAT_RESTORE_ENABLED',
     'max_messages': 'CHAT_RESTORE_MAX_MESSAGES',
@@ -148,8 +174,10 @@ app_config = dict(DEFAULT_APP_CONFIG)
 llm_config = dict(DEFAULT_LLM_CONFIG)
 tts_config = dict(DEFAULT_TTS_CONFIG)
 realtime_config = dict(DEFAULT_REALTIME_CONFIG)
+voice_chat_config = dict(DEFAULT_VOICE_CHAT_CONFIG)
 typewriter_config = dict(DEFAULT_TYPEWRITER_CONFIG)
 chat_restore_config = dict(DEFAULT_CHAT_RESTORE_CONFIG)
+wake_word_config = dict(DEFAULT_WAKE_WORD_CONFIG)
 
 # 桌宠窗口运行态。历史代码直接从 config 模块读写这些状态，先保留集中入口。
 current_image = None
@@ -316,7 +344,7 @@ def _save_env_config(config_data, env_keys, defaults, section_title):
 
 def load():
     """加载所有配置，并初始化当前宠物等运行时状态。"""
-    global app_config, llm_config, tts_config, realtime_config, typewriter_config, chat_restore_config, current_pet
+    global app_config, llm_config, tts_config, realtime_config, voice_chat_config, typewriter_config, chat_restore_config, wake_word_config, current_pet
     ensure_data_dir()
     pets = get_pet_list()
 
@@ -347,8 +375,10 @@ def load():
     llm_config = _load_env_config(DEFAULT_LLM_CONFIG, LLM_ENV_KEYS)
     tts_config = _load_env_config(DEFAULT_TTS_CONFIG, TTS_ENV_KEYS)
     realtime_config = _load_env_config(DEFAULT_REALTIME_CONFIG, REALTIME_ENV_KEYS)
+    voice_chat_config = _load_env_config(DEFAULT_VOICE_CHAT_CONFIG, VOICE_CHAT_ENV_KEYS)
     typewriter_config = _load_env_config(DEFAULT_TYPEWRITER_CONFIG, TYPEWRITER_ENV_KEYS)
     chat_restore_config = _load_env_config(DEFAULT_CHAT_RESTORE_CONFIG, CHAT_RESTORE_ENV_KEYS)
+    wake_word_config = _load_env_config(DEFAULT_WAKE_WORD_CONFIG, WAKE_WORD_ENV_KEYS)
     save_app_config()
 
 
@@ -386,8 +416,22 @@ def save_realtime_config(config):
     _save_env_config(realtime_config, REALTIME_ENV_KEYS, DEFAULT_REALTIME_CONFIG, '# MINIPET Realtime settings')
 
 
+def save_voice_chat_config(config):
+    """保存本地 AI 语音聊天配置到 .env。"""
+    global voice_chat_config
+    voice_chat_config = dict(config)
+    _save_env_config(voice_chat_config, VOICE_CHAT_ENV_KEYS, DEFAULT_VOICE_CHAT_CONFIG, '# MINIPET VoiceChat settings')
+
+
 def save_chat_restore_config(config):
     """保存启动恢复历史对话配置到 .env。"""
     global chat_restore_config
     chat_restore_config = dict(config)
     _save_env_config(chat_restore_config, CHAT_RESTORE_ENV_KEYS, DEFAULT_CHAT_RESTORE_CONFIG, '# MINIPET ChatRestore settings')
+
+
+def save_wake_word_config(config):
+    """保存离线唤醒词配置到 .env。"""
+    global wake_word_config
+    wake_word_config = dict(config)
+    _save_env_config(wake_word_config, WAKE_WORD_ENV_KEYS, DEFAULT_WAKE_WORD_CONFIG, '# MINIPET WakeWord settings')

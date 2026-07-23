@@ -150,7 +150,7 @@ class DesktopPet(QWidget):
         set_pet_image(self, pixmap, anchor, act=act)
 
     def _reset_size(self, keep_position=True, set_image=True):
-        reset_pet_size(self, keep_position=keep_position, set_image=set_image)
+        reset_pet_size(self, keep_position=keep_position, apply_image=set_image)
 
     def _screen_at_point(self, point):
         screen = QApplication.screenAt(point)
@@ -262,19 +262,15 @@ class DesktopPet(QWidget):
             self.quick_menu.close()
             return
         x, top_y, bottom_y = self.quick_menu_anchor()
-        self.quick_menu = PetQuickMenu(x, top_y, bottom_y, self.show_settings.emit, self.chat_requested.emit, self._on_voice_chat_toggle, self.quit, self._on_share_screen_toggle, share_screen_active=self._share_screen_active, voice_chat_active=self._voice_chat_active, parent=self)
+        self.quick_menu = PetQuickMenu(x, top_y, bottom_y, self.show_settings.emit, self.chat_requested.emit, self._on_voice_chat_requested, self.quit, self._on_share_screen_toggle, share_screen_active=self._share_screen_active, voice_chat_active=self._voice_chat_active, parent=self)
         self.quick_menu.destroyed.connect(lambda: setattr(self, 'quick_menu', None))
 
     def _on_share_screen_toggle(self, checked):
         self._share_screen_active = checked
         self.share_screen_requested.emit(checked)
 
-    def _on_voice_chat_toggle(self, checked):
-        self._voice_chat_active = checked
-        if checked:
-            self.voice_chat_requested.emit()
-        else:
-            self.close_voice_popup()
+    def _on_voice_chat_requested(self):
+        self.voice_chat_requested.emit()
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.LeftButton:

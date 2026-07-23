@@ -53,6 +53,7 @@ class SettingsWindow(FluentWindow):
         self.protocol_test.setObjectName('ProtocolTestPage')
         self.basic.settings_changed.connect(self.settings_changed)
         self.agent.settings_changed.connect(self.settings_changed)
+        self.tts.settings_changed.connect(self.settings_changed)
         self.basic.pet_changed.connect(self.pet_changed)
         self.role.clear_history_requested.connect(self.clear_history_requested)
         self.addSubInterface(self.basic, FIF.SETTING, '基础')

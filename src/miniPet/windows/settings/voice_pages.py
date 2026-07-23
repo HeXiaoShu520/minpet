@@ -1,7 +1,7 @@
 # coding:utf-8
 """语音、回复显示和豆包通话设置页面。"""
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QPlainTextEdit
 from qfluentwidgets import InfoBar, InfoBarPosition, PrimaryPushButton, SettingCard, SettingCardGroup, SwitchSettingCard
@@ -44,6 +44,8 @@ REALTIME_VOICE_OPTIONS = [
 ]
 
 class TTSPage(MiniPetScrollPage):
+    settings_changed = Signal()
+
     def __init__(self, parent=None):
         super().__init__('语音设置', parent, save_callback=lambda: self._save())
         self.worker = None
@@ -66,6 +68,18 @@ class TTSPage(MiniPetScrollPage):
         self.parenthesisFilterCard = LineEditSettingCard(FIF.FONT_SIZE, '括号过滤长度', '对应火山参数 max_length_to_filter_parenthesis，0 为不过滤，100 为过滤', placeholder='0', parent=self.apiGroup)
         self.parenthesisFilterCard.lineEdit.setFixedWidth(120)
         self.parenthesisFilterCard.setText(cfg.get('max_length_to_filter_parenthesis', 0))
+
+        voice_chat_cfg = config.voice_chat_config
+        voice_chat_defaults = config.DEFAULT_VOICE_CHAT_CONFIG
+        wake_cfg = config.wake_word_config
+        wake_defaults = config.DEFAULT_WAKE_WORD_CONFIG
+        self.wakeGroup = SettingCardGroup('本地 AI 语音对话', self.scrollWidget)
+        self.continuousVoiceCard = SwitchSettingCard(FIF.CHAT, '连续对话', '开启后每轮回复结束会自动进入下一次接听；关闭后回到语音球待机', parent=self.wakeGroup)
+        self.continuousVoiceCard.setChecked(bool(voice_chat_cfg.get('continuous', voice_chat_defaults['continuous'])))
+        self.wakeEnabledCard = SwitchSettingCard(FIF.MICROPHONE, '小月小月唤醒', '打开语音球后使用本地 Vosk 模型监听；命中后再打开火山流式 ASR', parent=self.wakeGroup)
+        self.wakeEnabledCard.setChecked(bool(wake_cfg.get('enabled', wake_defaults['enabled'])))
+        self.wakeWordsCard = LineEditSettingCard(FIF.MESSAGE, '唤醒词', '多个词用逗号分隔，例如：小月小月,小月', placeholder='小月小月', parent=self.wakeGroup)
+        self.wakeWordsCard.setText(wake_cfg.get('words', wake_defaults['words']))
 
         self.linkGroup = SettingCardGroup('相关链接', self.scrollWidget)
         self.linkCard = SettingCard(FIF.LINK, '火山语音资源', '服务开通、在线体验和 API 教程', self.linkGroup)
@@ -92,8 +106,11 @@ class TTSPage(MiniPetScrollPage):
 
         for card in [self.enabledCard, self.apiKeyCard, self.voiceCard, self.maxCharsCard, self.disableEmojiFilterCard, self.parenthesisFilterCard, self.actionCard]:
             self.apiGroup.addSettingCard(card)
+        for card in [self.continuousVoiceCard, self.wakeEnabledCard, self.wakeWordsCard]:
+            self.wakeGroup.addSettingCard(card)
         self.linkGroup.addSettingCard(self.linkCard)
         self.expandLayout.addWidget(self.apiGroup)
+        self.expandLayout.addWidget(self.wakeGroup)
         self.expandLayout.addWidget(self.linkGroup)
         self._initializing = False
 
@@ -143,8 +160,27 @@ class TTSPage(MiniPetScrollPage):
             'max_length_to_filter_parenthesis': max_length_to_filter_parenthesis,
         }
 
+    def _collect_voice_chat(self):
+        return {
+            'continuous': self.continuousVoiceCard.isChecked(),
+        }
+
+    def _collect_wake_word(self):
+        defaults = config.DEFAULT_WAKE_WORD_CONFIG
+        return {
+            'enabled': self.wakeEnabledCard.isChecked(),
+            'words': self.wakeWordsCard.text().strip() or defaults['words'],
+            'model_dir': defaults['model_dir'],
+            'sample_rate': defaults['sample_rate'],
+            'chunk_ms': defaults['chunk_ms'],
+            'restart_delay_ms': defaults['restart_delay_ms'],
+        }
+
     def _save(self):
         config.save_tts_config(self._collect())
+        config.save_voice_chat_config(self._collect_voice_chat())
+        config.save_wake_word_config(self._collect_wake_word())
+        self.settings_changed.emit()
         InfoBar.success('保存成功', '语音配置已保存', duration=2000, position=InfoBarPosition.BOTTOM, parent=self.window())
 
     def _test(self):

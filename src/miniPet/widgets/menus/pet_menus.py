@@ -379,8 +379,6 @@ class PetQuickMenu(QFrame):
             QPushButton#ShareScreenBtn:checked { background: #dbeeff; }
             QPushButton#VoiceChatBtn { background: #fee; border: 1px solid #fcc; }
             QPushButton#VoiceChatBtn:hover { background: #fdd; }
-            QPushButton#VoiceChatBtn:checked { background: #dbeeff; border: none; }
-            QPushButton#VoiceChatBtn:checked:hover { background: #c8e5ff; }
         ''')
         card = QFrame(self)
         card.setObjectName('QuickMenuCard')
@@ -391,7 +389,6 @@ class PetQuickMenu(QFrame):
         chat_btn = QPushButton(card)
         voice_chat_btn = QPushButton(card)
         voice_chat_btn.setObjectName('VoiceChatBtn')
-        voice_chat_btn.setCheckable(True)
         share_screen_btn = QPushButton(card)
         share_screen_btn.setObjectName('ShareScreenBtn')
         share_screen_btn.setCheckable(True)
@@ -406,24 +403,14 @@ class PetQuickMenu(QFrame):
             btn.setFixedSize(30, 30)
         settings_btn.setToolTip('设置')
         chat_btn.setToolTip('聊天')
-        voice_chat_btn.setToolTip('语音聊天')
+        voice_chat_btn.setToolTip('启动一次接听')
         share_screen_btn.setToolTip('共享屏幕（语音时附带截图）')
         share_screen_btn.setChecked(share_screen_active)
-        voice_chat_btn.setChecked(voice_chat_active)
         quit_btn.setToolTip('退出')
-
-        def update_voice_chat_icon(checked):
-            if checked:
-                voice_chat_btn.setIcon(FIF.MICROPHONE.icon())
-            else:
-                voice_chat_btn.setIcon(QIcon(str(config.RES_DIR / 'icons' / 'system' / 'microphone_off.png')))
-
-        voice_chat_btn.toggled.connect(update_voice_chat_icon)
-        update_voice_chat_icon(voice_chat_active)
 
         settings_btn.clicked.connect(lambda: self._trigger(on_settings))
         chat_btn.clicked.connect(lambda: self._trigger(on_chat))
-        voice_chat_btn.clicked.connect(lambda checked: on_voice_chat(checked))
+        voice_chat_btn.clicked.connect(lambda: self._trigger(on_voice_chat))
         share_screen_btn.clicked.connect(lambda checked: on_share_screen(checked))
         quit_btn.clicked.connect(lambda: self._trigger(on_quit))
         row.addWidget(settings_btn)
