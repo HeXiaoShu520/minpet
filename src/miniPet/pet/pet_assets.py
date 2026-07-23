@@ -19,6 +19,37 @@ from PySide6.QtGui import QImage, QPixmap
 from miniPet import config
 
 
+CODEX_V2_ROW_ALIASES = {
+    'default': 'idle',
+    'stand': 'idle',
+    'idle': 'idle',
+    'running-right': 'running-right',
+    'right_walk': 'running-right',
+    'rightwalk': 'running-right',
+    'running-left': 'running-left',
+    'left_walk': 'running-left',
+    'leftwalk': 'running-left',
+    'waving': 'waving',
+    'jumping': 'jumping',
+    'failed': 'failed',
+    'waiting': 'waiting',
+    'running': 'running',
+    'review': 'review',
+}
+
+CODEX_V2_DEFAULT_ROWS = [
+    'idle',
+    'running-right',
+    'running-left',
+    'waving',
+    'jumping',
+    'failed',
+    'waiting',
+    'running',
+    'review',
+]
+
+
 def _pixmap_bounds(pixmap):
     """计算 pixmap 中非透明区域的 bounding box（原始像素坐标）。"""
     image = pixmap.toImage().convertToFormat(QImage.Format.Format_ARGB32)
@@ -107,6 +138,60 @@ def _load_pixmaps(role_dir: Path, image_key: str):
     return pixmaps
 
 
+def _find_codex_v2_spritesheet(role_dir: Path, pet_conf: dict):
+    configured = pet_conf.get('spritesheet') or pet_conf.get('atlas') or pet_conf.get('image')
+    candidates = []
+    if configured:
+        path = Path(str(configured))
+        candidates.append(path if path.is_absolute() else role_dir / path)
+    for name in ('spritesheet.webp', 'spritesheet.png', 'atlas.webp', 'atlas.png'):
+        candidates.append(role_dir / name)
+        candidates.append(role_dir / 'action' / name)
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
+
+def _load_codex_v2_pixmaps(role_dir: Path, pet_conf: dict):
+    sheet_path = _find_codex_v2_spritesheet(role_dir, pet_conf)
+    if sheet_path is None:
+        raise FileNotFoundError(f'Codex v2 spritesheet not found: {role_dir.name}')
+    sheet = QPixmap(str(sheet_path))
+    if sheet.isNull():
+        raise FileNotFoundError(f'Codex v2 spritesheet cannot be loaded: {sheet_path}')
+    cell_width = int(pet_conf.get('cell_width') or pet_conf.get('cellWidth') or 192)
+    cell_height = int(pet_conf.get('cell_height') or pet_conf.get('cellHeight') or 208)
+    columns = int(pet_conf.get('columns') or pet_conf.get('cols') or 8)
+    rows = int(pet_conf.get('rows') or 11)
+    if sheet.width() < columns * cell_width or sheet.height() < rows * cell_height:
+        raise ValueError(f'Codex v2 spritesheet size mismatch: {sheet_path}')
+    row_frames = {}
+    for row_index in range(rows):
+        frames = []
+        for column in range(columns):
+            frames.append(sheet.copy(column * cell_width, row_index * cell_height, cell_width, cell_height))
+        row_frames[row_index] = frames
+    return row_frames, cell_width, cell_height
+
+
+def _make_codex_v2_act(name: str, row_frames: dict, row_index: int, data: dict, scale: float):
+    images = list(row_frames.get(row_index, []))
+    if not images:
+        raise FileNotFoundError(f'Codex v2 row not found: {name}')
+    bounds = [(id(p), _pixmap_bounds(p)) for p in images]
+    return Act(
+        name=name,
+        images=images,
+        act_num=int(data.get('act_num', 1)),
+        direction=data.get('direction'),
+        frame_move=float(data.get('frame_move', 0)) * scale,
+        frame_refresh=float(data.get('frame_refresh', 0.12)),
+        anchor=[int(v * scale) for v in data.get('anchor', [0, 0])],
+        bounds=bounds,
+    )
+
+
 def _make_act(role_dir: Path, name: str, data: dict, scale: float):
     images = _load_pixmaps(role_dir, data.get('images', name))
     if not images:
@@ -139,17 +224,67 @@ def _fill_patpat(raw, acts):
     return {i: next(iter(acts.values())) for i in range(4)}
 
 
-def load_pet_profile(pet_name: str):
-    role_dir = config.RES_DIR / 'role' / pet_name
-    pet_conf = _load_json(role_dir / 'pet_conf.json')
-    act_conf = _load_json(role_dir / 'act_conf.json')
-    scale = float(pet_conf.get('scale', 1.0))
+def _load_standard_pet_acts(role_dir: Path, pet_conf: dict, act_conf: dict, scale: float):
     acts = {}
     for name, data in act_conf.items():
         try:
             acts[name] = _make_act(role_dir, name, data, scale)
         except FileNotFoundError:
             pass
+    return acts
+
+
+def _load_codex_v2_acts(role_dir: Path, pet_conf: dict, act_conf: dict, scale: float):
+    row_frames, _cell_width, _cell_height = _load_codex_v2_pixmaps(role_dir, pet_conf)
+    acts = {}
+    for name, row_name in zip(CODEX_V2_DEFAULT_ROWS, CODEX_V2_DEFAULT_ROWS):
+        row_index = CODEX_V2_DEFAULT_ROWS.index(row_name)
+        data = dict(act_conf.get(name, {}))
+        data.setdefault('images', name)
+        acts[name] = _make_codex_v2_act(name, row_frames, row_index, data, scale)
+    for name, data in act_conf.items():
+        row_name = data.get('codex_row') or data.get('row_name') or CODEX_V2_ROW_ALIASES.get(data.get('images', name), data.get('images', name))
+        if row_name in CODEX_V2_DEFAULT_ROWS:
+            row_index = CODEX_V2_DEFAULT_ROWS.index(row_name)
+        elif isinstance(data.get('row'), int):
+            row_index = int(data.get('row'))
+        else:
+            continue
+        acts[name] = _make_codex_v2_act(name, row_frames, row_index, data, scale)
+    aliases = {
+        'default': 'idle',
+        'stand': 'idle',
+        'drag': 'idle',
+        'fall': 'failed',
+        'prefall': 'failed',
+        'onfloor': 'idle',
+        'patpat': 'waving',
+        'happy': 'waving',
+        'work': 'running',
+        'left_walk': 'running-left',
+        'right_walk': 'running-right',
+    }
+    for alias, target in aliases.items():
+        if alias not in acts and target in acts:
+            acts[alias] = acts[target]
+    return acts
+
+
+def load_pet_profile(pet_name: str):
+    role_dir = config.RES_DIR / 'role' / pet_name
+    pet_conf = _load_json(role_dir / 'pet_conf.json')
+    act_conf_path = role_dir / 'act_conf.json'
+    act_conf = _load_json(act_conf_path) if act_conf_path.is_file() else {}
+    scale = float(pet_conf.get('scale', 1.0))
+    is_codex_v2 = int(pet_conf.get('spriteVersionNumber', pet_conf.get('sprite_version_number', 0)) or 0) == 2
+    if is_codex_v2:
+        acts = _load_codex_v2_acts(role_dir, pet_conf, act_conf, scale)
+        default_width = int(pet_conf.get('cell_width') or pet_conf.get('cellWidth') or 192)
+        default_height = int(pet_conf.get('cell_height') or pet_conf.get('cellHeight') or 208)
+    else:
+        acts = _load_standard_pet_acts(role_dir, pet_conf, act_conf, scale)
+        default_width = 128
+        default_height = 128
 
     def act(name, fallback='default'):
         return acts.get(pet_conf.get(name, fallback)) or acts[fallback]
@@ -177,8 +312,8 @@ def load_pet_profile(pet_name: str):
 
     return PetProfile(
         name=pet_name,
-        width=int(float(pet_conf.get('width', 128)) * scale),
-        height=int(float(pet_conf.get('height', 128)) * scale),
+        width=int(float(pet_conf.get('width', default_width)) * scale),
+        height=int(float(pet_conf.get('height', default_height)) * scale),
         scale=scale,
         refresh=float(pet_conf.get('refresh', 5)),
         interact_speed=int(float(pet_conf.get('interact_speed', 0.02)) * 1000),

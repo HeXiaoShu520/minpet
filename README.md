@@ -322,6 +322,7 @@ TTS_ENABLED=false
 TTS_API_KEY=
 TTS_VOICE_NAME=zh_female_vv_uranus_bigtts
 TTS_MAX_CHARS=500
+TTS_TEST_TEXT=
 VOICE_CHAT_CONTINUOUS=false
 WAKE_WORD_ENABLED=false
 WAKE_WORDS=小月小月
@@ -330,6 +331,7 @@ WAKE_WORDS=小月小月
 用途：
 
 - `TTS_API_KEY` 用于豆包 TTS 单向流式 WebSocket
+- `TTS_TEST_TEXT` 控制设置页“测试语音”的自定义试听文本；留空时使用当前音色的默认预览文案
 - `TTS_API_KEY` 同时用于豆包 ASR WebSocket
 - `TTS_API_KEY` 同时用于豆包 Realtime WebSocket
 - `VOICE_CHAT_CONTINUOUS` 控制回复完成后是否继续接听下一轮；关闭时回到语音球待机

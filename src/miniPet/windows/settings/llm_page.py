@@ -2,7 +2,7 @@
 """大模型设置页面。"""
 
 from PySide6.QtCore import Qt
-from qfluentwidgets import InfoBar, InfoBarPosition, SettingCard, SettingCardGroup
+from qfluentwidgets import InfoBar, InfoBarPosition, PrimaryPushButton, SettingCard, SettingCardGroup
 from qfluentwidgets import FluentIcon as FIF
 
 from miniPet import config

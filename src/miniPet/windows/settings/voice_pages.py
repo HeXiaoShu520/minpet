@@ -1,6 +1,8 @@
 # coding:utf-8
 """语音、回复显示和豆包通话设置页面。"""
 
+import hashlib
+
 from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QPlainTextEdit
@@ -68,6 +70,14 @@ class TTSPage(MiniPetScrollPage):
         self.parenthesisFilterCard = LineEditSettingCard(FIF.FONT_SIZE, '括号过滤长度', '对应火山参数 max_length_to_filter_parenthesis，0 为不过滤，100 为过滤', placeholder='0', parent=self.apiGroup)
         self.parenthesisFilterCard.lineEdit.setFixedWidth(120)
         self.parenthesisFilterCard.setText(cfg.get('max_length_to_filter_parenthesis', 0))
+        self.testTextCard = SettingCard(FIF.EDIT, '测试文本', '留空则使用当前音色的默认预览文案', self.apiGroup)
+        self.testTextEdit = QPlainTextEdit(self.testTextCard)
+        self.testTextEdit.setPlaceholderText('你好呀，我是小月，有什么需要帮助的吗')
+        self.testTextEdit.setPlainText(cfg.get('test_text', ''))
+        self._style_editor(self.testTextEdit)
+        self.testTextCard.hBoxLayout.addStretch(1)
+        self.testTextCard.hBoxLayout.addWidget(self.testTextEdit, 0, Qt.AlignRight)
+        self.testTextCard.hBoxLayout.addSpacing(16)
 
         voice_chat_cfg = config.voice_chat_config
         voice_chat_defaults = config.DEFAULT_VOICE_CHAT_CONFIG
@@ -104,7 +114,7 @@ class TTSPage(MiniPetScrollPage):
         self.actionCard.hBoxLayout.addSpacing(16)
         self.testBtn.clicked.connect(self._test)
 
-        for card in [self.enabledCard, self.apiKeyCard, self.voiceCard, self.maxCharsCard, self.disableEmojiFilterCard, self.parenthesisFilterCard, self.actionCard]:
+        for card in [self.enabledCard, self.apiKeyCard, self.voiceCard, self.maxCharsCard, self.disableEmojiFilterCard, self.parenthesisFilterCard, self.testTextCard, self.actionCard]:
             self.apiGroup.addSettingCard(card)
         for card in [self.continuousVoiceCard, self.wakeEnabledCard, self.wakeWordsCard]:
             self.wakeGroup.addSettingCard(card)
@@ -114,11 +124,18 @@ class TTSPage(MiniPetScrollPage):
         self.expandLayout.addWidget(self.linkGroup)
         self._initializing = False
 
-    def _voice_preview_path(self, voice_value):
+    def _voice_preview_path(self, voice_value, text=''):
         safe_name = ''.join(ch if ch.isalnum() or ch in ('-', '_') else '_' for ch in voice_value)
+        text = (text or '').strip()
+        if text:
+            digest = hashlib.sha1(text.encode('utf-8')).hexdigest()[:12]
+            safe_name = '%s_%s' % (safe_name, digest)
         return config.DATA_DIR / 'tts_preview' / (safe_name + '.pcm')
 
     def _preview_text(self, voice_value):
+        custom_text = self.testTextEdit.toPlainText().strip()
+        if custom_text:
+            return custom_text
         voice_label = VOICE_VALUE_TO_LABEL.get(voice_value, voice_value)
         preview_name = voice_label.replace(' 2.0', '').replace('2.0', '').strip()
         return '你好呀，我是%s，有什么需要帮助的吗' % preview_name
@@ -133,7 +150,8 @@ class TTSPage(MiniPetScrollPage):
             self.preview_worker.wait(500)
             self.preview_worker = None
         voice_value = self.voiceCard.currentValue() or config.DEFAULT_TTS_CONFIG['voice_name']
-        self.preview_worker = TtsPreviewWorker(self._voice_preview_path(voice_value), parent=self)
+        preview_text = self._preview_text(voice_value)
+        self.preview_worker = TtsPreviewWorker(self._voice_preview_path(voice_value, preview_text), parent=self)
         self.preview_worker.result_ready.connect(self._on_preview_result)
         self.preview_worker.start()
 
@@ -156,6 +174,7 @@ class TTSPage(MiniPetScrollPage):
             'api_key': self.apiKeyCard.text(),
             'voice_name': self.voiceCard.currentValue() or config.DEFAULT_TTS_CONFIG['voice_name'],
             'max_chars': max_chars,
+            'test_text': self.testTextEdit.toPlainText().strip(),
             'disable_emoji_filter': self.disableEmojiFilterCard.isChecked(),
             'max_length_to_filter_parenthesis': max_length_to_filter_parenthesis,
         }
@@ -192,7 +211,8 @@ class TTSPage(MiniPetScrollPage):
         self.testBtn.setEnabled(False)
         self.testBtn.setText('播放中...')
         voice_value = cfg['voice_name']
-        self.worker = TtsCacheWorker(self._preview_text(voice_value), cfg, self._voice_preview_path(voice_value), parent=self)
+        preview_text = self._preview_text(voice_value)
+        self.worker = TtsCacheWorker(preview_text, cfg, self._voice_preview_path(voice_value, preview_text), parent=self)
         self.worker.result_ready.connect(self._on_test_result)
         self.worker.start()
 

@@ -7,6 +7,7 @@
 
 import json
 import re
+import shutil
 import time
 from pathlib import Path
 
@@ -49,6 +50,22 @@ def resolve_model_dir(path_text):
     return path
 
 
+def ensure_runtime_model_dir(model_dir):
+    """把模型复制到用户目录，避开 Vosk 在中文工程路径下的模型读取问题。"""
+    cache_root = Path.home() / '.minipet' / 'vosk'
+    cache_dir = cache_root / model_dir.name
+    required = ('am', 'conf', 'graph', 'ivector')
+    if cache_dir.is_dir() and all((cache_dir / name).exists() for name in required):
+        return cache_dir
+    if not all((model_dir / name).exists() for name in required):
+        return model_dir
+    cache_root.mkdir(parents=True, exist_ok=True)
+    if cache_dir.exists():
+        shutil.rmtree(cache_dir)
+    shutil.copytree(model_dir, cache_dir)
+    return cache_dir
+
+
 class WakeWordWorker(QThread):
     detected = Signal(str)
     status_changed = Signal(str)
@@ -78,6 +95,7 @@ class WakeWordWorker(QThread):
         model_dir = resolve_model_dir(self.wake_config.get('model_dir'))
         if not model_dir.is_dir():
             raise WakeWordError('未找到离线唤醒模型：%s' % model_dir)
+        model_dir = ensure_runtime_model_dir(model_dir)
         wake_words = split_wake_words(self.wake_config.get('words'))
         if not wake_words:
             raise WakeWordError('请至少配置一个唤醒词')

@@ -827,18 +827,52 @@ class MiniPetApp(QApplication):
         x, y = self.pet.bubble_anchor()
         self.note.setup_smart_bubble(event, x, y)
 
+    def _codex_pet_action(self, value):
+        state = str(value or '').strip().lower().replace('_', '-')
+        return {
+            'idle': 'idle',
+            'default': 'idle',
+            'done': 'waving',
+            'complete': 'waving',
+            'completed': 'waving',
+            'success': 'waving',
+            'happy': 'waving',
+            'celebrate': 'waving',
+            'wave': 'waving',
+            'waving': 'waving',
+            'jump': 'jumping',
+            'jumping': 'jumping',
+            'error': 'failed',
+            'failed': 'failed',
+            'failure': 'failed',
+            'urgent': 'failed',
+            'waiting': 'waiting',
+            'wait': 'waiting',
+            'approval': 'waiting',
+            'need-approval': 'waiting',
+            'waiting-approval': 'waiting',
+            'thinking': 'running',
+            'working': 'running',
+            'running': 'running',
+            'coding': 'running',
+            'tool-use': 'running',
+            'review': 'review',
+            'reviewing': 'review',
+            'reading': 'review',
+            'drag-right': 'running-right',
+            'running-right': 'running-right',
+            'right': 'running-right',
+            'drag-left': 'running-left',
+            'running-left': 'running-left',
+            'left': 'running-left',
+        }.get(state, value)
+
     def _handle_pet_control(self, event_type, payload):
         if event_type in ('pet.emotion.set', 'pet.nudge'):
-            emotion = payload.get('emotion') or payload.get('intensity') or payload.get('reason') or ''
+            emotion = payload.get('emotion') or payload.get('intensity') or payload.get('reason') or payload.get('state') or ''
             text = payload.get('text') or payload.get('message') or ''
-            action = payload.get('action') or payload.get('fallback_action')
-            if not action:
-                if emotion in ('happy', 'celebrate'):
-                    action = 'happy'
-                elif emotion in ('urgent', 'error'):
-                    action = 'fall'
-                elif emotion in ('thinking', 'working', 'waiting'):
-                    action = 'default'
+            action = payload.get('action') or payload.get('fallback_action') or payload.get('state')
+            action = self._codex_pet_action(action or emotion)
             if action:
                 self.pet.play_action(action)
             if text:
@@ -860,19 +894,19 @@ class MiniPetApp(QApplication):
             self.note.setup_bubble(text, x, y, 8000, title=payload.get('title') or '任务步骤')
             return
         if event_type == 'agent.task.done':
-            self.pet.play_action('happy')
+            self.pet.play_action(self._codex_pet_action('done'))
             self.note.setup_bubble(payload.get('summary') or payload.get('title') or '任务完成', x, y, 6000, title='完成')
             return
         if event_type == 'agent.task.failed':
+            self.pet.play_action(self._codex_pet_action('failed'))
             self.note.setup_bubble(payload.get('error') or '任务失败', x, y, 6000, title='失败')
             return
         title = payload.get('title') or payload.get('state') or (payload.get('task') or {}).get('title') or '智能体状态'
         text = payload.get('text') or payload.get('status') or payload.get('state') or '正在处理...'
         emotion = payload.get('emotion') or payload.get('state')
-        if emotion in ('happy', 'celebrate', 'done'):
-            self.pet.play_action('happy')
-        elif emotion in ('urgent', 'error', 'failed'):
-            self.pet.play_action('fall')
+        action = self._codex_pet_action(emotion)
+        if action != emotion:
+            self.pet.play_action(action)
         self.note.setup_bubble(text, x, y, 5000, title=title)
 
     def _send_context_status(self, request_id=None):
@@ -931,13 +965,14 @@ class MiniPetApp(QApplication):
         event['metadata'] = metadata
 
     def _trigger_pet_reaction(self, event):
-        action = event.get('pet_action')
+        action = event.get('pet_action') or event.get('action') or event.get('state')
         if not action:
             priority = event.get('priority', 'normal')
             if priority in ('high', 'urgent'):
-                action = 'fall'
+                action = 'failed'
             elif event.get('is_at_me'):
-                action = 'default'
+                action = 'idle'
+        action = self._codex_pet_action(action)
         if action:
             self.pet.play_action(action)
 
