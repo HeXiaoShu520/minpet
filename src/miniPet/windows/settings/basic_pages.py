@@ -163,7 +163,7 @@ class AgentPage(MiniPetScrollPage):
     BACKENDS = [
         ('builtin', '内置 miniPet 大模型'),
         ('openclaw', 'OpenClaw AI'),
-        ('custom', '通用 AI 后端'),
+        ('custom', 'miniClaw / 通用 AI 后端'),
     ]
 
     def __init__(self, parent=None):
@@ -174,9 +174,9 @@ class AgentPage(MiniPetScrollPage):
         self.backendCard.setCurrentValue(cfg.get('agent_backend', 'builtin'))
         self.openclawWsCard = LineEditSettingCard(FIF.LINK, 'OpenClaw Adapter 地址', 'OpenClaw 中转脚本监听的 WebSocket 地址', placeholder='ws://127.0.0.1:18888/ws/pet', parent=self.agentGroup)
         self.openclawWsCard.setText(cfg.get('openclaw_ws_url', 'ws://127.0.0.1:18888/ws/pet'))
-        self.customWsCard = LineEditSettingCard(FIF.LINK, '通用 AI 后端地址', '完全体后端的 WebSocket 地址，遵循 miniPet 通用智能体协议', placeholder='ws://127.0.0.1:18889/ws/minipet', parent=self.agentGroup)
+        self.customWsCard = LineEditSettingCard(FIF.LINK, 'miniClaw / 通用后端地址', 'miniClaw 默认 ws://127.0.0.1:18889/ws/minipet，遵循 miniPet 通用智能体协议', placeholder='ws://127.0.0.1:18889/ws/minipet', parent=self.agentGroup)
         self.customWsCard.setText(cfg.get('custom_agent_ws_url', 'ws://127.0.0.1:18889/ws/minipet'))
-        self.noteCard = SettingCard(FIF.MESSAGE, '说明', '内置模式使用”大模型”页配置；OpenClaw 和通用后端模式会通过 WebSocket 双向通信', self.agentGroup)
+        self.noteCard = SettingCard(FIF.MESSAGE, '说明', '内置模式使用”大模型”页配置；OpenClaw、miniClaw 和通用后端模式会通过 WebSocket 双向通信', self.agentGroup)
 
         for card in [self.backendCard, self.openclawWsCard, self.customWsCard, self.noteCard]:
             self.agentGroup.addSettingCard(card)
