@@ -396,7 +396,7 @@ class PetQuickMenu(QFrame):
         quit_btn = QPushButton(card)
         settings_btn.setIcon(FIF.SETTING.icon())
         chat_btn.setIcon(QIcon(str(config.RES_DIR / 'icons' / 'Dialogue_icon.png')))
-        voice_chat_btn.setIcon(FIF.MICROPHONE.icon())
+        voice_chat_btn.setIcon(QIcon(str(config.RES_DIR / 'icons' / 'system' / 'voice_orb.svg')))
         share_screen_btn.setIcon(QIcon(str(config.RES_DIR / 'icons' / 'system' / 'screen_share.svg')))
         quit_btn.setIcon(FIF.POWER_BUTTON.icon())
         for btn in (settings_btn, chat_btn, share_screen_btn, voice_chat_btn, quit_btn):
