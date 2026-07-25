@@ -193,7 +193,7 @@ class EasterActionButton(QPushButton):
         self.label = label
         self.subtitle = subtitle
         self.setCursor(Qt.PointingHandCursor)
-        self.setFixedSize(140, 70)
+        self.setFixedSize(164, 72)
         self.setText('')
 
     def paintEvent(self, event):
@@ -234,14 +234,18 @@ class EasterActionButton(QPushButton):
             painter.setPen(QColor(92, 59, 24))
             painter.drawText(icon_rect, Qt.AlignCenter, self.icon_text)
 
+        text_rect = QRectF(rect.left() + 58, rect.top() + 11, rect.width() - 68, 24)
         font = QFont('Microsoft YaHei UI', 10, QFont.Bold)
         painter.setFont(font)
         painter.setPen(QColor(82, 52, 22))
-        painter.drawText(QRectF(rect.left() + 58, rect.top() + 13, rect.width() - 64, 22), Qt.AlignLeft | Qt.AlignVCenter, self.label)
+        title = QFontMetrics(font).elidedText(self.label, Qt.ElideRight, int(text_rect.width()))
+        painter.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter, title)
+        sub_rect = QRectF(rect.left() + 58, rect.top() + 36, rect.width() - 68, 22)
         font = QFont('Microsoft YaHei UI', 8)
         painter.setFont(font)
         painter.setPen(QColor(122, 82, 38, 185))
-        painter.drawText(QRectF(rect.left() + 58, rect.top() + 36, rect.width() - 64, 20), Qt.AlignLeft | Qt.AlignVCenter, self.subtitle)
+        subtitle = QFontMetrics(font).elidedText(self.subtitle, Qt.ElideRight, int(sub_rect.width()))
+        painter.drawText(sub_rect, Qt.AlignLeft | Qt.AlignVCenter, subtitle)
 
 
 class PetEasterMenu(QFrame):
@@ -253,7 +257,7 @@ class PetEasterMenu(QFrame):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.NoDropShadowWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setWindowOpacity(0.0)
-        self.setFixedWidth(346)
+        self.setFixedWidth(394)
         self.setStyleSheet('''
             QFrame#EasterCard {
                 border: 1px solid rgba(218, 190, 132, 230);
