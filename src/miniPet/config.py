@@ -68,10 +68,10 @@ DEFAULT_TTS_CONFIG = {
     'enabled': False,
     'api_key': '',
     'voice_name': 'zh_female_vv_uranus_bigtts',
-    'max_chars': 500,
+    'max_chars': 200,
     'test_text': '',
-    'disable_emoji_filter': False,
-    'max_length_to_filter_parenthesis': 0,
+    'disable_emoji_filter': True,
+    'max_length_to_filter_parenthesis': 100,
 }
 
 DEFAULT_CHAT_RESTORE_CONFIG = {
@@ -160,8 +160,6 @@ TTS_ENV_KEYS = {
     'voice_name': 'TTS_VOICE_NAME',
     'max_chars': 'TTS_MAX_CHARS',
     'test_text': 'TTS_TEST_TEXT',
-    'disable_emoji_filter': 'TTS_DISABLE_EMOJI_FILTER',
-    'max_length_to_filter_parenthesis': 'TTS_MAX_LENGTH_TO_FILTER_PARENTHESIS',
 }
 
 DOUBAO_CALL_ENV_KEYS = {

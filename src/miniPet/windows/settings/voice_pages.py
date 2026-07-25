@@ -62,14 +62,9 @@ class TTSPage(MiniPetScrollPage):
         self.voiceCard = ComboSettingCard(VOICE_OPTIONS, FIF.PEOPLE, '音色', '选择后会生成并播放一句音色预览', self.apiGroup)
         self.voiceCard.setCurrentValue(cfg.get('voice_name', config.DEFAULT_TTS_CONFIG['voice_name']))
         self.voiceCard.comboBox.currentTextChanged.connect(self._preview_voice)
-        self.maxCharsCard = LineEditSettingCard(FIF.FONT_SIZE, '最大字数', '过长回复会截断后播放，避免请求过大', placeholder='500', parent=self.apiGroup)
+        self.maxCharsCard = LineEditSettingCard(FIF.FONT_SIZE, '最大字数', '过长回复会截断后播放，避免请求过大', placeholder='200', parent=self.apiGroup)
         self.maxCharsCard.lineEdit.setFixedWidth(120)
-        self.maxCharsCard.setText(cfg.get('max_chars', 500))
-        self.disableEmojiFilterCard = SwitchSettingCard(FIF.MESSAGE, '禁用 Emoji 过滤', '对应火山参数 disable_emoji_filter，开启后合成请求传 true', parent=self.apiGroup)
-        self.disableEmojiFilterCard.setChecked(bool(cfg.get('disable_emoji_filter', False)))
-        self.parenthesisFilterCard = LineEditSettingCard(FIF.FONT_SIZE, '括号过滤长度', '对应火山参数 max_length_to_filter_parenthesis，0 为不过滤，100 为过滤', placeholder='0', parent=self.apiGroup)
-        self.parenthesisFilterCard.lineEdit.setFixedWidth(120)
-        self.parenthesisFilterCard.setText(cfg.get('max_length_to_filter_parenthesis', 0))
+        self.maxCharsCard.setText(cfg.get('max_chars', config.DEFAULT_TTS_CONFIG['max_chars']))
         self.testTextCard = SettingCard(FIF.EDIT, '测试文本', '留空则使用当前音色的默认预览文案', self.apiGroup)
         self.testTextEdit = QPlainTextEdit(self.testTextCard)
         self.testTextEdit.setPlaceholderText('你好呀，我是小月，有什么需要帮助的吗')
@@ -114,7 +109,7 @@ class TTSPage(MiniPetScrollPage):
         self.actionCard.hBoxLayout.addSpacing(16)
         self.testBtn.clicked.connect(self._test)
 
-        for card in [self.enabledCard, self.apiKeyCard, self.voiceCard, self.maxCharsCard, self.disableEmojiFilterCard, self.parenthesisFilterCard, self.testTextCard, self.actionCard]:
+        for card in [self.enabledCard, self.apiKeyCard, self.voiceCard, self.maxCharsCard, self.testTextCard, self.actionCard]:
             self.apiGroup.addSettingCard(card)
         for card in [self.continuousVoiceCard, self.wakeEnabledCard, self.wakeWordsCard]:
             self.wakeGroup.addSettingCard(card)
@@ -170,21 +165,17 @@ class TTSPage(MiniPetScrollPage):
 
     def _collect(self):
         try:
-            max_chars = max(1, int(self.maxCharsCard.text() or 500))
+            max_chars = max(1, int(self.maxCharsCard.text() or config.DEFAULT_TTS_CONFIG['max_chars']))
         except ValueError:
-            max_chars = 500
-        try:
-            max_length_to_filter_parenthesis = max(0, int(self.parenthesisFilterCard.text() or 0))
-        except ValueError:
-            max_length_to_filter_parenthesis = 0
+            max_chars = config.DEFAULT_TTS_CONFIG['max_chars']
         return {
             'enabled': self.enabledCard.isChecked(),
             'api_key': self.apiKeyCard.text(),
             'voice_name': self.voiceCard.currentValue() or config.DEFAULT_TTS_CONFIG['voice_name'],
             'max_chars': max_chars,
             'test_text': self.testTextEdit.toPlainText().strip(),
-            'disable_emoji_filter': self.disableEmojiFilterCard.isChecked(),
-            'max_length_to_filter_parenthesis': max_length_to_filter_parenthesis,
+            'disable_emoji_filter': config.DEFAULT_TTS_CONFIG['disable_emoji_filter'],
+            'max_length_to_filter_parenthesis': config.DEFAULT_TTS_CONFIG['max_length_to_filter_parenthesis'],
         }
 
     def _collect_voice_chat(self):

@@ -141,8 +141,8 @@ def split_sentences(text, first_target_chars=30, target_chars=80):
 def _build_ws_payload(text, cfg):
     additions = {
         'disable_markdown_filter': True,
-        'disable_emoji_filter': bool(cfg.get('disable_emoji_filter', config.DEFAULT_TTS_CONFIG['disable_emoji_filter'])),
-        'max_length_to_filter_parenthesis': int(cfg.get('max_length_to_filter_parenthesis', config.DEFAULT_TTS_CONFIG['max_length_to_filter_parenthesis'])),
+        'disable_emoji_filter': bool(config.DEFAULT_TTS_CONFIG['disable_emoji_filter']),
+        'max_length_to_filter_parenthesis': int(config.DEFAULT_TTS_CONFIG['max_length_to_filter_parenthesis']),
     }
     return {
         'req_params': {
