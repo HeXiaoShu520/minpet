@@ -377,8 +377,9 @@ class PetQuickMenu(QFrame):
             QPushButton:hover { background: #eef6ff; }
             QPushButton:pressed { background: #dbeeff; }
             QPushButton#ShareScreenBtn:checked { background: #dbeeff; }
-            QPushButton#VoiceChatBtn:checked { background: #ffeeee; border: 1px solid #ffcccc; }
-            QPushButton#VoiceChatBtn:hover { background: #ffdddd; }
+            QPushButton#VoiceChatBtn:checked { background: #dff8ee; border: 1px solid #8bd8bc; }
+            QPushButton#VoiceChatBtn:hover { background: #edf7ff; }
+            QPushButton#VoiceChatBtn:checked:hover { background: #d3f2e7; }
         ''')
         card = QFrame(self)
         card.setObjectName('QuickMenuCard')
