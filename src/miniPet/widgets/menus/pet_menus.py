@@ -377,7 +377,7 @@ class PetQuickMenu(QFrame):
             QPushButton:hover { background: #eef6ff; }
             QPushButton:pressed { background: #dbeeff; }
             QPushButton#ShareScreenBtn:checked { background: #dbeeff; }
-            QPushButton#VoiceChatBtn { background: #fee; border: 1px solid #fcc; }
+            QPushButton#VoiceChatBtn:checked { background: #fee; border: 1px solid #fcc; }
             QPushButton#VoiceChatBtn:hover { background: #fdd; }
         ''')
         card = QFrame(self)
@@ -389,6 +389,7 @@ class PetQuickMenu(QFrame):
         chat_btn = QPushButton(card)
         voice_chat_btn = QPushButton(card)
         voice_chat_btn.setObjectName('VoiceChatBtn')
+        voice_chat_btn.setCheckable(True)
         share_screen_btn = QPushButton(card)
         share_screen_btn.setObjectName('ShareScreenBtn')
         share_screen_btn.setCheckable(True)
@@ -403,9 +404,10 @@ class PetQuickMenu(QFrame):
             btn.setFixedSize(30, 30)
         settings_btn.setToolTip('设置')
         chat_btn.setToolTip('聊天')
-        voice_chat_btn.setToolTip('启动一次接听')
+        voice_chat_btn.setToolTip('语音球')
         share_screen_btn.setToolTip('共享屏幕（语音时附带截图）')
         share_screen_btn.setChecked(share_screen_active)
+        voice_chat_btn.setChecked(voice_chat_active)
         quit_btn.setToolTip('退出')
 
         settings_btn.clicked.connect(lambda: self._trigger(on_settings))

@@ -7,8 +7,8 @@ MiniPetApp 是整个桌宠程序的协调层，负责把桌宠窗口、设置窗
 分散在各自模块中，这里只保留跨模块流程编排。
 """
 
-import hashlib
 import json
+import random
 import re
 import signal
 import sys
@@ -29,13 +29,12 @@ from miniPet.storage.memory_store import MEMORY_CATEGORIES, MemoryStore
 from miniPet.widgets.notifications.center import NotificationCenter
 from miniPet.protocols.protocol_v1 import AGENT_STATE, SESSION_PING, SESSION_PONG, SESSION_READY, SURFACE_KINDS, SURFACE_SHOW, SURFACE_UPDATE, USER_COMMAND, USER_DROP, USER_INPUT, V1_CAPABILITIES, normalize_inbound_event
 from miniPet.settings_window import SettingsWindow
-from miniPet.clients.tts_client import TtsCacheWorker, TtsPreviewWorker, TtsWorker, stop_tts
+from miniPet.clients.tts_client import TtsPreviewWorker, TtsWorker, stop_tts
 from miniPet.clients.wake_word_client import WakeWordWorker
 from miniPet.clients.doubao_call_client import DoubaoCallWorker
 
 
-SINGING_KEYWORDS = ('唱歌', '唱个歌', '唱首歌', '唱一首', '来首歌', '来一首', '唱两句', '哼一段', '哼首歌')
-WAKE_ACK_TEXTS = ('哎？', '我在呢。', '怎么啦？')
+WAKE_ACK_KEYS = ('wake_ack_1', 'wake_ack_2', 'wake_ack_3', 'wake_ack_4')
 
 
 class MiniPetApp(QApplication):
@@ -88,24 +87,22 @@ class MiniPetApp(QApplication):
 
         # pet_voice_* 是桌宠旁边的轻量语音聊天状态，不等同于独立 豆包通话窗口。
         self.pet_voice_active = False
+        self.pet.set_voice_chat_active(False)
         self.pet_voice_listening = False
         self.pet_voice_asr_worker = None
         self.pet_voice_waiting_reply = False
         self.pet_voice_paused = False
         self.pet_voice_shared_screen = None  # 语音球屏幕共享
         self.wake_word_worker = None
-        self.singing_worker = None
-        self.singing_text = ''
         self.wake_ack_worker = None
         self.wake_ack_pending_start = False
-        self.wake_ack_index = 0
         self.is_quitting = False
 
         self.pet.show_settings.connect(self.settings.show_window)
         self.pet.chat_prompt_submitted.connect(self._on_quick_chat_prompt)
         self.pet.drop_intent_submitted.connect(self._on_drop_intent)
         self.pet.chat_requested.connect(self._show_chat_window)
-        self.pet.voice_chat_requested.connect(lambda: self._start_pet_voice_chat_once('menu'))
+        self.pet.voice_chat_requested.connect(self._toggle_voice_orb)
         self.pet.voice_pause_requested.connect(self._pause_pet_voice_chat)
         self.pet.share_screen_requested.connect(self._on_voice_share_screen_toggled)
         self.pet.doubao_call_requested.connect(self._show_doubao_call_window)
@@ -209,33 +206,37 @@ class MiniPetApp(QApplication):
         self._pause_wake_word_listener()
         self._play_wake_ack_then_start()
 
-    def _wake_ack_path(self, text):
+    def _wake_ack_sound_path(self):
         voice_name = config.tts_config.get('voice_name') or config.DEFAULT_TTS_CONFIG['voice_name']
         safe_voice = ''.join(ch if ch.isalnum() or ch in ('-', '_') else '_' for ch in voice_name)
-        digest = hashlib.sha1(text.encode('utf-8')).hexdigest()[:10]
-        return config.DATA_DIR / 'tts_wake_ack' / ('%s_%s.pcm' % (safe_voice, digest))
+        key = random.choice(WAKE_ACK_KEYS)
+        path = config.DATA_DIR / 'tts_wake_ack' / safe_voice / (key + '.pcm')
+        return path if path.is_file() else None
 
     def _play_wake_ack_then_start(self):
         if not self.pet_voice_active or self.wake_ack_worker is not None:
             return
-        text = WAKE_ACK_TEXTS[self.wake_ack_index % len(WAKE_ACK_TEXTS)]
-        self.wake_ack_index += 1
-        cfg = dict(config.tts_config)
-        cfg['enabled'] = True
         self.wake_ack_pending_start = True
         self.pet.update_voice_popup('thinking', '')
+        path = self._wake_ack_sound_path()
+        if path is None:
+            self._finish_wake_ack_start()
+            return
         stop_tts()
-        self.wake_ack_worker = TtsCacheWorker(text, cfg, self._wake_ack_path(text), parent=self)
+        self.wake_ack_worker = TtsPreviewWorker(path, parent=self)
         self.wake_ack_worker.result_ready.connect(self._on_wake_ack_done)
         self.wake_ack_worker.start()
 
-    def _on_wake_ack_done(self, success, text):
-        if not success:
-            print('Wake ack TTS failed:', text)
-        self.wake_ack_worker = None
+    def _finish_wake_ack_start(self):
         if self.wake_ack_pending_start and self.pet_voice_active and not self.pet_voice_paused:
             self.wake_ack_pending_start = False
             self._start_pet_voice_chat_once('wake_word')
+
+    def _on_wake_ack_done(self, success, text):
+        if not success:
+            print('Wake ack audio failed:', text)
+        self.wake_ack_worker = None
+        self._finish_wake_ack_start()
 
     def _on_wake_word_status(self, text):
         if text and text not in ('等待唤醒词',):
@@ -283,8 +284,35 @@ class MiniPetApp(QApplication):
         self.pet.show_chat(self.chat_history, self._append_chat_message, self.chat_store.content_for_llm, self._build_system_prompt)
 
     def _toggle_pet_voice_chat(self):
-        """兼容旧调用：现在语音入口语义是启动一次接听，不再 toggle。"""
-        self._start_pet_voice_chat_once('legacy')
+        """兼容旧调用：切换语音球显示状态。"""
+        self._toggle_voice_orb()
+
+    def _toggle_voice_orb(self):
+        if self.pet_voice_active:
+            self._stop_pet_voice_chat()
+            return
+        self._open_voice_orb()
+
+    def _open_voice_orb(self):
+        popup = self.pet.show_voice_popup()
+        try:
+            popup.stop_requested.disconnect(self._stop_pet_voice_chat)
+        except (TypeError, RuntimeError):
+            pass
+        popup.stop_requested.connect(self._stop_pet_voice_chat)
+        if not config.tts_config.get('api_key'):
+            self.pet.update_voice_popup('error', '缺少语音配置')
+            x, y = self.pet.bubble_anchor()
+            self.note.setup_bubble('请先在设置 > 语音中填写 TTS API Key', x, y, 4000, title=config.current_pet or '宠物')
+            QTimer.singleShot(1800, self.pet.close_voice_popup)
+            return
+        self.pet_voice_active = True
+        self.pet.set_voice_chat_active(True)
+        self.pet_voice_waiting_reply = False
+        self.pet_voice_paused = False
+        self.pet.update_voice_popup('wakeup' if self._wake_word_enabled() else 'idle', '')
+        if self._wake_word_enabled():
+            self._apply_wake_word_settings()
 
     def _start_pet_voice_chat_once(self, trigger='menu'):
         """启动一次本地 AI 语音接听，后续是否继续由连续对话开关控制。"""
@@ -307,6 +335,7 @@ class MiniPetApp(QApplication):
             QTimer.singleShot(1800, self.pet.close_voice_popup)
             return
         self.pet_voice_active = True
+        self.pet.set_voice_chat_active(True)
         self.pet_voice_waiting_reply = False
         self.pet_voice_paused = False
         if self._wake_word_enabled() and trigger != 'wake_word':
@@ -357,6 +386,7 @@ class MiniPetApp(QApplication):
 
     def _stop_pet_voice_chat(self):
         self.pet_voice_active = False
+        self.pet.set_voice_chat_active(False)
         self.pet_voice_listening = False
         self.pet_voice_waiting_reply = False
         self.pet_voice_paused = False
@@ -370,11 +400,6 @@ class MiniPetApp(QApplication):
             stop_tts()
             self.wake_ack_worker.wait(1200)
             self.wake_ack_worker = None
-        if self.singing_worker is not None:
-            self.singing_worker.finish()
-            self.singing_worker.wait(1500)
-            self.singing_worker = None
-            self.singing_text = ''
         stop_tts()
         self.pet.close_voice_popup()
         if not self.is_quitting:
@@ -419,9 +444,6 @@ class MiniPetApp(QApplication):
         if not text or not self.pet_voice_active or self.pet_voice_paused or self.pet_voice_waiting_reply:
             return
         self._stop_pet_voice_recording()
-        if self._is_singing_request(text):
-            self._start_singing_once(text)
-            return
         self.pet_voice_waiting_reply = True
         self.pet.update_voice_popup('thinking', text)
         screenshot = self._capture_voice_screenshot()
@@ -429,57 +451,6 @@ class MiniPetApp(QApplication):
             self.pet_voice_waiting_reply = False
             if self.pet_voice_active:
                 QTimer.singleShot(800, self._start_pet_voice_recording)
-
-    def _is_singing_request(self, text):
-        normalized = re.sub(r'[\s，。！？!?、,.；;：:~～“”"\'（）()【】\[\]{}]+', '', text or '')
-        return any(keyword in normalized for keyword in SINGING_KEYWORDS)
-
-    def _start_singing_once(self, user_text):
-        if self.singing_worker is not None:
-            self.pet.update_voice_popup('thinking', '正在准备唱歌')
-            return
-        cfg = dict(config.doubao_call_config)
-        cfg.update({
-            'enabled': True,
-            'model': config.DEFAULT_DOUBAO_CALL_CONFIG['model'],
-            'text_query': '用户想听唱歌，请只响应这一次，并根据用户要求直接唱出来。用户原话：' + user_text,
-            'single_turn': True,
-            'skip_welcome': True,
-        })
-        self.pet_voice_waiting_reply = True
-        self.singing_text = ''
-        self.pet.update_voice_popup('speaking', '唱歌中')
-        self._append_chat_message('user', user_text, 'voice_singing')
-        self.singing_worker = DoubaoCallWorker(cfg, parent=self)
-        self.singing_worker.status_changed.connect(self._on_singing_status)
-        self.singing_worker.chat_received.connect(self._on_singing_chat)
-        self.singing_worker.error_received.connect(self._on_singing_error)
-        self.singing_worker.finished_signal.connect(self._on_singing_finished)
-        self.singing_worker.start()
-
-    def _on_singing_status(self, text):
-        if self.pet_voice_active and text:
-            self.pet.update_voice_popup('speaking', text)
-
-    def _on_singing_chat(self, text):
-        if not text or not self.pet_voice_active:
-            return
-        self.singing_text += text
-        self.pet.update_voice_popup('speaking', self.singing_text[-220:])
-
-    def _on_singing_error(self, text):
-        x, y = self.pet.bubble_anchor()
-        self.note.setup_bubble('唱歌失败：' + str(text), x, y, 5000, title=config.current_pet or '宠物')
-        if self.pet_voice_active:
-            self.pet.update_voice_popup('error', str(text)[:60])
-
-    def _on_singing_finished(self):
-        if self.singing_text.strip():
-            self._append_chat_message('assistant', self.singing_text.strip(), 'voice_singing')
-        self.singing_worker = None
-        self.singing_text = ''
-        if self.pet_voice_active:
-            self._finish_voice_turn(delay_ms=800)
 
     def _on_pet_voice_error(self, text):
         if self.pet_voice_active:
@@ -500,7 +471,7 @@ class MiniPetApp(QApplication):
         self.is_quitting = True
         if self.pet.quick_menu is not None:
             self.pet.quick_menu.close()
-        if self.pet_voice_active or self.pet_voice_asr_worker is not None or self.singing_worker is not None:
+        if self.pet_voice_active or self.pet_voice_asr_worker is not None:
             self._stop_pet_voice_chat()
         self._stop_wake_word_listener()
         x, y = self.pet.bubble_anchor()
@@ -1109,7 +1080,7 @@ class MiniPetApp(QApplication):
             self.pet_voice_asr_worker.finish()
             self.pet_voice_asr_worker.wait(1500)
             self.pet_voice_asr_worker = None
-        for worker_name in ('quick_chat_worker', 'quick_tts_worker', 'event_tts_worker', 'memory_worker', 'singing_worker', 'wake_ack_worker'):
+        for worker_name in ('quick_chat_worker', 'quick_tts_worker', 'event_tts_worker', 'memory_worker', 'wake_ack_worker'):
             worker = getattr(self, worker_name, None)
             if worker is not None and worker.isRunning():
                 worker.requestInterruption()

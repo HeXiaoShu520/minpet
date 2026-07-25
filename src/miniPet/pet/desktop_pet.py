@@ -272,6 +272,9 @@ class DesktopPet(QWidget):
     def _on_voice_chat_requested(self):
         self.voice_chat_requested.emit()
 
+    def set_voice_chat_active(self, active):
+        self._voice_chat_active = bool(active)
+
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.LeftButton:
             disarm_hover_menu(self)
