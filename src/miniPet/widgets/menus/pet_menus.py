@@ -403,7 +403,7 @@ class PetQuickMenu(QFrame):
         for btn in (settings_btn, chat_btn, share_screen_btn, voice_chat_btn, quit_btn):
             btn.setIconSize(QSize(18, 18))
             btn.setFixedSize(30, 30)
-        voice_chat_btn.setIconSize(QSize(22, 22))
+        voice_chat_btn.setIconSize(QSize(24, 24))
         settings_btn.setToolTip('设置')
         chat_btn.setToolTip('聊天')
         voice_chat_btn.setToolTip('语音球')
