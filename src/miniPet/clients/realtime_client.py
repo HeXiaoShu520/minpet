@@ -347,7 +347,12 @@ class RealtimeSession:
             elif command == 'interrupt':
                 self._log('command interrupt')
                 self._interrupt_playback()
+                self.playing_tts = False
+                self._clear_audio_queue()
                 await self._send_json(EVENT_CLIENT_INTERRUPT, {})
+                if self.recording_requested and not self.closed:
+                    self._start_recording()
+                    self._emit_status('正在听')
             elif command == 'finish':
                 self._log('command finish')
                 self._stop_recording()

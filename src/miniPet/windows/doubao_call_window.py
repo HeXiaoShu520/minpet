@@ -9,7 +9,7 @@
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QIcon, QMouseEvent, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QMenu, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QMenu, QPushButton, QScrollArea, QVBoxLayout, QWidget
 from qfluentwidgets import InfoBar, InfoBarPosition
 from qfluentwidgets import FluentIcon as FIF
 
@@ -23,7 +23,7 @@ class InterruptButton(QPushButton):
 
     def __init__(self, parent=None):
         super().__init__('打断', parent)
-        self.setFixedSize(68, 34)
+        self.setFixedSize(76, 36)
         self.setToolTip('停止当前语音输出')
         self.setCursor(Qt.PointingHandCursor)
 
@@ -159,13 +159,20 @@ class DoubaoCallWindow(QWidget):
             QLabel#AvatarLabel{background:transparent;border-radius:54px;}
             QLabel#AnimLabel{color:#3d3d3d;font-size:22px;font-weight:700;letter-spacing:3px;}
             QLabel#StatusLabel{color:#8b8f99;font-size:16px;font-weight:400;}
+            QScrollArea#CaptionScroll{background:transparent;border:none;}
+            QScrollArea#CaptionScroll QWidget{background:transparent;}
+            QScrollArea#CaptionScroll QScrollBar:vertical{width:6px;background:transparent;margin:4px 0;}
+            QScrollArea#CaptionScroll QScrollBar::handle:vertical{background:#d5d9e0;border-radius:3px;min-height:28px;}
+            QScrollArea#CaptionScroll QScrollBar::handle:vertical:hover{background:#b9c0ca;}
+            QScrollArea#CaptionScroll QScrollBar::add-line:vertical,QScrollArea#CaptionScroll QScrollBar::sub-line:vertical{height:0;background:transparent;}
             QLabel#CaptionView{background:transparent;border:none;font-family:"Microsoft YaHei UI", "Microsoft YaHei", sans-serif;font-size:16px;font-weight:400;line-height:1.65;color:#24292f;padding:0 10px;}
             QPushButton#ToolButton{border:none;border-radius:22px;background:transparent;color:#8a8a8a;}
             QPushButton#ToolButton:hover{background:#f4f5f7;color:#303133;}
             QPushButton#ToolButton:checked{color:#1f6fff;background:#eef5ff;}
             QPushButton#MicButton{border:none;background:transparent;color:#303133;}
-            QPushButton#InterruptButton{border:none;border-radius:18px;background:#f6f7f8;color:#60646f;font-size:13px;}
+            QPushButton#InterruptButton{border:none;border-radius:18px;background:#f6f7f8;color:#60646f;font-size:13px;padding:0 16px;}
             QPushButton#InterruptButton:hover{background:#eef1f4;color:#303133;}
+            QPushButton#InterruptButton:pressed{background:#e3e7ec;color:#202124;}
             QPushButton#EndButton{border:none;border-radius:22px;background:#fff1f0;color:#ff3b30;}
             QPushButton#EndButton:hover{background:#ffe3e0;color:#d92d20;}
         ''')
@@ -192,13 +199,20 @@ class DoubaoCallWindow(QWidget):
         self.status_label.setFixedSize(280, 48)
         root.addWidget(self.status_label, 0, Qt.AlignHCenter)
 
-        self.caption_view = QLabel('', self)
+        self.caption_scroll = QScrollArea(self)
+        self.caption_scroll.setObjectName('CaptionScroll')
+        self.caption_scroll.setWidgetResizable(True)
+        self.caption_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.caption_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.caption_scroll.setFixedHeight(180)
+        self.caption_view = QLabel('', self.caption_scroll)
         self.caption_view.setObjectName('CaptionView')
         self.caption_view.setVisible(True)
         self.caption_view.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.caption_view.setWordWrap(True)
-        self.caption_view.setFixedHeight(180)
-        root.addWidget(self.caption_view)
+        self.caption_view.setMinimumHeight(176)
+        self.caption_scroll.setWidget(self.caption_view)
+        root.addWidget(self.caption_scroll)
         self._tw = Typewriter(self.caption_view, speed_ms=22)
         root.addStretch(1)
 
@@ -442,6 +456,11 @@ class DoubaoCallWindow(QWidget):
             self.interrupt_btn.setVisible(True)
         self.current_reply += text
         self._tw.append_chunk(text)
+        QTimer.singleShot(0, self._scroll_caption_to_bottom)
+
+    def _scroll_caption_to_bottom(self):
+        bar = self.caption_scroll.verticalScrollBar()
+        bar.setValue(bar.maximum())
 
     def _on_input_level(self, level):
         self.input_level = 0 if self.mic_muted else max(0, min(100, int(level)))
