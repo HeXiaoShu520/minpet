@@ -57,11 +57,6 @@ DEFAULT_LLM_CONFIG = {
     'model': 'gpt-4o-mini',
     'max_tokens': 1024,
     'system_prompt': '你是一只可爱的桌面宠物，性格活泼亲切，会用简短、口语化、带点撒娇的语气陪伴主人聊天。',
-    'memory_prompt': '',
-    'auto_memory_enabled': True,
-    'auto_memory_every_n_user_turns': 3,
-    'auto_memory_max_items_per_pass': 3,
-    'auto_memory_recent_messages': 12,
 }
 
 DEFAULT_TTS_CONFIG = {
@@ -147,11 +142,6 @@ LLM_ENV_KEYS = {
     'model': 'LLM_MODEL',
     'max_tokens': 'LLM_MAX_TOKENS',
     'system_prompt': 'LLM_SYSTEM_PROMPT',
-    'memory_prompt': 'LLM_MEMORY_PROMPT',
-    'auto_memory_enabled': 'LLM_AUTO_MEMORY_ENABLED',
-    'auto_memory_every_n_user_turns': 'LLM_AUTO_MEMORY_EVERY_N_USER_TURNS',
-    'auto_memory_max_items_per_pass': 'LLM_AUTO_MEMORY_MAX_ITEMS_PER_PASS',
-    'auto_memory_recent_messages': 'LLM_AUTO_MEMORY_RECENT_MESSAGES',
 }
 
 TTS_ENV_KEYS = {

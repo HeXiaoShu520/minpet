@@ -130,11 +130,9 @@ DESKTOP_API_PORT=18889
 - 流式输出
 - `Enter` 发送，`Shift+Enter` 换行
 - 支持 OpenAI 兼容接口
-- 支持 Anthropic Claude 原生接口（含多模态图片）
 - 可通过 System Prompt 定义宠物性格
-- 支持自动总结：不保存完整聊天历史，只从最近对话中提取少量长期有用信息
 - 可选 TTS 自动播报回复
-- 支持粘贴或拖入图片，发送时一并传给大模型（Anthropic 走 base64 原生图片块，OpenAI 走 image_url）
+- 支持粘贴或拖入图片，发送时一并传给 OpenAI 兼容大模型
 - 快速输入浮层支持粘贴图片，弹窗内显示缩略图预览
 - 支持在基础设置中自定义用户头像和宠物头像，选择后会立即显示图片预览
 
@@ -156,12 +154,11 @@ DESKTOP_API_PORT=18889
 - 使用火山豆包纯 ASR 服务，只做语音转文字
 - 复用 `TTS_API_KEY` 鉴权
 - 使用当前 `LLM_PROVIDER / LLM_API_BASE / LLM_MODEL` 配置生成回复
-- 能吃到 miniPet 的角色设定、记忆和本地聊天上下文
+- 能吃到 miniPet 的角色设定和本地聊天上下文
 - 菜单语音入口会打开语音球；语音球存在时才启用语音功能
 - 可选离线唤醒词监听：打开语音球后，本地 Vosk 小模型识别“小月小月”，命中后再打开火山流式 ASR，避免云端 ASR 常驻计费
-- 如果未开启唤醒词，打开语音球后会直接启动一次火山流式接听
+- 如果未开启唤醒词，语音球会保持待机，等待用户操作
 - 可选连续对话：回复完成后自动进入下一轮接听；关闭时回到语音球待机
-- 识别到“唱歌、唱一首、来首歌、唱两句、哼一段”等关键词时，会临时切到 豆包通话 O2.0 单次唱歌模式，播放完成后自动回到语音球待机，不受连续对话影响
 - 进入语音聊天会先播放欢迎语“你好呀，有什么需要帮忙的吗”，播放完成后再开始语音识别
 - 欢迎语按音色缓存到 `data/tts_welcome/`，已有缓存会直接播放，没有时才合成一次
 - 回复后复用现有 TTS 播放
@@ -206,7 +203,6 @@ volc.seedasr.sauc.duration
 - UI 是纯净通话卡片风格
 - 用户语音识别内容显示在状态行，AI 回复在下方字幕区流式显示
 - 播放语音时会显示“打断”按钮，可中断当前输出
-- 支持多屏共享选择的本地交互状态
 
 当前 豆包通话接口：
 
@@ -219,8 +215,6 @@ wss://openspeech.bytedance.com/api/v3/realtime/dialogue
 ```text
 volc.speech.dialog
 ```
-
-注意：当前豆包端到端 豆包通话文档只定义了语音输入输出事件，miniPet 的“共享屏幕”按钮目前实现了本地多屏选择和状态显示；如果要让 AI 理解屏幕内容，需要后续再接入视觉模型或支持视觉上下文的 ASR/LLM 通道。
 
 ### 语音播报 TTS
 
@@ -238,16 +232,6 @@ volc.speech.dialog
 ```text
 wss://openspeech.bytedance.com/api/v3/tts/unidirectional/stream
 ```
-
-### 自动总结
-
-- 不保存完整聊天历史，只在当前运行中保留最近对话作为短期上下文
-- 自动总结是可选功能，可在“设置 → 角色 → 自动总结”里开关
-- 开启后，每隔几次用户发言，会从最近对话中总结少量长期有用信息
-- 总结重点保存到 `data/memory/memories.json`，后续会拼入大模型系统提示
-- 设置页“角色”可查看、编辑和删除总结重点
-- 清空当前对话只清掉短期上下文，不会删除已保存的总结重点
-- 详细设计见 [自动总结设计](记忆与历史设计.md)
 
 ### 通知与外部事件
 
@@ -289,7 +273,7 @@ miniPet QApplication
 ├─ pet/desktop_windows.py          聊天窗口和豆包通话窗口打开逻辑
 ├─ settings_window.py             设置窗口入口
 ├─ clients/                       LLM / TTS / ASR / 豆包通话 / 外部事件客户端
-├─ storage/                       聊天记录和自动总结记忆存储
+├─ storage/                       聊天记录存储
 ├─ windows/                       文本聊天、豆包通话、设置页等顶层窗口
 ├─ widgets/                       快速输入、语音球、菜单、通知、彩蛋等 UI 组件
 ├─ pet/                           动画线程和角色资源加载
@@ -357,7 +341,7 @@ miniPet/data/minipet_settings.json
 
 ### 大模型配置
 
-大模型配置从环境变量或 `.env` 读取，并可在设置页保存。自动总结是可选功能，可在“设置 → 角色 → 自动总结”里开关；开关和频率也随大模型配置保存。
+大模型配置从环境变量或 `.env` 读取，并可在设置页保存。
 
 ```text
 LLM_PROVIDER=openai
@@ -366,11 +350,6 @@ LLM_API_KEY=
 LLM_MODEL=gpt-4o-mini
 LLM_MAX_TOKENS=1024
 LLM_SYSTEM_PROMPT=你是一只可爱的桌面宠物，性格活泼亲切，会用简短、口语化、带点撒娇的语气陪伴主人聊天。
-LLM_MEMORY_PROMPT=
-LLM_AUTO_MEMORY_ENABLED=true
-LLM_AUTO_MEMORY_EVERY_N_USER_TURNS=3
-LLM_AUTO_MEMORY_RECENT_MESSAGES=12
-LLM_AUTO_MEMORY_MAX_ITEMS_PER_PASS=3
 ```
 
 `LLM_PROVIDER` 可选：
@@ -442,8 +421,7 @@ DOUBAO_CALL_SPEAKING_STYLE=语气活泼、亲切、口语化。
 - 调整通话窗口字幕：用户识别文本显示在状态行，AI 回复显示在下方区域
 - 调整豆包通话设置页，固定 O2.0 模型并精简启用、模型和 Bot 名称配置项
 - 基础设置头像选择增加图片预览
-- 新增自动总结重点管理
-- 去掉默认历史记录逻辑，只保留当前运行短期上下文和自动总结重点
+- 去掉默认历史记录逻辑，只保留当前运行短期上下文
 - 更新桌宠快捷菜单、右键菜单、退出清理逻辑
 
 ## 目录职责
@@ -471,8 +449,7 @@ miniPet/
         event_client.py
       storage/            # 本地持久化
         chat_store.py
-        memory_store.py
-      windows/            # 独立顶层窗口
+            windows/            # 独立顶层窗口
         chat_window.py
         doubao_call_window.py
         settings/
@@ -518,7 +495,7 @@ miniPet/
         protocol_v1.py
         doubao_call_protocol.py
   res/                    # 图标、角色、宠物、道具资源
-  data/                   # 本地运行配置、总结重点、音频预览缓存
+  data/                   # 本地运行配置、音频预览缓存
 ```
 
 ## 资源目录

@@ -186,14 +186,12 @@ V1 的 `agent.state` 只表达当前状态。未来可以扩展任务图：
 
 如果步骤需要变成可见 UI，再投射为 `surface.show kind=timeline`。
 
-## 8. 记忆、别名和上下文
+## 8. 上下文授权
 
-当前代码已有 `alias.set`、`memory.hint` 等实验能力。未来应统一成更清晰的上下文协议。
+未来如果需要外部后端读取上下文，应统一成清晰、显式授权的上下文协议。
 
 方向：
 
-- `user.profile`：用户可见、可编辑的长期偏好。
-- `memory.hint`：后端提供的短期上下文提示。
 - `context.request`：后端请求 miniPet 提供用户主动授权的上下文。
 - `context.response`：miniPet 返回授权后的上下文。
 

@@ -44,7 +44,6 @@ clients/
 ```text
 storage/
   chat_store.py        # 聊天 JSONL、图片附件、历史内容转换
-  memory_store.py      # 自动总结记忆 memories.json 和 Prompt 拼接
 ```
 
 依赖原则：

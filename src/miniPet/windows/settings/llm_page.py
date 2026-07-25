@@ -52,7 +52,6 @@ class LLMPage(MiniPetScrollPage):
             'model': self.modelCard.text(),
             'max_tokens': max_tokens,
             'system_prompt': config.llm_config.get('system_prompt', ''),
-            'memory_prompt': config.llm_config.get('memory_prompt', ''),
         }
 
     def _save(self):

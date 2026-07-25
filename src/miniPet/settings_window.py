@@ -8,7 +8,6 @@ from qfluentwidgets import FluentIcon as FIF
 
 from miniPet import config
 from miniPet.protocol_test_page import ProtocolTestPage
-from miniPet.storage.memory_store import MemoryStore
 from miniPet.windows.settings.basic_pages import AgentPage, BasicPage
 from miniPet.windows.settings.llm_page import LLMPage
 from miniPet.windows.settings.resource_page import RoleToolsPage
@@ -25,9 +24,8 @@ class SettingsWindow(FluentWindow):
     pet_changed = Signal(str)
     clear_history_requested = Signal()
 
-    def __init__(self, chat_store=None, memory_store=None):
+    def __init__(self, chat_store=None):
         super().__init__()
-        self.memory_store = memory_store or MemoryStore(config.DATA_DIR / 'memory')
         self.setWindowTitle('miniPet System')
         self.setWindowIcon(QIcon(str(config.avatar_path('pet'))))
         self.resize(1020, 760)
@@ -39,7 +37,7 @@ class SettingsWindow(FluentWindow):
         self.agent.setObjectName('AgentPage')
         self.llm = LLMPage(self)
         self.llm.setObjectName('LLMPage')
-        self.role = RolePage(self.memory_store, self)
+        self.role = RolePage(self)
         self.role.setObjectName('RolePage')
         self.tts = TTSPage(self)
         self.tts.setObjectName('TTSPage')
@@ -121,9 +119,6 @@ class SettingsWindow(FluentWindow):
         super().showEvent(event)
         self._keep_navigation_expanded()
         self._install_title_drag_filters()
-
-    def reload_memories(self):
-        self.role.reload_memories()
 
     def reload_history(self):
         pass

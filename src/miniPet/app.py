@@ -12,7 +12,6 @@ import random
 import re
 import signal
 import sys
-from datetime import datetime, timedelta
 
 from PySide6.QtCore import QLocale, QTimer
 from PySide6.QtGui import QFont, QGuiApplication
@@ -25,7 +24,6 @@ from miniPet.storage.chat_store import ChatStore
 from miniPet.pet.desktop_pet import DesktopPet
 from miniPet.clients.event_client import EventClient
 from miniPet.clients.llm_client import ChatWorker
-from miniPet.storage.memory_store import MEMORY_CATEGORIES, MemoryStore
 from miniPet.widgets.notifications.center import NotificationCenter
 from miniPet.protocols.protocol_v1 import AGENT_STATE, SESSION_PING, SESSION_PONG, SESSION_READY, SURFACE_KINDS, SURFACE_SHOW, SURFACE_UPDATE, USER_COMMAND, USER_DROP, USER_INPUT, V1_CAPABILITIES, normalize_inbound_event
 from miniPet.settings_window import SettingsWindow
@@ -44,8 +42,7 @@ class MiniPetApp(QApplication):
     DesktopPet、SettingsWindow、NotificationCenter 等对象，并通过 Qt 信号把
     用户操作、LLM 回复、TTS 播放和外部事件连接起来。
 
-    运行时聊天上下文只保存在 self.chat_history 中；长期有用的信息由
-    MemoryStore 管理并拼入系统提示。
+    运行时聊天上下文只保存在 self.chat_history 中。
     """
 
     def __init__(self, argv, start_event_client=True):
@@ -66,17 +63,14 @@ class MiniPetApp(QApplication):
 
         self.pet = DesktopPet(screens)
         self.chat_store = ChatStore(config.DATA_DIR / 'chat')
-        self.memory_store = MemoryStore(config.DATA_DIR / 'memory')
-        self.settings = SettingsWindow(self.chat_store, self.memory_store)
+        self.settings = SettingsWindow(self.chat_store)
         self.note = NotificationCenter()
         self.events = EventClient() if start_event_client else None
         if self.events:
             self.events.set_url(self._agent_ws_url())
-        # 当前运行中的短期上下文；可选从磁盘恢复最近消息，但不会替代长期记忆。
+        # 当前运行中的短期上下文；可选从磁盘恢复最近消息。
         self.chat_history = []
         self._restore_chat_history()
-        self.memory_worker = None
-        self.user_turns_since_memory_check = 0
         # quick_chat_* 管理桌宠头顶快速输入：LLM 请求、回复气泡和可选 TTS 播报。
         self.quick_chat_worker = None
         self.quick_tts_worker = None
@@ -488,129 +482,11 @@ class MiniPetApp(QApplication):
         """保存一条聊天消息，并同步到当前运行中的短期上下文。"""
         stored_message = self.chat_store.append(role, content, source, pet_name=config.current_pet)
         self.chat_history.append(stored_message)
-        if role == 'user':
-            self._maybe_schedule_memory_extraction()
         return stored_message
 
     def _build_system_prompt(self):
-        """组合角色设定、用户手写记忆和自动总结记忆，作为 LLM system prompt。"""
-        parts = [
-            config.llm_config.get('system_prompt', ''),
-            config.llm_config.get('memory_prompt', ''),
-            self.memory_store.build_memory_prompt(),
-        ]
-        return '\n\n'.join(part.strip() for part in parts if part and part.strip())
-
-    def _maybe_schedule_memory_extraction(self):
-        """按用户发言次数触发自动记忆抽取，避免每轮对话都调用一次 LLM。"""
-        if not config.llm_config.get('auto_memory_enabled', True):
-            return
-        self.user_turns_since_memory_check += 1
-        every_n = max(1, int(config.llm_config.get('auto_memory_every_n_user_turns') or 3))
-        if self.user_turns_since_memory_check < every_n or self.memory_worker is not None:
-            return
-        self.user_turns_since_memory_check = 0
-        messages = self._build_memory_extraction_messages()
-        if not messages:
-            return
-        self.memory_worker = ChatWorker(messages, parent=self)
-        self.memory_worker.result_ready.connect(self._on_memory_extraction_result)
-        self.memory_worker.start()
-
-    def _build_memory_extraction_messages(self):
-        """构造自动记忆抽取请求，要求模型只返回严格 JSON。"""
-        recent_count = max(4, int(config.llm_config.get('auto_memory_recent_messages') or 12))
-        stored = self.chat_history[-recent_count:]
-        recent = []
-        for message in stored:
-            text = self.chat_store.content_text_for_memory(message.get('content', ''))
-            if not text:
-                continue
-            recent.append({
-                'id': message.get('id', ''),
-                'created_at': message.get('created_at', ''),
-                'role': message.get('role', ''),
-                'source': message.get('source', ''),
-                'text': text[:1200],
-            })
-        if not recent:
-            return []
-        existing = [
-            {'id': m.get('id'), 'category': m.get('category'), 'text': m.get('text')}
-            for m in self.memory_store.list_memories()
-        ]
-        max_items = max(1, int(config.llm_config.get('auto_memory_max_items_per_pass') or 3))
-        payload = {
-            'existing_memories': existing,
-            'recent_messages': recent,
-            'max_items': max_items,
-            'allowed_categories': list(MEMORY_CATEGORIES),
-            'required_output_schema': {
-                'memories': [{
-                    'action': 'add|update|noop',
-                    'memory_id': '',
-                    'category': 'user_preference|project_fact|relationship|task_context',
-                    'text': '',
-                    'importance': 1,
-                    'confidence': 0.8,
-                    'evidence': '',
-                    'expires_days': 14,
-                    'source_message_ids': [],
-                }],
-            },
-        }
-        system = (
-            '你是一个严格保守的长期记忆抽取器。只从对未来多轮对话明显有帮助的信息中提炼记忆。\n'
-            '允许的记忆类别只有：user_preference、project_fact、relationship、task_context。\n'
-            '严格要求：1. 若没有高价值信息，返回空数组。2. 不记录一次性寒暄、临时情绪、短期安排、显而易见的本轮内容。\n'
-            '3. 不重复已有记忆。4. 若只是对已有记忆的小改写，不要新增重复项；只有明确更正时才 update。\n'
-            '5. 输出必须是合法 JSON，不能包含 Markdown 或解释。6. 每条 text 必须是简洁、稳定、可直接展示的一句话中文。\n'
-            '7. importance 为 1-5，confidence 为 0-1。task_context 必须给 expires_days，默认 14；长期类别 expires_days 用 0。'
-        )
-        return [
-            {'role': 'system', 'content': system},
-            {'role': 'user', 'content': json.dumps(payload, ensure_ascii=False)},
-        ]
-
-    def _on_memory_extraction_result(self, success, text):
-        self.memory_worker = None
-        if not success:
-            print('Memory extraction failed:', text)
-            return
-        try:
-            data = json.loads((text or '').strip())
-        except Exception as e:
-            print('Memory extraction invalid JSON:', e, text)
-            return
-        changed = False
-        max_items = max(1, int(config.llm_config.get('auto_memory_max_items_per_pass') or 3))
-        for item in (data.get('memories') or [])[:max_items]:
-            action = item.get('action')
-            category = item.get('category')
-            memory_text = (item.get('text') or '').strip()
-            if action not in ('add', 'update') or category not in MEMORY_CATEGORIES or not memory_text or len(memory_text) > 180:
-                continue
-            expires_at = ''
-            try:
-                expires_days = int(item.get('expires_days') or 0)
-            except (TypeError, ValueError):
-                expires_days = 14 if category == 'task_context' else 0
-            if category == 'task_context' and expires_days > 0:
-                expires_at = (datetime.now() + timedelta(days=expires_days)).isoformat(timespec='seconds')
-            memory = self.memory_store.upsert_memory(
-                category,
-                memory_text,
-                source_message_ids=item.get('source_message_ids') or [],
-                source_date=self.chat_store.today(),
-                memory_id=item.get('memory_id') if action == 'update' else '',
-                importance=item.get('importance', 3),
-                confidence=item.get('confidence', 0.8),
-                evidence=item.get('evidence', ''),
-                expires_at=expires_at,
-            )
-            changed = changed or memory is not None
-        if changed and hasattr(self.settings, 'reload_memories'):
-            self.settings.reload_memories()
+        """组合角色设定，作为 LLM system prompt。"""
+        return (config.llm_config.get('system_prompt', '') or '').strip()
 
     def _content_text_for_preview(self, content):
         if isinstance(content, str):
@@ -1001,12 +877,6 @@ class MiniPetApp(QApplication):
             'capabilities': list(V1_CAPABILITIES),
         }, request_id=request_id)
 
-    def _handle_memory_hint(self, event_type, payload):
-        text = payload.get('text') or payload.get('alias') or ''
-        x, y = self.pet.bubble_anchor()
-        if text:
-            self.note.setup_bubble('已收到记忆提示：' + str(text)[:50], x, y, 3500, title='记忆')
-
     def _normalize_display_event(self, event_type, payload):
         event = dict(payload)
         event['type'] = event_type
@@ -1085,7 +955,7 @@ class MiniPetApp(QApplication):
             self.pet_voice_asr_worker.finish()
             self.pet_voice_asr_worker.wait(1500)
             self.pet_voice_asr_worker = None
-        for worker_name in ('quick_chat_worker', 'quick_tts_worker', 'event_tts_worker', 'memory_worker', 'wake_ack_worker'):
+        for worker_name in ('quick_chat_worker', 'quick_tts_worker', 'event_tts_worker', 'wake_ack_worker'):
             worker = getattr(self, worker_name, None)
             if worker is not None and worker.isRunning():
                 worker.requestInterruption()

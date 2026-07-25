@@ -374,8 +374,7 @@ class ChatWindow(QWidget):
         messages = []
         system = self.system_prompt_builder() if self.system_prompt_builder else ''
         if not system:
-            system_parts = [config.llm_config.get('system_prompt', ''), config.llm_config.get('memory_prompt', '')]
-            system = '\n\n'.join(p.strip() for p in system_parts if p and p.strip())
+            system = (config.llm_config.get('system_prompt', '') or '').strip()
         if system:
             messages.append({'role': 'system', 'content': system})
         for msg in self.history[-20:]:
