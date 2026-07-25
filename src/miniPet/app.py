@@ -33,7 +33,7 @@ from miniPet.clients.wake_word_client import WakeWordWorker
 from miniPet.clients.realtime_client import RealtimeWorker
 
 
-SINGING_KEYWORDS = ('唱歌', '唱个歌', '唱一首', '来首歌', '来一首', '唱两句', '哼一段', '哼首歌')
+SINGING_KEYWORDS = ('唱歌', '唱个歌', '唱首歌', '唱一首', '来首歌', '来一首', '唱两句', '哼一段', '哼首歌')
 
 
 class MiniPetApp(QApplication):
