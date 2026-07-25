@@ -1,8 +1,8 @@
 # coding:utf-8
 """
-豆包端到端 Realtime 客户端。
+豆包通话客户端。
 
-负责 Realtime WebSocket 会话、麦克风采集、服务端音频播放和事件分发。
+负责 豆包通话 WebSocket 会话、麦克风采集、服务端音频播放和事件分发。
 窗口层只接收状态、ASR 文本、AI 文本和输入音量，不直接处理协议细节。
 """
 
@@ -26,7 +26,7 @@ except Exception:
     websockets = None
 
 from miniPet import config
-from miniPet.protocols.realtime_protocol import (
+from miniPet.protocols.doubao_call_protocol import (
     EVENT_ASR_INFO,
     EVENT_ASR_RESPONSE,
     EVENT_CHAT_ENDED,
@@ -53,8 +53,8 @@ from miniPet.protocols.realtime_protocol import (
 )
 from miniPet.clients.tts_client import PcmStreamPlayer, stop_tts
 
-REALTIME_URL = 'wss://openspeech.bytedance.com/api/v3/realtime/dialogue'
-REALTIME_RESOURCE_ID = 'volc.speech.dialog'
+DOUBAO_CALL_URL = 'wss://openspeech.bytedance.com/api/v3/realtime/dialogue'
+DOUBAO_CALL_RESOURCE_ID = 'volc.speech.dialog'
 INPUT_SAMPLE_RATE = 16000
 OUTPUT_SAMPLE_RATE = 24000
 CHANNELS = 1
@@ -63,8 +63,8 @@ INPUT_CHUNK_MS = 20
 INPUT_CHUNK_BYTES = int(INPUT_SAMPLE_RATE * INPUT_CHUNK_MS / 1000) * SAMPLE_WIDTH
 
 
-class RealtimeError(Exception):
-    """Realtime 通话链路异常。"""
+class DoubaoCallError(Exception):
+    """豆包通话链路异常。"""
 
 
 class MicrophoneStreamer:
@@ -72,7 +72,7 @@ class MicrophoneStreamer:
 
     def __init__(self, on_audio):
         if sd is None:
-            raise RealtimeError('缺少 sounddevice，请执行：pip install sounddevice')
+            raise DoubaoCallError('缺少 sounddevice，请执行：pip install sounddevice')
         self.on_audio = on_audio
         self.stream = None
 
@@ -101,7 +101,7 @@ class MicrophoneStreamer:
                 stream.close()
 
 
-class RealtimeSession:
+class DoubaoCallSession:
     def __init__(self, cfg, status_cb=None, asr_cb=None, chat_cb=None, error_cb=None, event_cb=None, level_cb=None):
         self.cfg = dict(cfg)
         self.status_cb = status_cb or (lambda text: None)
@@ -143,7 +143,7 @@ class RealtimeSession:
         self.error_cb(text)
 
     def _log(self, message):
-        print('[Realtime] %s' % message, flush=True)
+        print('[DoubaoCall] %s' % message, flush=True)
 
     def _payload_summary(self, packet):
         payload = packet.payload or {}
@@ -159,7 +159,7 @@ class RealtimeSession:
         return payload
 
     def _build_start_session_payload(self):
-        model = self.cfg.get('model') or config.DEFAULT_REALTIME_CONFIG['model']
+        model = self.cfg.get('model') or config.DEFAULT_DOUBAO_CALL_CONFIG['model']
         dialog_extra = {
             'input_mod': 'keep_alive',
             'strict_audit': True,
@@ -182,14 +182,14 @@ class RealtimeSession:
                 },
             },
             'dialog': {
-                'bot_name': self.cfg.get('bot_name') or config.DEFAULT_REALTIME_CONFIG['bot_name'],
-                'system_role': self.cfg.get('system_role') or config.DEFAULT_REALTIME_CONFIG['system_role'],
-                'speaking_style': self.cfg.get('speaking_style') or config.DEFAULT_REALTIME_CONFIG['speaking_style'],
+                'bot_name': self.cfg.get('bot_name') or config.DEFAULT_DOUBAO_CALL_CONFIG['bot_name'],
+                'system_role': self.cfg.get('system_role') or config.DEFAULT_DOUBAO_CALL_CONFIG['system_role'],
+                'speaking_style': self.cfg.get('speaking_style') or config.DEFAULT_DOUBAO_CALL_CONFIG['speaking_style'],
                 'dialog_id': self.dialog_id,
                 'extra': dialog_extra,
             },
             'tts': {
-                'speaker': self.cfg.get('speaker') or config.DEFAULT_REALTIME_CONFIG['speaker'],
+                'speaker': self.cfg.get('speaker') or config.DEFAULT_DOUBAO_CALL_CONFIG['speaker'],
                 'audio_config': {
                     'channel': CHANNELS,
                     'format': 'pcm_s16le',
@@ -202,21 +202,21 @@ class RealtimeSession:
     def _headers(self):
         api_key = config.tts_config.get('api_key') or ''
         if not api_key:
-            raise RealtimeError('请先在语音设置中填写 TTS API Key')
+            raise DoubaoCallError('请先在语音设置中填写 TTS API Key')
         return {
             'X-Api-Key': api_key,
-            'X-Api-Resource-Id': REALTIME_RESOURCE_ID,
+            'X-Api-Resource-Id': DOUBAO_CALL_RESOURCE_ID,
             'X-Api-Connect-Id': self.connect_id,
         }
 
     async def run(self):
         if websockets is None:
-            raise RealtimeError('缺少 websockets，请执行：pip install websockets')
+            raise DoubaoCallError('缺少 websockets，请执行：pip install websockets')
         self._emit_status('连接中')
-        self._log('connecting url=%s connect_id=%s session_id=%s' % (REALTIME_URL, self.connect_id, self.session_id))
+        self._log('connecting url=%s connect_id=%s session_id=%s' % (DOUBAO_CALL_URL, self.connect_id, self.session_id))
         header_arg = 'additional_headers' if 'additional_headers' in inspect.signature(websockets.connect).parameters else 'extra_headers'
         kwargs = {header_arg: self._headers(), 'ping_interval': 20, 'ping_timeout': 20}
-        async with websockets.connect(REALTIME_URL, **kwargs) as ws:
+        async with websockets.connect(DOUBAO_CALL_URL, **kwargs) as ws:
             self.ws = ws
             self._log('websocket connected')
             await self._send_json(EVENT_START_CONNECTION, {})
@@ -472,10 +472,10 @@ class RealtimeSession:
         payload = packet.payload or {}
         if isinstance(payload, dict):
             return payload.get('message') or payload.get('error') or str(payload)
-        return str(payload or packet.event_name or 'Realtime error')
+        return str(payload or packet.event_name or 'Doubao call error')
 
 
-class RealtimeWorker(QThread):
+class DoubaoCallWorker(QThread):
     status_changed = Signal(str)
     asr_received = Signal(str, bool)
     chat_received = Signal(str)
@@ -486,12 +486,12 @@ class RealtimeWorker(QThread):
 
     def __init__(self, cfg=None, parent=None):
         super().__init__(parent)
-        self.cfg = dict(cfg) if cfg is not None else dict(config.realtime_config)
+        self.cfg = dict(cfg) if cfg is not None else dict(config.doubao_call_config)
         self.session = None
         self._ready = threading.Event()
 
     def run(self):
-        self.session = RealtimeSession(
+        self.session = DoubaoCallSession(
             self.cfg,
             status_cb=self.status_changed.emit,
             asr_cb=self.asr_received.emit,
@@ -510,10 +510,10 @@ class RealtimeWorker(QThread):
 
     def _command(self, name):
         if self.session is None and not self._ready.wait(2):
-            print('[Realtime] drop command=%s reason=session_not_ready' % name, flush=True)
+            print('[DoubaoCall] drop command=%s reason=session_not_ready' % name, flush=True)
             return
         if self.session is not None:
-            print('[Realtime] enqueue command=%s' % name, flush=True)
+            print('[DoubaoCall] enqueue command=%s' % name, flush=True)
             self.session.command(name)
 
     def start_recording(self):

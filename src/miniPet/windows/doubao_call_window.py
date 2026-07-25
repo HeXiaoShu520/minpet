@@ -1,10 +1,10 @@
 # coding:utf-8
 """
-豆包 Realtime 通话窗口。
+豆包 豆包通话窗口。
 
 这个模块只负责豆包通话的窗口表现：头像、状态、字幕、麦克风音量、
 屏幕共享选择和挂断/打断按钮。真正的 WebSocket 协议、音频采集和播放逻辑
-在 realtime_client.py 中实现。
+在 doubao_call_client.py 中实现。
 """
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
@@ -14,7 +14,7 @@ from qfluentwidgets import InfoBar, InfoBarPosition
 from qfluentwidgets import FluentIcon as FIF
 
 from miniPet import config
-from miniPet.clients.realtime_client import RealtimeWorker
+from miniPet.clients.doubao_call_client import DoubaoCallWorker
 from miniPet.typewriter import Typewriter
 
 
@@ -119,7 +119,7 @@ class MicLevelButton(QPushButton):
 class DoubaoCallWindow(QWidget):
     """豆包端到端通话窗口。
 
-    窗口维护 UI 状态和 RealtimeWorker 生命周期：开始录音、显示 ASR、追加 AI
+    窗口维护 UI 状态和 DoubaoCallWorker 生命周期：开始录音、显示 ASR、追加 AI
     回复、控制静音、共享屏幕和安全关闭。append_message 用于把最终 ASR/回复写回
     主聊天历史。
     """
@@ -310,13 +310,13 @@ class DoubaoCallWindow(QWidget):
         self.current_reply = str(text or '').strip()
 
     def _collect_config(self):
-        cfg = dict(config.realtime_config)
+        cfg = dict(config.doubao_call_config)
         if not cfg.get('bot_name'):
-            cfg['bot_name'] = self.pet_name or config.DEFAULT_REALTIME_CONFIG['bot_name']
+            cfg['bot_name'] = self.pet_name or config.DEFAULT_DOUBAO_CALL_CONFIG['bot_name']
         return cfg
 
     def _ensure_session(self):
-        """懒启动 RealtimeWorker；窗口显示后第一次录音才建立会话。"""
+        """懒启动 DoubaoCallWorker；窗口显示后第一次录音才建立会话。"""
         if self.worker is not None:
             return True
         if not config.tts_config.get('api_key'):
@@ -324,7 +324,7 @@ class DoubaoCallWindow(QWidget):
             return False
         self.current_asr = ''
         self.current_reply = ''
-        self.worker = RealtimeWorker(self._collect_config(), parent=self)
+        self.worker = DoubaoCallWorker(self._collect_config(), parent=self)
         self.worker.status_changed.connect(self._on_status)
         self.worker.asr_received.connect(self._on_asr)
         self.worker.chat_received.connect(self._on_chat)
@@ -427,7 +427,7 @@ class DoubaoCallWindow(QWidget):
         if text == '回复结束':
             # 保存本轮回复到历史，清空 current_reply 让下一轮 ASR final 能正常清字幕
             if self.current_reply and self.append_message:
-                self.append_message('assistant', self.current_reply, 'realtime')
+                self.append_message('assistant', self.current_reply, 'doubao_call')
             self.current_reply = ''
             return
         state, label = status_map.get(text, (self.call_state, text))
@@ -447,7 +447,7 @@ class DoubaoCallWindow(QWidget):
         self._tw.set_text('')
         self.call_state = 'thinking'
         if self.append_message:
-            self.append_message('user', text, 'realtime')
+            self.append_message('user', text, 'doubao_call')
 
     def _on_chat(self, text):
         if not text:
@@ -472,7 +472,7 @@ class DoubaoCallWindow(QWidget):
 
     def _on_finished(self):
         if self.current_reply and self.append_message:
-            self.append_message('assistant', self.current_reply, 'realtime')
+            self.append_message('assistant', self.current_reply, 'doubao_call')
         self.worker = None
         self._set_state('idle', '通话已结束')
 

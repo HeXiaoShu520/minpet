@@ -38,7 +38,7 @@ VOICE_OPTIONS = [
 VOICE_VALUE_TO_LABEL = dict(VOICE_OPTIONS)
 VOICE_LABEL_TO_VALUE = {label: value for value, label in VOICE_OPTIONS}
 
-REALTIME_VOICE_OPTIONS = [
+DOUBAO_CALL_VOICE_OPTIONS = [
     ('zh_female_vv_jupiter_bigtts', 'vv 女声'),
     ('zh_female_xiaohe_jupiter_bigtts', '小何女声'),
     ('zh_male_yunzhou_jupiter_bigtts', '云舟男声'),
@@ -266,14 +266,14 @@ class ReplyDisplayPage(MiniPetScrollPage):
         InfoBar.success('保存成功', '回复显示设置已保存', duration=2000, position=InfoBarPosition.BOTTOM, parent=self.window())
 
 
-class RealtimePage(MiniPetScrollPage):
+class DoubaoCallPage(MiniPetScrollPage):
     def __init__(self, parent=None):
         super().__init__('豆包通话设置', parent, save_callback=lambda: self._save())
-        cfg = config.realtime_config
+        cfg = config.doubao_call_config
         self.apiGroup = SettingCardGroup('豆包通话 API', self.scrollWidget)
         self.keyHintCard = SettingCard(FIF.VPN, '认证方式', '豆包通话复用语音设置里的 TTS API Key', self.apiGroup)
-        self.speakerCard = ComboSettingCard(REALTIME_VOICE_OPTIONS, FIF.PEOPLE, '音色', '豆包通话语音回复使用的发音人', self.apiGroup)
-        self.speakerCard.setCurrentValue(cfg.get('speaker', config.DEFAULT_REALTIME_CONFIG['speaker']))
+        self.speakerCard = ComboSettingCard(DOUBAO_CALL_VOICE_OPTIONS, FIF.PEOPLE, '音色', '豆包通话语音回复使用的发音人', self.apiGroup)
+        self.speakerCard.setCurrentValue(cfg.get('speaker', config.DEFAULT_DOUBAO_CALL_CONFIG['speaker']))
         self.systemRoleCard = SettingCard(FIF.MESSAGE, '角色背景', 'O2.0 的 system_role', self.apiGroup)
         self.systemRoleEdit = QPlainTextEdit(self.systemRoleCard)
         self.systemRoleEdit.setPlainText(cfg.get('system_role', ''))
@@ -304,15 +304,15 @@ class RealtimePage(MiniPetScrollPage):
     def _collect(self):
         return {
             'enabled': True,
-            'model': config.DEFAULT_REALTIME_CONFIG['model'],
-            'speaker': self.speakerCard.currentValue() or config.DEFAULT_REALTIME_CONFIG['speaker'],
-            'bot_name': config.DEFAULT_REALTIME_CONFIG['bot_name'],
+            'model': config.DEFAULT_DOUBAO_CALL_CONFIG['model'],
+            'speaker': self.speakerCard.currentValue() or config.DEFAULT_DOUBAO_CALL_CONFIG['speaker'],
+            'bot_name': config.DEFAULT_DOUBAO_CALL_CONFIG['bot_name'],
             'system_role': self.systemRoleEdit.toPlainText().strip(),
             'speaking_style': self.speakingStyleEdit.toPlainText().strip(),
         }
 
     def _save(self):
-        config.save_realtime_config(self._collect())
+        config.save_doubao_call_config(self._collect())
         InfoBar.success('保存成功', '豆包通话配置已保存', duration=2000, position=InfoBarPosition.BOTTOM, parent=self.window())
 
 

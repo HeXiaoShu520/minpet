@@ -161,7 +161,7 @@ DESKTOP_API_PORT=18889
 - 可选离线唤醒词监听：打开语音球后，本地 Vosk 小模型识别“小月小月”，命中后再打开火山流式 ASR，避免云端 ASR 常驻计费
 - 如果未开启唤醒词，打开语音球后会直接启动一次火山流式接听
 - 可选连续对话：回复完成后自动进入下一轮接听；关闭时回到语音球待机
-- 识别到“唱歌、唱一首、来首歌、唱两句、哼一段”等关键词时，会临时切到 Realtime O2.0 单次唱歌模式，播放完成后自动回到语音球待机，不受连续对话影响
+- 识别到“唱歌、唱一首、来首歌、唱两句、哼一段”等关键词时，会临时切到 豆包通话 O2.0 单次唱歌模式，播放完成后自动回到语音球待机，不受连续对话影响
 - 进入语音聊天会先播放欢迎语“你好呀，有什么需要帮忙的吗”，播放完成后再开始语音识别
 - 欢迎语按音色缓存到 `data/tts_welcome/`，已有缓存会直接播放，没有时才合成一次
 - 回复后复用现有 TTS 播放
@@ -189,7 +189,7 @@ volc.seedasr.sauc.duration
 
 ```text
 麦克风
-→ 豆包端到端 Realtime WebSocket
+→ 豆包端到端 豆包通话 WebSocket
 → 豆包 ASR + 豆包模型思考 + 豆包 TTS
 → 本地播放
 ```
@@ -208,19 +208,19 @@ volc.seedasr.sauc.duration
 - 播放语音时会显示“打断”按钮，可中断当前输出
 - 支持多屏共享选择的本地交互状态
 
-当前 Realtime 接口：
+当前 豆包通话接口：
 
 ```text
 wss://openspeech.bytedance.com/api/v3/realtime/dialogue
 ```
 
-当前 Realtime 资源：
+当前 豆包通话资源：
 
 ```text
 volc.speech.dialog
 ```
 
-注意：当前豆包端到端 Realtime 文档只定义了语音输入输出事件，miniPet 的“共享屏幕”按钮目前实现了本地多屏选择和状态显示；如果要让 AI 理解屏幕内容，需要后续再接入视觉模型或支持视觉上下文的 ASR/LLM 通道。
+注意：当前豆包端到端 豆包通话文档只定义了语音输入输出事件，miniPet 的“共享屏幕”按钮目前实现了本地多屏选择和状态显示；如果要让 AI 理解屏幕内容，需要后续再接入视觉模型或支持视觉上下文的 ASR/LLM 通道。
 
 ### 语音播报 TTS
 
@@ -288,12 +288,12 @@ miniPet QApplication
 ├─ pet/desktop_interactions.py     拖放 payload、拖拽状态机、位置限制和掉落物理
 ├─ pet/desktop_windows.py          聊天窗口和豆包通话窗口打开逻辑
 ├─ settings_window.py             设置窗口入口
-├─ clients/                       LLM / TTS / ASR / Realtime / 外部事件客户端
+├─ clients/                       LLM / TTS / ASR / 豆包通话 / 外部事件客户端
 ├─ storage/                       聊天记录和自动总结记忆存储
 ├─ windows/                       文本聊天、豆包通话、设置页等顶层窗口
 ├─ widgets/                       快速输入、语音球、菜单、通知、彩蛋等 UI 组件
 ├─ pet/                           动画线程和角色资源加载
-└─ protocols/                     miniPet V1 协议和豆包 Realtime 二进制协议
+└─ protocols/                     miniPet V1 协议和豆包 豆包通话二进制协议
 ```
 
 核心数据流：
@@ -312,11 +312,11 @@ widgets.pet_voice_popup.PetVoicePopup
 唱歌关键词：
 widgets.pet_voice_popup.PetVoicePopup
 → clients.asr_client.AsrWorker → 命中唱歌意图
-→ clients.realtime_client.RealtimeWorker 单次文本任务 → O2.0 enable_music 音频流 → 播放
+→ clients.doubao_call_client.DoubaoCallWorker 单次文本任务 → O2.0 enable_music 音频流 → 播放
 
 豆包通话：
 windows.doubao_call_window.DoubaoCallWindow
-→ clients.realtime_client.RealtimeWorker → 豆包端到端 WebSocket → 远端音频流 → 播放
+→ clients.doubao_call_client.DoubaoCallWorker → 豆包端到端 WebSocket → 远端音频流 → 播放
 
 外部事件：
 clients.event_client.EventClient → protocols.protocol_v1
@@ -380,7 +380,7 @@ LLM_AUTO_MEMORY_MAX_ITEMS_PER_PASS=3
 
 ### 语音配置
 
-TTS、ASR 和 Realtime 当前复用同一个火山语音 API Key：
+TTS、ASR 和 豆包通话当前复用同一个火山语音 API Key：
 
 ```text
 TTS_ENABLED=false
@@ -398,7 +398,7 @@ WAKE_WORDS=小月小月
 - `TTS_API_KEY` 用于豆包 TTS 单向流式 WebSocket
 - `TTS_TEST_TEXT` 控制设置页“测试语音”的自定义试听文本；留空时使用当前音色的默认预览文案
 - `TTS_API_KEY` 同时用于豆包 ASR WebSocket
-- `TTS_API_KEY` 同时用于豆包 Realtime WebSocket
+- `TTS_API_KEY` 同时用于豆包 豆包通话 WebSocket
 - `VOICE_CHAT_CONTINUOUS` 控制回复完成后是否继续接听下一轮；关闭时回到语音球待机
 - `WAKE_WORD_ENABLED` 开启后，语音球打开时使用本地 Vosk 模型监听唤醒词，不调用火山 ASR
 - Vosk 中文小模型固定读取 `data/vosk/vosk-model-small-cn-0.22`
@@ -408,12 +408,12 @@ WAKE_WORDS=小月小月
 豆包通话配置也从 `.env` 读取，并可在设置页保存。设置页只暴露音色、角色背景和说话风格；豆包通话入口不再依赖单独的启用开关，模型固定为 O2.0 通用对话 `1.2.1.1`。
 
 ```text
-REALTIME_ENABLED=true
-REALTIME_MODEL=1.2.1.1
-REALTIME_SPEAKER=zh_female_vv_jupiter_bigtts
-REALTIME_BOT_NAME=miniPet
-REALTIME_SYSTEM_ROLE=你是一只可爱的桌面宠物，陪伴用户聊天，回答要简短自然。
-REALTIME_SPEAKING_STYLE=语气活泼、亲切、口语化。
+DOUBAO_CALL_ENABLED=true
+DOUBAO_CALL_MODEL=1.2.1.1
+DOUBAO_CALL_SPEAKER=zh_female_vv_jupiter_bigtts
+DOUBAO_CALL_BOT_NAME=miniPet
+DOUBAO_CALL_SYSTEM_ROLE=你是一只可爱的桌面宠物，陪伴用户聊天，回答要简短自然。
+DOUBAO_CALL_SPEAKING_STYLE=语气活泼、亲切、口语化。
 ```
 
 当前欢迎词固定为：
@@ -427,10 +427,10 @@ REALTIME_SPEAKING_STYLE=语气活泼、亲切、口语化。
 - 修复多模态图片消息链路：Anthropic 现在收到真实 base64 图片块，不再是占位文字
 - 快速输入浮层粘贴图片后显示缩略图预览
 - 图片编码统一改为 JPEG 85 质量压缩，避免超出 5MB 限制
-- 接入豆包端到端 Realtime WebSocket
+- 接入豆包端到端 豆包通话 WebSocket
 - 新增 `豆包通话` 功能
-- 将 Realtime 鉴权改为复用 `TTS_API_KEY`
-- 修正 Realtime 连接事件帧，不再在二进制 optional 里重复写 `connect_id`
+- 将 豆包通话鉴权改为复用 `TTS_API_KEY`
+- 修正 豆包通话连接事件帧，不再在二进制 optional 里重复写 `connect_id`
 - 新增纯净通话 UI
 - 支持麦克风自动收音模式，由服务端 VAD 自动识别有没有输入
 - 支持多屏共享选择的本地交互
@@ -467,7 +467,7 @@ miniPet/
         llm_client.py
         tts_client.py
         asr_client.py
-        realtime_client.py
+        doubao_call_client.py
         event_client.py
       storage/            # 本地持久化
         chat_store.py
@@ -516,7 +516,7 @@ miniPet/
         pet_assets.py
       protocols/          # 协议常量和编解码
         protocol_v1.py
-        realtime_protocol.py
+        doubao_call_protocol.py
   res/                    # 图标、角色、宠物、道具资源
   data/                   # 本地运行配置、总结重点、音频预览缓存
 ```

@@ -28,7 +28,7 @@ clients/
   llm_client.py        # OpenAI/Anthropic 聊天客户端，支持流式 delta
   tts_client.py        # 火山豆包 TTS WebSocket 与 PCM 播放
   asr_client.py        # 火山豆包 ASR WebSocket 与麦克风采集
-  realtime_client.py   # 豆包端到端 Realtime WebSocket、麦克风和远端音频
+  doubao_call_client.py   # 豆包端到端 豆包通话 WebSocket、麦克风和远端音频
   event_client.py      # OpenClaw/通用智能体事件 WebSocket 客户端
 ```
 
@@ -129,7 +129,7 @@ pet/
 ```text
 protocols/
   protocol_v1.py              # miniPet 通用智能体协议 V1
-  realtime_protocol.py        # 豆包 Realtime 二进制协议封装
+  doubao_call_protocol.py        # 豆包 豆包通话二进制协议封装
 ```
 
 依赖原则：
@@ -164,8 +164,8 @@ PetVoicePopup
 
 ```text
 windows.doubao_call_window.DoubaoCallWindow
-→ clients.realtime_client.RealtimeWorker
-→ protocols.realtime_protocol
+→ clients.doubao_call_client.DoubaoCallWorker
+→ protocols.doubao_call_protocol
 → 远端 ASR/LLM/TTS
 → DoubaoCallWindow 字幕、音频和状态更新
 ```
@@ -182,7 +182,7 @@ clients.event_client.EventClient
 ## 配置策略
 
 - `data/minipet_settings.json`：基础 UI 设置、宠物、头像、样式。
-- `.env`：API Key、模型、TTS、ASR、Realtime、打字机、高级参数。
+- `.env`：API Key、模型、TTS、ASR、豆包通话、打字机、高级参数。
 - `APP_VOLUME` 和 `APP_SCALE` 只通过 `.env` 配置，不在设置页展示。
 - `on_top` 和 `allow_drop` 固定为 `True`，不再从 `.env` 或设置页读取。
 

@@ -130,7 +130,7 @@ TYPEWRITER_ENV_KEYS = {
     'tts_delay_ms': 'TYPEWRITER_TTS_DELAY_MS',
 }
 
-DEFAULT_REALTIME_CONFIG = {
+DEFAULT_DOUBAO_CALL_CONFIG = {
     'enabled': False,
     'model': '1.2.1.1',
     'speaker': 'zh_female_vv_jupiter_bigtts',
@@ -163,19 +163,19 @@ TTS_ENV_KEYS = {
     'max_length_to_filter_parenthesis': 'TTS_MAX_LENGTH_TO_FILTER_PARENTHESIS',
 }
 
-REALTIME_ENV_KEYS = {
-    'enabled': 'REALTIME_ENABLED',
-    'model': 'REALTIME_MODEL',
-    'speaker': 'REALTIME_SPEAKER',
-    'bot_name': 'REALTIME_BOT_NAME',
-    'system_role': 'REALTIME_SYSTEM_ROLE',
-    'speaking_style': 'REALTIME_SPEAKING_STYLE',
+DOUBAO_CALL_ENV_KEYS = {
+    'enabled': 'DOUBAO_CALL_ENABLED',
+    'model': 'DOUBAO_CALL_MODEL',
+    'speaker': 'DOUBAO_CALL_SPEAKER',
+    'bot_name': 'DOUBAO_CALL_BOT_NAME',
+    'system_role': 'DOUBAO_CALL_SYSTEM_ROLE',
+    'speaking_style': 'DOUBAO_CALL_SPEAKING_STYLE',
 }
 
 app_config = dict(DEFAULT_APP_CONFIG)
 llm_config = dict(DEFAULT_LLM_CONFIG)
 tts_config = dict(DEFAULT_TTS_CONFIG)
-realtime_config = dict(DEFAULT_REALTIME_CONFIG)
+doubao_call_config = dict(DEFAULT_DOUBAO_CALL_CONFIG)
 voice_chat_config = dict(DEFAULT_VOICE_CHAT_CONFIG)
 typewriter_config = dict(DEFAULT_TYPEWRITER_CONFIG)
 chat_restore_config = dict(DEFAULT_CHAT_RESTORE_CONFIG)
@@ -346,7 +346,7 @@ def _save_env_config(config_data, env_keys, defaults, section_title):
 
 def load():
     """加载所有配置，并初始化当前宠物等运行时状态。"""
-    global app_config, llm_config, tts_config, realtime_config, voice_chat_config, typewriter_config, chat_restore_config, wake_word_config, current_pet
+    global app_config, llm_config, tts_config, doubao_call_config, voice_chat_config, typewriter_config, chat_restore_config, wake_word_config, current_pet
     ensure_data_dir()
     pets = get_pet_list()
 
@@ -376,7 +376,7 @@ def load():
 
     llm_config = _load_env_config(DEFAULT_LLM_CONFIG, LLM_ENV_KEYS)
     tts_config = _load_env_config(DEFAULT_TTS_CONFIG, TTS_ENV_KEYS)
-    realtime_config = _load_env_config(DEFAULT_REALTIME_CONFIG, REALTIME_ENV_KEYS)
+    doubao_call_config = _load_env_config(DEFAULT_DOUBAO_CALL_CONFIG, DOUBAO_CALL_ENV_KEYS)
     voice_chat_config = _load_env_config(DEFAULT_VOICE_CHAT_CONFIG, VOICE_CHAT_ENV_KEYS)
     typewriter_config = _load_env_config(DEFAULT_TYPEWRITER_CONFIG, TYPEWRITER_ENV_KEYS)
     chat_restore_config = _load_env_config(DEFAULT_CHAT_RESTORE_CONFIG, CHAT_RESTORE_ENV_KEYS)
@@ -411,11 +411,11 @@ def save_typewriter_config(config):
     _save_env_config(typewriter_config, TYPEWRITER_ENV_KEYS, DEFAULT_TYPEWRITER_CONFIG, '# MINIPET Typewriter settings')
 
 
-def save_realtime_config(config):
-    """保存豆包 Realtime 通话配置到 .env。"""
-    global realtime_config
-    realtime_config = dict(config)
-    _save_env_config(realtime_config, REALTIME_ENV_KEYS, DEFAULT_REALTIME_CONFIG, '# MINIPET Realtime settings')
+def save_doubao_call_config(config):
+    """保存豆包 豆包通话配置到 .env。"""
+    global doubao_call_config
+    doubao_call_config = dict(config)
+    _save_env_config(doubao_call_config, DOUBAO_CALL_ENV_KEYS, DEFAULT_DOUBAO_CALL_CONFIG, '# MINIPET DoubaoCall settings')
 
 
 def save_voice_chat_config(config):

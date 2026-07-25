@@ -31,7 +31,7 @@ from miniPet.protocols.protocol_v1 import AGENT_STATE, SESSION_PING, SESSION_PON
 from miniPet.settings_window import SettingsWindow
 from miniPet.clients.tts_client import TtsCacheWorker, TtsPreviewWorker, TtsWorker, stop_tts
 from miniPet.clients.wake_word_client import WakeWordWorker
-from miniPet.clients.realtime_client import RealtimeWorker
+from miniPet.clients.doubao_call_client import DoubaoCallWorker
 
 
 SINGING_KEYWORDS = ('唱歌', '唱个歌', '唱首歌', '唱一首', '来首歌', '来一首', '唱两句', '哼一段', '哼首歌')
@@ -86,7 +86,7 @@ class MiniPetApp(QApplication):
         self.quick_thinking_bubble_id = None
         self._surface_bubbles = {}
 
-        # pet_voice_* 是桌宠旁边的轻量语音聊天状态，不等同于独立 Realtime 通话窗口。
+        # pet_voice_* 是桌宠旁边的轻量语音聊天状态，不等同于独立 豆包通话窗口。
         self.pet_voice_active = False
         self.pet_voice_listening = False
         self.pet_voice_asr_worker = None
@@ -438,10 +438,10 @@ class MiniPetApp(QApplication):
         if self.singing_worker is not None:
             self.pet.update_voice_popup('thinking', '正在准备唱歌')
             return
-        cfg = dict(config.realtime_config)
+        cfg = dict(config.doubao_call_config)
         cfg.update({
             'enabled': True,
-            'model': config.DEFAULT_REALTIME_CONFIG['model'],
+            'model': config.DEFAULT_DOUBAO_CALL_CONFIG['model'],
             'text_query': '用户想听唱歌，请只响应这一次，并根据用户要求直接唱出来。用户原话：' + user_text,
             'single_turn': True,
             'skip_welcome': True,
@@ -450,7 +450,7 @@ class MiniPetApp(QApplication):
         self.singing_text = ''
         self.pet.update_voice_popup('speaking', '唱歌中')
         self._append_chat_message('user', user_text, 'voice_singing')
-        self.singing_worker = RealtimeWorker(cfg, parent=self)
+        self.singing_worker = DoubaoCallWorker(cfg, parent=self)
         self.singing_worker.status_changed.connect(self._on_singing_status)
         self.singing_worker.chat_received.connect(self._on_singing_chat)
         self.singing_worker.error_received.connect(self._on_singing_error)

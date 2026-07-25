@@ -109,7 +109,7 @@ EVENT_NAMES = {
 
 
 @dataclass
-class RealtimePacket:
+class DoubaoCallPacket:
     message_type: int
     flags: int
     serialization: int
@@ -145,20 +145,20 @@ def _pack_i32(value):
 
 def _read_u32(data, offset):
     if offset + 4 > len(data):
-        raise ValueError('Realtime packet truncated')
+        raise ValueError('Doubao call packet truncated')
     return struct.unpack('>I', data[offset:offset + 4])[0], offset + 4
 
 
 def _read_i32(data, offset):
     if offset + 4 > len(data):
-        raise ValueError('Realtime packet truncated')
+        raise ValueError('Doubao call packet truncated')
     return struct.unpack('>i', data[offset:offset + 4])[0], offset + 4
 
 
 def _read_text(data, offset):
     size, offset = _read_u32(data, offset)
     if offset + size > len(data):
-        raise ValueError('Realtime packet text field truncated')
+        raise ValueError('Doubao call packet text field truncated')
     return data[offset:offset + size].decode('utf-8'), offset + size
 
 
@@ -219,7 +219,7 @@ def build_audio_event(audio, session_id):
 
 def parse_packet(data):
     if len(data) < 8:
-        raise ValueError('Realtime packet too short')
+        raise ValueError('Doubao call packet too short')
     first, second, third, _reserved = data[:4]
     header_words = first & 0x0F
     header_size = header_words * 4
@@ -228,7 +228,7 @@ def parse_packet(data):
     serialization = third >> 4
     compression = third & 0x0F
     offset = header_size
-    packet = RealtimePacket(message_type, flags, serialization, compression)
+    packet = DoubaoCallPacket(message_type, flags, serialization, compression)
 
     if message_type == MSG_ERROR:
         packet.error_code, offset = _read_u32(data, offset)
@@ -248,7 +248,7 @@ def parse_packet(data):
 
     payload_size, offset = _read_u32(data, offset)
     if offset + payload_size > len(data):
-        raise ValueError('Realtime packet payload truncated')
+        raise ValueError('Doubao call packet payload truncated')
     payload = data[offset:offset + payload_size]
     if compression == COMP_GZIP and payload:
         payload = gzip.decompress(payload)
