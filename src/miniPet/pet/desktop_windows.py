@@ -1,16 +1,17 @@
 # coding:utf-8
 
 
-def show_chat_window(owner, history=None, append_message=None, content_for_llm=None, system_prompt_builder=None):
+def show_chat_window(owner, history=None, append_message=None, content_for_llm=None, system_prompt_builder=None, clear_history_callback=None):
     from miniPet.windows.chat_window import ChatWindow
     from miniPet import config
 
     if owner.chat_window is None:
-        owner.chat_window = ChatWindow(config.current_pet, owner, history=history, append_message=append_message, content_for_llm=content_for_llm, system_prompt_builder=system_prompt_builder)
+        owner.chat_window = ChatWindow(config.current_pet, owner, history=history, append_message=append_message, content_for_llm=content_for_llm, system_prompt_builder=system_prompt_builder, clear_history_callback=clear_history_callback)
     else:
         owner.chat_window.append_message = append_message
         owner.chat_window.content_for_llm = content_for_llm
         owner.chat_window.system_prompt_builder = system_prompt_builder
+        owner.chat_window.clear_history_callback = clear_history_callback
         if history is not None and owner.chat_window.history is not history:
             owner.chat_window.history = history
             owner.chat_window.reload_history()

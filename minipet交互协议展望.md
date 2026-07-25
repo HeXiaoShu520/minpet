@@ -69,8 +69,7 @@ bubble | card | confirm | input | choice
       {
         "id": "item-1",
         "title": "产品群讨论了接口排期",
-        "summary": "核心结论：今天需要给出初版方案。",
-        "source": "产品群"
+        "summary": "核心结论：今天需要给出初版方案。"
       }
     ]
   }

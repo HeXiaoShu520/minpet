@@ -1,14 +1,15 @@
 # coding:utf-8
 """基础设置和智能体设置页面。"""
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QLabel
-from qfluentwidgets import InfoBar, InfoBarPosition, SettingCard, SettingCardGroup
+from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QIcon
+from PySide6.QtWidgets import QApplication, QLabel
+from qfluentwidgets import InfoBar, InfoBarPosition, PushSettingCard, SettingCard, SettingCardGroup
 from qfluentwidgets import FluentIcon as FIF
 
 from miniPet import config
 from miniPet.base_page import MiniPetScrollPage
+from miniPet.pet.codex_export import CODEX_PET_DIR, export_all_pets_to_codex
 from miniPet.widgets.setting_cards import AvatarPathSettingCard, ComboSettingCard, LineEditSettingCard
 
 
@@ -111,6 +112,11 @@ class BasicPage(MiniPetScrollPage):
         self.petAvatarCard.setText(config.app_config.get('pet_avatar', ''))
         self.userAvatarCard = AvatarPathSettingCard(FIF.PEOPLE, '我的头像', '聊天窗口中用户消息显示的头像', self.personalGroup)
         self.userAvatarCard.setText(config.app_config.get('user_avatar', ''))
+        self.codexGroup = SettingCardGroup('Codex', self.scrollWidget)
+        self.exportAllCodexPetsCard = PushSettingCard('全部导出', FIF.SYNC, '全部 miniPet 宠物导出到 Codex', '批量转换 res/role 下所有角色，写入 ' + str(CODEX_PET_DIR), self.codexGroup)
+        self.openCodexPetDirCard = PushSettingCard('打开', FIF.FOLDER, 'Codex 宠物目录', str(CODEX_PET_DIR), self.codexGroup)
+        self.exportAllCodexPetsCard.clicked.connect(self._export_all_pets_to_codex)
+        self.openCodexPetDirCard.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(CODEX_PET_DIR))))
         self.visualGroup = SettingCardGroup('视觉样式', self.scrollWidget)
         self.bubbleStyleCard = ComboSettingCard(BUBBLE_STYLE_OPTIONS, FIF.MESSAGE, '通知气泡样式', '选择普通对话气泡的颜色和质感', self.visualGroup)
         self.bubbleStyleCard.setCurrentValue(config.app_config.get('bubble_style', 'soft'))
@@ -129,13 +135,37 @@ class BasicPage(MiniPetScrollPage):
         self.personalGroup.addSettingCard(self.petCard)
         self.personalGroup.addSettingCard(self.petAvatarCard)
         self.personalGroup.addSettingCard(self.userAvatarCard)
+        self.codexGroup.addSettingCard(self.exportAllCodexPetsCard)
+        self.codexGroup.addSettingCard(self.openCodexPetDirCard)
         self.visualGroup.addSettingCard(self.bubbleStyleCard)
         self.visualGroup.addSettingCard(self.smartBubbleStyleCard)
         self.visualGroup.addSettingCard(self.voiceOrbStyleCard)
         self.visualGroup.addSettingCard(self.voiceFollowEffectCard)
         self.visualGroup.addSettingCard(self.voiceFollowLevelCard)
         self.expandLayout.addWidget(self.personalGroup)
+        self.expandLayout.addWidget(self.codexGroup)
         self.expandLayout.addWidget(self.visualGroup)
+
+    def _export_all_pets_to_codex(self):
+        self.exportAllCodexPetsCard.setEnabled(False)
+        self.exportAllCodexPetsCard.setContent('正在准备导出...')
+        QApplication.processEvents()
+
+        def update_progress(pet_name, index, total):
+            self.exportAllCodexPetsCard.setContent('正在导出 %d/%d：%s' % (index, total, pet_name))
+            QApplication.processEvents()
+
+        try:
+            exported, failed = export_all_pets_to_codex(progress_callback=update_progress)
+        finally:
+            self.exportAllCodexPetsCard.setEnabled(True)
+            self.exportAllCodexPetsCard.setContent('批量转换 res/role 下所有角色，写入 ' + str(CODEX_PET_DIR))
+
+        if failed:
+            detail = '成功 %d 个，失败 %d 个：%s' % (len(exported), len(failed), '；'.join(item['pet'] for item in failed[:5]))
+            InfoBar.warning('批量导出完成但有失败', detail, duration=7000, position=InfoBarPosition.BOTTOM, parent=self.window())
+            return
+        InfoBar.success('已全部导出到 Codex', '成功导出 %d 个角色到 %s' % (len(exported), CODEX_PET_DIR), duration=5500, position=InfoBarPosition.BOTTOM, parent=self.window())
 
     def _save(self):
         old_pet = config.app_config.get('default_pet')

@@ -1,5 +1,5 @@
 # coding:utf-8
-"""语音、回复显示和豆包通话设置页面。"""
+"""语音和回复显示设置页面。"""
 
 import hashlib
 
@@ -86,6 +86,11 @@ class TTSPage(MiniPetScrollPage):
         self.wakeWordsCard = LineEditSettingCard(FIF.MESSAGE, '唤醒词', '多个词用逗号分隔，例如：小月小月,小月', placeholder='小月小月', parent=self.wakeGroup)
         self.wakeWordsCard.setText(wake_cfg.get('words', wake_defaults['words']))
 
+        doubao_call_cfg = config.doubao_call_config
+        self.doubaoCallGroup = SettingCardGroup('豆包通话', self.scrollWidget)
+        self.doubaoCallSpeakerCard = ComboSettingCard(DOUBAO_CALL_VOICE_OPTIONS, FIF.PEOPLE, '通话音色', '豆包通话语音回复使用的发音人', self.doubaoCallGroup)
+        self.doubaoCallSpeakerCard.setCurrentValue(doubao_call_cfg.get('speaker', config.DEFAULT_DOUBAO_CALL_CONFIG['speaker']))
+
         self.linkGroup = SettingCardGroup('相关链接', self.scrollWidget)
         self.linkCard = SettingCard(FIF.LINK, '火山语音资源', '服务开通、在线体验和 API 教程', self.linkGroup)
         self.serviceBtn = PrimaryPushButton('服务开通', self.linkCard)
@@ -113,9 +118,11 @@ class TTSPage(MiniPetScrollPage):
             self.apiGroup.addSettingCard(card)
         for card in [self.continuousVoiceCard, self.wakeEnabledCard, self.wakeWordsCard]:
             self.wakeGroup.addSettingCard(card)
+        self.doubaoCallGroup.addSettingCard(self.doubaoCallSpeakerCard)
         self.linkGroup.addSettingCard(self.linkCard)
         self.expandLayout.addWidget(self.apiGroup)
         self.expandLayout.addWidget(self.wakeGroup)
+        self.expandLayout.addWidget(self.doubaoCallGroup)
         self.expandLayout.addWidget(self.linkGroup)
         self._initializing = False
 
@@ -194,10 +201,16 @@ class TTSPage(MiniPetScrollPage):
             'restart_delay_ms': defaults['restart_delay_ms'],
         }
 
+    def _collect_doubao_call(self):
+        return {
+            'speaker': self.doubaoCallSpeakerCard.currentValue() or config.DEFAULT_DOUBAO_CALL_CONFIG['speaker'],
+        }
+
     def _save(self):
         config.save_tts_config(self._collect())
         config.save_voice_chat_config(self._collect_voice_chat())
         config.save_wake_word_config(self._collect_wake_word())
+        config.save_doubao_call_config(self._collect_doubao_call())
         self.settings_changed.emit()
         InfoBar.success('保存成功', '语音配置已保存', duration=2000, position=InfoBarPosition.BOTTOM, parent=self.window())
 
@@ -255,55 +268,4 @@ class ReplyDisplayPage(MiniPetScrollPage):
     def _save(self):
         config.save_typewriter_config(self._collect())
         InfoBar.success('保存成功', '回复显示设置已保存', duration=2000, position=InfoBarPosition.BOTTOM, parent=self.window())
-
-
-class DoubaoCallPage(MiniPetScrollPage):
-    def __init__(self, parent=None):
-        super().__init__('豆包通话设置', parent, save_callback=lambda: self._save())
-        cfg = config.doubao_call_config
-        self.apiGroup = SettingCardGroup('豆包通话 API', self.scrollWidget)
-        self.keyHintCard = SettingCard(FIF.VPN, '认证方式', '豆包通话复用语音设置里的 TTS API Key', self.apiGroup)
-        self.speakerCard = ComboSettingCard(DOUBAO_CALL_VOICE_OPTIONS, FIF.PEOPLE, '音色', '豆包通话语音回复使用的发音人', self.apiGroup)
-        self.speakerCard.setCurrentValue(cfg.get('speaker', config.DEFAULT_DOUBAO_CALL_CONFIG['speaker']))
-        self.systemRoleCard = SettingCard(FIF.MESSAGE, '角色背景', 'O2.0 的 system_role', self.apiGroup)
-        self.systemRoleEdit = QPlainTextEdit(self.systemRoleCard)
-        self.systemRoleEdit.setPlainText(cfg.get('system_role', ''))
-        self._style_editor(self.systemRoleEdit)
-        self.systemRoleCard.hBoxLayout.addStretch(1)
-        self.systemRoleCard.hBoxLayout.addWidget(self.systemRoleEdit, 0, Qt.AlignRight)
-        self.systemRoleCard.hBoxLayout.addSpacing(16)
-        self.speakingStyleCard = SettingCard(FIF.CHAT, '说话风格', 'O2.0 的 speaking_style', self.apiGroup)
-        self.speakingStyleEdit = QPlainTextEdit(self.speakingStyleCard)
-        self.speakingStyleEdit.setPlainText(cfg.get('speaking_style', ''))
-        self._style_editor(self.speakingStyleEdit)
-        self.speakingStyleCard.hBoxLayout.addStretch(1)
-        self.speakingStyleCard.hBoxLayout.addWidget(self.speakingStyleEdit, 0, Qt.AlignRight)
-        self.speakingStyleCard.hBoxLayout.addSpacing(16)
-
-        for card in [self.keyHintCard, self.speakerCard, self.systemRoleCard, self.speakingStyleCard]:
-            self.apiGroup.addSettingCard(card)
-        self.expandLayout.addWidget(self.apiGroup)
-
-    def _style_editor(self, editor):
-        editor.setFixedSize(520, 80)
-        editor.setStyleSheet(
-            'QPlainTextEdit{background:#ffffff;border:1px solid #dfe3e8;border-radius:8px;'
-            'padding:8px 10px;font-size:14px;color:#1f2328;}'
-            'QPlainTextEdit:focus{border:1px solid #8ab4f8;}'
-        )
-
-    def _collect(self):
-        return {
-            'enabled': True,
-            'model': config.DEFAULT_DOUBAO_CALL_CONFIG['model'],
-            'speaker': self.speakerCard.currentValue() or config.DEFAULT_DOUBAO_CALL_CONFIG['speaker'],
-            'bot_name': config.DEFAULT_DOUBAO_CALL_CONFIG['bot_name'],
-            'system_role': self.systemRoleEdit.toPlainText().strip(),
-            'speaking_style': self.speakingStyleEdit.toPlainText().strip(),
-        }
-
-    def _save(self):
-        config.save_doubao_call_config(self._collect())
-        InfoBar.success('保存成功', '豆包通话配置已保存', duration=2000, position=InfoBarPosition.BOTTOM, parent=self.window())
-
 

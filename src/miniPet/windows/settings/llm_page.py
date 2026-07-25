@@ -24,8 +24,8 @@ class LLMPage(MiniPetScrollPage):
         self.apiKeyCard.setText(cfg.get('api_key', ''))
         self.modelCard = LineEditSettingCard(FIF.ROBOT, '模型名称', 'OpenAI 兼容模型名，如 gpt-4o-mini / deepseek-chat', placeholder='gpt-4o-mini', parent=self.apiGroup)
         self.modelCard.setText(cfg.get('model', ''))
-        self.maxTokenCard = LineEditSettingCard(FIF.FONT_SIZE, '最大 Token', '单次回复的最大 token 数', placeholder='1024', parent=self.apiGroup)
-        self.maxTokenCard.setText(cfg.get('max_tokens', 1024))
+        self.memoryTurnsCard = LineEditSettingCard(FIF.HISTORY, '记忆对话轮数', 'AI 对话时带入最近多少轮历史对话', placeholder='10', parent=self.apiGroup)
+        self.memoryTurnsCard.setText(cfg.get('memory_turns', 10))
 
         self.actionCard = SettingCard(FIF.LINK, '测试连接', '测试大模型连接是否正常', self.apiGroup)
         self.testBtn = PrimaryPushButton('测试连接', self.actionCard)
@@ -34,20 +34,23 @@ class LLMPage(MiniPetScrollPage):
         self.actionCard.hBoxLayout.addSpacing(16)
         self.testBtn.clicked.connect(self._test)
 
-        for card in [self.apiBaseCard, self.apiKeyCard, self.modelCard, self.maxTokenCard, self.actionCard]:
+        for card in [self.apiBaseCard, self.apiKeyCard, self.modelCard, self.memoryTurnsCard, self.actionCard]:
             self.apiGroup.addSettingCard(card)
         self.expandLayout.addWidget(self.apiGroup)
 
-    def _collect(self):
+    def _parse_int_card(self, card, default, minimum=1):
         try:
-            max_tokens = int(self.maxTokenCard.text() or 1024)
+            return max(minimum, int(card.text() or default))
         except ValueError:
-            max_tokens = 1024
+            return default
+
+    def _collect(self):
+        memory_turns = self._parse_int_card(self.memoryTurnsCard, 10, minimum=0)
         return {
             'api_base': self.apiBaseCard.text(),
             'api_key': self.apiKeyCard.text(),
             'model': self.modelCard.text(),
-            'max_tokens': max_tokens,
+            'memory_turns': memory_turns,
             'system_prompt': config.llm_config.get('system_prompt', ''),
         }
 

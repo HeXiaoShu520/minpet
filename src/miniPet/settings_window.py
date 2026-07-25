@@ -7,11 +7,10 @@ from qfluentwidgets import FluentWindow
 from qfluentwidgets import FluentIcon as FIF
 
 from miniPet import config
-from miniPet.protocol_test_page import ProtocolTestPage
 from miniPet.windows.settings.basic_pages import AgentPage, BasicPage
 from miniPet.windows.settings.llm_page import LLMPage
 from miniPet.windows.settings.role_page import RolePage
-from miniPet.windows.settings.voice_pages import DoubaoCallPage, ReplyDisplayPage, TTSPage
+from miniPet.windows.settings.voice_pages import ReplyDisplayPage, TTSPage
 
 
 def _icon(name):
@@ -21,7 +20,6 @@ def _icon(name):
 class SettingsWindow(FluentWindow):
     settings_changed = Signal()
     pet_changed = Signal(str)
-    clear_history_requested = Signal()
 
     def __init__(self, chat_store=None):
         super().__init__()
@@ -42,23 +40,16 @@ class SettingsWindow(FluentWindow):
         self.tts.setObjectName('TTSPage')
         self.reply_display = ReplyDisplayPage(self)
         self.reply_display.setObjectName('ReplyDisplayPage')
-        self.doubao_call = DoubaoCallPage(self)
-        self.doubao_call.setObjectName('DoubaoCallPage')
-        self.protocol_test = ProtocolTestPage(self)
-        self.protocol_test.setObjectName('ProtocolTestPage')
         self.basic.settings_changed.connect(self.settings_changed)
         self.agent.settings_changed.connect(self.settings_changed)
         self.tts.settings_changed.connect(self.settings_changed)
         self.basic.pet_changed.connect(self.pet_changed)
-        self.role.clear_history_requested.connect(self.clear_history_requested)
         self.addSubInterface(self.basic, FIF.SETTING, '基础')
         self.addSubInterface(self.agent, FIF.ROBOT, '智能体')
         self.addSubInterface(self.llm, FIF.CLOUD, '大模型')
         self.addSubInterface(self.role, _icon('character.svg'), '角色')
         self.addSubInterface(self.tts, FIF.VOLUME, '语音')
         self.addSubInterface(self.reply_display, FIF.MESSAGE, '回复显示')
-        self.addSubInterface(self.doubao_call, FIF.PHONE, '豆包通话')
-        self.addSubInterface(self.protocol_test, FIF.DEVELOPER_TOOLS, '协议测试')
         self.navigationInterface.setExpandWidth(180)
         self.navigationInterface.setMinimumExpandWidth(180)
         self.navigationInterface.setCollapsible(False)

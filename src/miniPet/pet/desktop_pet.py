@@ -348,8 +348,8 @@ class DesktopPet(QWidget):
     def pat(self):
         pat_pet(self)
 
-    def show_chat(self, history=None, append_message=None, content_for_llm=None, system_prompt_builder=None):
-        show_chat_window(self, history=history, append_message=append_message, content_for_llm=content_for_llm, system_prompt_builder=system_prompt_builder)
+    def show_chat(self, history=None, append_message=None, content_for_llm=None, system_prompt_builder=None, clear_history_callback=None):
+        show_chat_window(self, history=history, append_message=append_message, content_for_llm=content_for_llm, system_prompt_builder=system_prompt_builder, clear_history_callback=clear_history_callback)
 
     def show_doubao_call(self, append_message=None):
         show_doubao_call_window(self, append_message=append_message)

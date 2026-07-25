@@ -306,10 +306,7 @@ class DoubaoCallWindow(QWidget):
         self.current_reply = str(text or '').strip()
 
     def _collect_config(self):
-        cfg = dict(config.doubao_call_config)
-        if not cfg.get('bot_name'):
-            cfg['bot_name'] = self.pet_name or config.DEFAULT_DOUBAO_CALL_CONFIG['bot_name']
-        return cfg
+        return dict(config.doubao_call_config)
 
     def _ensure_session(self):
         """懒启动 DoubaoCallWorker；窗口显示后第一次录音才建立会话。"""

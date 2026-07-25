@@ -56,23 +56,26 @@ class NotificationCenter(QWidget):
         bubble = self.bubbles.get(bubble_id)
         if bubble is None:
             return False
+        old_size = bubble.size()
         if isinstance(message, dict) and hasattr(bubble, 'update_card'):
             bubble.update_card(message, timeout=timeout)
         elif hasattr(bubble, 'update_message'):
             bubble.update_message(message, timeout=timeout)
         else:
             return False
-        self._reflow_bubbles(animate=True)
+        if bubble.size() != old_size:
+            self._reflow_bubbles(animate=True)
         return True
 
-    def setup_smart_bubble(self, event, x, y):
+    def setup_smart_bubble(self, event, x, y, play_sound=True):
         bubble_id = str(uuid.uuid4())
         timeout = int(event.get('timeout_ms', SMART_BUBBLE_TIMEOUT_MS) or 0)
         bubble = SmartBubble(bubble_id, event, timeout)
         bubble.action_clicked.connect(self.smart_action_clicked)
         bubble.closed.connect(self._remove_bubble)
         self._register_bubble(bubble_id, bubble, x, y)
-        self._play_sound()
+        if play_sound:
+            self._play_sound()
         return bubble_id
 
     def _register_bubble(self, bubble_id, bubble, x, y):

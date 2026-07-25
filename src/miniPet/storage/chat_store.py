@@ -39,6 +39,19 @@ class ChatStore:
     def load_today(self):
         return self.load_date(self.today())
 
+    def load_recent(self, max_messages):
+        messages = []
+        max_messages = max(0, int(max_messages or 0))
+        if max_messages <= 0:
+            return messages
+        for path in sorted(self.sessions_dir.glob('*.jsonl'), reverse=True):
+            day_messages = self.load_date(path.stem)
+            if day_messages:
+                messages = day_messages + messages
+            if len(messages) >= max_messages:
+                break
+        return messages[-max_messages:]
+
     def load_stored_today(self):
         return self.load_stored_date(self.today())
 

@@ -85,15 +85,15 @@ curl http://127.0.0.1:18889/health
 链路如下：
 
 ```text
-miniPet user.command 文本命令
+miniPet user.input 文本输入
 → miniClaw /ws/minipet
 → miniClaw LLM/Agent
 → surface.show 创建通用卡片
 → surface.update 流式更新同一张卡片
-→ surface.update done=true / status=done 完成
+→ surface.update status=done 完成
 ```
 
-miniPet 使用 `surface_id` 追踪同一张卡片，因此 miniClaw 的流式回复会在同一张卡片里持续刷新，不会生成多条气泡。外置后端协议只推荐卡片输出，普通文字、按钮、富文本、选择和输入都放进 `kind: card` 的 payload。
+miniPet 使用 `surface_id` 追踪同一张卡片，因此 miniClaw 的流式回复会在同一张卡片里持续刷新，不会生成多条气泡。外置后端协议只接收 `user.input.text`，普通文字、按钮、富文本、选择和输入都通过通用卡片表达。
 miniClaw 侧可选环境变量：
 
 ```text
@@ -244,12 +244,10 @@ ws://localhost:18888/ws/pet
 
 推荐事件类型：
 
-- `user.command`：miniPet 发给后端的文字命令，`mode` 固定为 `text`
-- `user.drop`：桌宠拖拽/投喂内容
+- `user.input`：miniPet 发给后端的唯一用户输入，文字命令、拖拽投喂、卡片操作都整理成 `text`
 - `surface.show`：创建通用卡片
 - `surface.update`：按 `surface_id` 更新同一张卡片，用于流式输出
 - `surface.close`：关闭指定卡片
-- `user.action`：用户点击卡片按钮后回传后端
 
 通用卡片结构：
 
@@ -260,7 +258,7 @@ Card
 └─ actions：按钮，提交、取消、确认、复制、重试等
 ```
 
-卡片按需渲染：不存在的 `elements` / `controls` / `actions` 不占空间。用户点击按钮时会回调外部服务；WebSocket 不在线时 fallback 到：
+卡片按需渲染：不存在的 `elements` / `controls` / `actions` 不占空间。用户点击按钮时会整理成 `user.input.text` 发送给外部服务；WebSocket 不在线时 fallback 到：
 
 ```text
 POST http://localhost:18888/actions/execute
@@ -534,8 +532,6 @@ ENV_FILE = ROOT_DIR / '.env'
   "type": "surface.show",
   "payload": {
     "surface_id": "reply-1",
-    "kind": "card",
-    "title": "AI 回复",
     "content": "正在生成回复...",
     "status": "streaming",
     "timeout_ms": 0
@@ -550,7 +546,6 @@ ENV_FILE = ROOT_DIR / '.env'
     "surface_id": "reply-1",
     "content": "这是最终回复。",
     "status": "done",
-    "done": true,
     "timeout_ms": 8000
   }
 }
@@ -563,10 +558,8 @@ ENV_FILE = ROOT_DIR / '.env'
   "type": "surface.show",
   "payload": {
     "surface_id": "plan-choice-1",
-    "kind": "card",
-    "title": "请选择方案",
     "elements": [
-      {"type": "markdown", "content": "请选择一种实现方式，也可以输入其他方案。"}
+      {"type": "markdown", "content": "**请选择方案**\n\n请选择一种实现方式，也可以输入其他方案。"}
     ],
     "controls": [
       {
@@ -588,20 +581,13 @@ ENV_FILE = ROOT_DIR / '.env'
 }
 ```
 
-用户点击按钮后，miniPet 回传：
+用户点击按钮后，miniPet 会整理成文本输入发送：
 
 ```json
 {
-  "type": "user.action",
-  "source": "minipet",
+  "type": "user.input",
   "payload": {
-    "surface_id": "plan-choice-1",
-    "action_id": "submit",
-    "values": {
-      "plan": "simple"
-    },
-    "action": {"id": "submit", "label": "提交", "style": "primary"},
-    "metadata": {}
+    "text": "提交\n{\"plan\": \"simple\"}"
   }
 }
 ```

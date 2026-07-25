@@ -16,7 +16,7 @@ MINIPET 收到事件后只做三件事：
 2. 按优先级触发宠物动作
 3. 用户点击气泡按钮时，把动作回传给外部服务
 
-动作回传优先走当前 WebSocket 连接，miniPet 会发送兼容事件 `interaction.action`，payload 中同时带有 V1 元信息 `v1_type: user.action`。当 WebSocket 不可用时，才回退到 HTTP：
+动作回传优先走当前 WebSocket 连接；当前 V1 会把卡片操作整理成 `user.input.text` 发送。旧版 `interaction.action` 只作为早期 adapter 兼容语义保留。当 WebSocket 不可用时，才回退到 HTTP：
 
 ```text
 POST http://localhost:18888/actions/execute
@@ -43,7 +43,6 @@ POST http://localhost:18888/actions/execute
     { "id": "later", "type": "later", "label": "稍后处理" },
     { "id": "ignore", "type": "ignore", "label": "忽略" }
   ],
-  "source": "miniclaw",
   "chat_id": "optional",
   "message_id": "optional"
 }

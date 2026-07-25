@@ -1,5 +1,6 @@
 # coding:utf-8
 from PySide6.QtCore import QTimer
+import shiboken6
 
 
 def _cfg():
@@ -38,6 +39,9 @@ class Typewriter:
         return not isinstance(self._w, QTextEdit)
 
     def _set(self, text):
+        if self._w is None or not shiboken6.isValid(self._w):
+            self._timer.stop()
+            return
         if self._is_label():
             self._w.setText(text)
         else:

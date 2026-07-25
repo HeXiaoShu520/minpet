@@ -4,21 +4,21 @@ miniPet V1 是外置 AI 后端与桌面宠物之间的轻量交互协议。
 
 miniPet 不执行业务 API，不替代后端；它只负责：
 
-- 接收用户在桌宠上的文字命令、拖拽投喂和卡片操作；
+- 接收用户在桌宠上的文字输入、拖拽投喂和卡片操作；
 - 在桌面上展示后端返回的通用卡片；
-- 把用户点击、选择、输入结果回传给后端。
+- 把用户点击、选择、输入结果整理成文本回传给后端。
 
 一句话：
 
-> miniPet 发送 `user.*`，后端发送 `surface.*`，所有展示和交互都收敛到 `kind: card` 的通用卡片。
+> miniPet 发送 `user.input`，后端发送 `surface.*`，用户输入统一交给后端大模型理解。
 
 ## 1. 设计目标
 
 - 协议小：只保留 `session`、`user`、`surface` 三类顶层概念。
-- 输入简单：外置后端只接收文字命令，不承载语音协议。
+- 输入简单：外置后端只接收 `user.input` 文本输入，不承载语音协议。
 - 输出统一：普通文字、按钮、富文本、选择、输入、流式状态都用通用卡片表达。
-- 交互闭环：用户点击按钮或提交控件值后，统一回传 `user.action`。
-- 可扩展：后续增加更多控件时，扩展 `card.controls`，不增加新的 surface kind。
+- 交互闭环：用户点击按钮或提交控件值后，miniPet 整理成文本继续发送 `user.input`。
+- 可扩展：后续增加更多控件时，扩展 `controls`，不增加新的 surface 类型。
 
 miniPet 的边界：
 
@@ -52,7 +52,6 @@ WebSocket 不可用时，miniPet 发送事件会 fallback 到 HTTP POST，POST b
 {
   "version": "1.0",
   "type": "surface.show",
-  "source": "miniclaw",
   "payload": {},
   "request_id": "optional-request-id"
 }
@@ -64,7 +63,6 @@ WebSocket 不可用时，miniPet 发送事件会 fallback 到 HTTP POST，POST b
 | --- | --- | --- |
 | `version` | 推荐 | 协议版本，当前为 `1.0` |
 | `type` | 是 | 消息类型 |
-| `source` | 推荐 | 来源，例如 `minipet`、`miniclaw`、`openclaw` |
 | `payload` | 是 | 具体内容 |
 | `request_id` | 否 | 请求 ID，用于关联请求和响应 |
 
@@ -76,9 +74,7 @@ WebSocket 不可用时，miniPet 发送事件会 fallback 到 HTTP POST，POST b
 | `session.ready` | 后端 → miniPet | 后端就绪 |
 | `session.ping` | 后端 → miniPet | 心跳请求 |
 | `session.pong` | miniPet → 后端 | 心跳响应 |
-| `user.command` | miniPet → 后端 | 用户文字命令 |
-| `user.drop` | miniPet → 后端 | 用户拖拽/投喂内容 |
-| `user.action` | miniPet → 后端 | 用户点击卡片按钮，包含可选控件值 |
+| `user.input` | miniPet → 后端 | 用户输入文本；文字命令、拖拽投喂、卡片操作都整理成文本发送 |
 | `surface.show` | 后端 → miniPet | 创建通用卡片 |
 | `surface.update` | 后端 → miniPet | 更新已有卡片 |
 | `surface.close` | 后端 → miniPet | 关闭已有卡片 |
@@ -93,23 +89,14 @@ miniPet 连接后发送：
 {
   "version": "1.0",
   "type": "session.hello",
-  "source": "minipet",
   "payload": {
-    "client": {
-      "name": "miniPet"
-    },
     "protocol": "minipet.v1",
-    "concepts": ["session", "user", "surface", "agent"],
-    "surface_kinds": ["card"],
     "capabilities": [
       "session.hello",
       "session.ready",
       "session.ping",
       "session.pong",
-      "user.command",
-      "user.action",
       "user.input",
-      "user.drop",
       "surface.show",
       "surface.update",
       "surface.close"
@@ -117,8 +104,6 @@ miniPet 连接后发送：
   }
 }
 ```
-
-说明：当前实现里仍保留 `user.input` 常量用于兼容内部路径，但通用卡片交互推荐统一通过 `user.action.values` 回传。
 
 ### session.ready
 
@@ -128,14 +113,11 @@ miniPet 连接后发送：
 {
   "version": "1.0",
   "type": "session.ready",
-  "source": "miniclaw",
   "payload": {
     "server": {
-      "name": "miniClaw",
-      "kind": "desktop-agent"
+      "name": "miniClaw"
     },
-    "protocol": "minipet.v1",
-    "accepted_surface_kinds": ["card"]
+    "protocol": "minipet.v1"
   }
 }
 ```
@@ -158,7 +140,6 @@ miniPet 回：
 {
   "version": "1.0",
   "type": "session.pong",
-  "source": "minipet",
   "payload": {
     "ts": 1730000000000
   }
@@ -167,90 +148,54 @@ miniPet 回：
 
 ## 6. User
 
-### user.command
+### user.input
 
-用户主动向桌宠输入自然语言命令。外置后端协议只使用文字模式。
-
-```json
-{
-  "version": "1.0",
-  "type": "user.command",
-  "source": "minipet",
-  "payload": {
-    "text": "帮我总结今天需要处理的事",
-    "content": "帮我总结今天需要处理的事",
-    "mode": "text",
-    "backend": "custom",
-    "surface": "pet_popup",
-    "context": {
-      "surface": "pet_popup"
-    }
-  }
-}
-```
-
-### user.drop
-
-用户把文本、链接或文件拖给宠物。
+miniPet 发给后端的唯一用户输入事件。文字命令、拖拽投喂、卡片按钮和控件提交都整理成文本，让后端大模型自行理解意图。
 
 ```json
 {
   "version": "1.0",
-  "type": "user.drop",
-  "source": "minipet",
+  "type": "user.input",
   "payload": {
-    "kind": "text",
-    "preview": "这段内容帮我整理成任务",
-    "intent": "create_task",
-    "surface": "desktop_pet",
-    "context": {
-      "surface": "desktop_pet"
-    },
-    "items": []
+    "text": "帮我总结今天需要处理的事"
   }
 }
 ```
 
-文件只传路径和元信息，是否读取由后端权限决定。
-
-### user.action
-
-用户点击卡片按钮后，miniPet 统一回传 `user.action`。
+拖拽投喂也按文本发送：
 
 ```json
 {
   "version": "1.0",
-  "type": "user.action",
-  "source": "minipet",
+  "type": "user.input",
   "payload": {
-    "surface_id": "plan-choice-1",
-    "action_id": "submit",
-    "action": {
-      "id": "submit",
-      "label": "提交",
-      "style": "primary"
-    },
-    "values": {
-      "plan": "simple",
-      "note": "先做最小版本"
-    },
-    "metadata": {}
+    "text": "用户投喂了内容，希望你处理：生成待办。\n预览：这段内容帮我整理成任务"
   }
 }
 ```
 
-`values` 来自通用卡片的 `controls`。如果卡片没有控件，则不带 `values`。
+用户点击卡片按钮或提交控件后，也按文本发送：
+
+```json
+{
+  "version": "1.0",
+  "type": "user.input",
+  "payload": {
+    "text": "提交\n{\"plan\": \"simple\", \"note\": \"先做最小版本\"}"
+  }
+}
+```
 
 miniPet 内置 action：
 
 | action id | 本地行为 |
 | --- | --- |
-| `ignore` | 关闭/忽略，不回传后端 |
+| `ignore` | 关闭/忽略，不发送给后端 |
 | `copy` | 复制卡片文本 |
 | `open_chat` | 打开聊天窗口 |
 | `later` | 本地稍后提醒占位提示 |
 
-其他 action 原样回传后端。
+其他 action 会整理成 `user.input.text` 发送给后端。
 
 ## 7. Surface：通用卡片
 
@@ -259,9 +204,6 @@ miniPet 内置 action：
 ```json
 {
   "surface_id": "surface-001",
-  "kind": "card",
-  "title": "标题",
-  "subtitle": "副标题/来源",
   "content": "正文文本",
   "status": "streaming",
   "elements": [],
@@ -278,12 +220,12 @@ miniPet 内置 action：
 Card
 ├─ elements：展示内容，用户不能编辑
 ├─ controls：输入/选择控件，用户可以填写或选择
-└─ actions：按钮，点击后触发 user.action
+└─ actions：按钮，点击后触发本地动作或整理成 user.input
 ```
 
 渲染规则：
 
-- Header 固定存在，包含状态标记、标题、关闭按钮。
+- Header 固定存在，由 miniPet 显示宠物头像、宠物名、状态和关闭按钮。
 - `elements` / `content` 存在才显示正文区域。
 - `controls` 存在才显示输入/选择区域。
 - `actions` 存在才显示按钮区域。
@@ -295,9 +237,9 @@ Card
 
 | status | 表现 |
 | --- | --- |
-| 空 | 默认 `AI` 标记 |
+| 空 | 不显示额外状态 |
 | `running` / `streaming` / `thinking` / `working` | 进行中动画标记 |
-| `done` / `completed` / `success` 或 `done: true` | 完成标记 |
+| `done` / `completed` / `success` | 完成标记 |
 | `failed` / `error` | 失败标记 |
 
 ### 7.2 elements
@@ -417,17 +359,21 @@ Card
 
 ## 8. surface.show / surface.update / surface.close
 
+字段规则：
+
+- 所有 `surface.*` 都按通用卡片处理，不再需要 `kind` 字段。
+- 卡片头部由 miniPet 统一显示宠物头像和宠物名；协议不再使用 `title` / `subtitle` 作为卡片标题或副标题。
+- 需要展示的信息都放进 `content` 或 `elements`。
+- 流式状态统一使用 `status` 表达，推荐值为 `streaming` / `done` / `failed`。不建议再使用 `done: true/false`，旧客户端如已支持可继续兼容，但新适配器不要依赖它。
+
 ### 创建流式卡片
 
 ```json
 {
   "version": "1.0",
   "type": "surface.show",
-  "source": "miniclaw",
   "payload": {
     "surface_id": "reply-1",
-    "kind": "card",
-    "title": "AI 回复",
     "content": "正在生成回复...",
     "status": "streaming",
     "timeout_ms": 0
@@ -441,12 +387,10 @@ Card
 {
   "version": "1.0",
   "type": "surface.update",
-  "source": "miniclaw",
   "payload": {
     "surface_id": "reply-1",
     "content": "这是当前已生成的内容。",
     "status": "streaming",
-    "done": false,
     "timeout_ms": 0
   }
 }
@@ -458,12 +402,10 @@ Card
 {
   "version": "1.0",
   "type": "surface.update",
-  "source": "miniclaw",
   "payload": {
     "surface_id": "reply-1",
     "content": "这是最终回复。",
     "status": "done",
-    "done": true,
     "timeout_ms": 8000
   }
 }
@@ -475,7 +417,6 @@ Card
 {
   "version": "1.0",
   "type": "surface.close",
-  "source": "miniclaw",
   "payload": {
     "surface_id": "reply-1",
     "reason": "completed"
@@ -489,13 +430,9 @@ Card
 
 ```json
 {
-  "type": "user.command",
-  "source": "minipet",
+  "type": "user.input",
   "payload": {
-    "text": "帮我总结今天需要处理的事",
-    "content": "帮我总结今天需要处理的事",
-    "mode": "text",
-    "surface": "pet_popup"
+    "text": "帮我总结今天需要处理的事"
   }
 }
 ```
@@ -505,11 +442,8 @@ Card
 ```json
 {
   "type": "surface.show",
-  "source": "miniclaw",
   "payload": {
     "surface_id": "briefing-001",
-    "kind": "card",
-    "title": "今天需要处理的事",
     "content": "正在整理...",
     "status": "streaming",
     "timeout_ms": 0
@@ -522,16 +456,12 @@ Card
 ```json
 {
   "type": "surface.update",
-  "source": "miniclaw",
   "payload": {
     "surface_id": "briefing-001",
-    "kind": "card",
-    "title": "今天需要处理的 4 件事",
     "elements": [
-      {"type": "markdown", "content": "1. 产品群有 1 条消息需要回复\n2. 接口文档需要补充\n3. 昨天会议有 2 个待办"}
+      {"type": "markdown", "content": "**今天需要处理的 4 件事**\n\n1. 产品群有 1 条消息需要回复\n2. 接口文档需要补充\n3. 昨天会议有 2 个待办"}
     ],
     "status": "done",
-    "done": true,
     "timeout_ms": 10000,
     "actions": [
       {"id": "copy", "label": "复制", "style": "default"},
@@ -545,17 +475,9 @@ Card
 
 ```json
 {
-  "type": "user.action",
-  "source": "minipet",
+  "type": "user.input",
   "payload": {
-    "surface_id": "briefing-001",
-    "action_id": "create_tasks",
-    "action": {
-      "id": "create_tasks",
-      "label": "生成任务",
-      "style": "primary"
-    },
-    "metadata": {}
+    "text": "生成任务"
   }
 }
 ```
@@ -584,13 +506,10 @@ async def main():
         await ws.send(json.dumps({
             'version': '1.0',
             'type': 'surface.show',
-            'source': 'demo-agent',
             'payload': {
                 'surface_id': 'demo-card-001',
-                'kind': 'card',
-                'title': 'V1 通用卡片示例',
                 'elements': [
-                    {'type': 'markdown', 'content': '**这是通用卡片。**'}
+                    {'type': 'markdown', 'content': '**V1 通用卡片示例**\n\n这是通用卡片。'}
                 ],
                 'controls': [
                     {

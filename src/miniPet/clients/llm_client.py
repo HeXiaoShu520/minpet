@@ -65,7 +65,6 @@ async def _call_openai(messages, cfg, timeout, on_delta=None):
             stream = await client.chat.completions.create(
                 model=model,
                 messages=messages,
-                max_tokens=int(cfg.get('max_tokens') or 1024),
                 stream=True,
             )
             async for event in stream:
@@ -77,7 +76,6 @@ async def _call_openai(messages, cfg, timeout, on_delta=None):
         response = await client.chat.completions.create(
             model=model,
             messages=messages,
-            max_tokens=int(cfg.get('max_tokens') or 1024),
         )
         return True, (response.choices[0].message.content or '').strip()
     except OpenAITimeoutError as e:

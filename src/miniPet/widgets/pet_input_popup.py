@@ -6,11 +6,10 @@
 提交后的思考动画。业务提交结果通过 submitted 信号交给 DesktopPet/MiniPetApp。
 """
 
-import math
 from tempfile import NamedTemporaryFile
 
-from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QEasingCurve, QEvent, QParallelAnimationGroup, QPropertyAnimation, QPoint, QPointF, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QKeyEvent, QPainter, QPixmap, QRadialGradient
+from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QEasingCurve, QEvent, QParallelAnimationGroup, QPropertyAnimation, QPoint, Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QKeyEvent, QPixmap
 from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
 from miniPet.widgets.ui_utils import clamp_popup_pos
@@ -70,9 +69,6 @@ class PetInputPopup(QFrame):
     def __init__(self, x, y, parent=None):
         super().__init__(parent)
         self.anim_group = None
-        self.thinking_timer = None
-        self.thinking_phase = 0
-        self.is_thinking = False
         self.anchor_x = x
         self.anchor_y = y
         self.pending_images = []
@@ -213,43 +209,10 @@ class PetInputPopup(QFrame):
         return blocks
 
     def _submit(self):
-        if self.is_thinking:
-            return
         text = self.input.text().strip()
         if text or self.pending_images:
             self.submitted.emit(self._build_content(text))
-            self.start_thinking()
-
-    def start_thinking(self):
-        if self.is_thinking:
-            return
-        self.is_thinking = True
-        self.card.hide()
-        self.layout().setContentsMargins(0, 0, 0, 0)
-        self.setStyleSheet('background: transparent; border: none;')
-        self.setFixedSize(96, 96)
-        pos = clamp_popup_pos(QPoint(int(self.anchor_x - self.width() / 2), int(self.anchor_y - self.height() - 20)), self.size(), QPoint(int(self.anchor_x), int(self.anchor_y)))
-        size_anim = QPropertyAnimation(self, b'pos', self)
-        size_anim.setDuration(220)
-        size_anim.setStartValue(self.pos())
-        size_anim.setEndValue(pos)
-        size_anim.setEasingCurve(QEasingCurve.OutCubic)
-        size_anim.start()
-        self.shrink_anim = size_anim
-        self.thinking_timer = QTimer(self)
-        self.thinking_timer.timeout.connect(self._tick_thinking)
-        self.thinking_timer.start(33)
-        self.update()
-
-    def finish_thinking(self):
-        if self.thinking_timer is not None:
-            self.thinking_timer.stop()
-            self.thinking_timer = None
-        self.close()
-
-    def _tick_thinking(self):
-        self.thinking_phase = (self.thinking_phase + 1) % 360
-        self.update()
+            self.close()
 
     def eventFilter(self, obj, event):
         if obj is self.input and event.type() == QEvent.KeyPress and event.key() == Qt.Key_V and event.modifiers() & Qt.ControlModifier:
@@ -279,44 +242,10 @@ class PetInputPopup(QFrame):
                 return
         super().dropEvent(event)
 
-    def paintEvent(self, event):
-        if not self.is_thinking:
-            return super().paintEvent(event)
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        phase = self.thinking_phase
-        center = QPointF(self.width() / 2, self.height() / 2)
-        pulse = (math.sin(math.radians(phase * 3)) + 1) / 2
-        painter.setPen(Qt.NoPen)
-        for i, alpha in enumerate((52, 34, 18)):
-            painter.setBrush(QColor(70, 145, 255, int(alpha + pulse * 18)))
-            painter.drawEllipse(center, int(24 + i * 7 + pulse * 5), int(24 + i * 7 + pulse * 5))
-        grad = QRadialGradient(center, 27)
-        grad.setColorAt(0, QColor(255, 255, 255, 252))
-        grad.setColorAt(0.38, QColor(142, 220, 255, 245))
-        grad.setColorAt(0.76, QColor(104, 136, 255, 240))
-        grad.setColorAt(1, QColor(132, 92, 255, 230))
-        painter.setBrush(grad)
-        painter.drawEllipse(center, 25, 25)
-        painter.setBrush(QColor(255, 255, 255, 150))
-        painter.drawEllipse(QPointF(center.x() - 8, center.y() - 10), 6, 6)
-        for i, color in enumerate((QColor(255, 255, 255, 235), QColor(205, 245, 255, 225), QColor(255, 215, 245, 225))):
-            angle = math.radians(phase * 4 + i * 120)
-            radius = 16 + 3 * math.sin(math.radians(phase * 5 + i * 70))
-            dot = QPointF(center.x() + math.cos(angle) * radius, center.y() + math.sin(angle) * radius)
-            painter.setBrush(color)
-            painter.drawEllipse(dot, 3.5, 3.5)
-
     def changeEvent(self, event):
-        if event.type() == QEvent.ActivationChange and not self.isActiveWindow() and not self.is_thinking:
+        if event.type() == QEvent.ActivationChange and not self.isActiveWindow():
             self.close()
         super().changeEvent(event)
-
-    def closeEvent(self, event):
-        if self.thinking_timer is not None:
-            self.thinking_timer.stop()
-            self.thinking_timer = None
-        super().closeEvent(event)
 
     def keyPressEvent(self, event: QKeyEvent):
         if event.key() == Qt.Key_Escape:

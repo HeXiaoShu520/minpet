@@ -54,7 +54,7 @@ DEFAULT_LLM_CONFIG = {
     'api_base': 'https://api.openai.com/v1',
     'api_key': '',
     'model': 'gpt-4o-mini',
-    'max_tokens': 1024,
+    'memory_turns': 10,
     'system_prompt': '你是一只可爱的桌面宠物，性格活泼亲切，会用简短、口语化、带点撒娇的语气陪伴主人聊天。',
 }
 
@@ -66,12 +66,6 @@ DEFAULT_TTS_CONFIG = {
     'test_text': '',
     'disable_emoji_filter': True,
     'max_length_to_filter_parenthesis': 100,
-}
-
-DEFAULT_CHAT_RESTORE_CONFIG = {
-    'enabled': True,     # 启动时是否恢复上次对话
-    'max_messages': 20,  # 最多加载最近多少条消息
-    'max_days': 1,       # 最多往前追溯多少天
 }
 
 DEFAULT_VOICE_CHAT_CONFIG = {
@@ -100,12 +94,6 @@ WAKE_WORD_ENV_KEYS = {
     'restart_delay_ms': 'WAKE_WORD_RESTART_DELAY_MS',
 }
 
-CHAT_RESTORE_ENV_KEYS = {
-    'enabled': 'CHAT_RESTORE_ENABLED',
-    'max_messages': 'CHAT_RESTORE_MAX_MESSAGES',
-    'max_days': 'CHAT_RESTORE_MAX_DAYS',
-}
-
 APP_BASIC_ENV_KEYS = {
     'volume': 'APP_VOLUME',
     'scale': 'APP_SCALE',
@@ -126,20 +114,22 @@ TYPEWRITER_ENV_KEYS = {
 }
 
 DEFAULT_DOUBAO_CALL_CONFIG = {
-    'enabled': False,
-    'model': '1.2.1.1',
     'speaker': 'zh_female_vv_jupiter_bigtts',
-    'bot_name': 'miniPet',
-    'system_role': '你是一只可爱的桌面宠物，陪伴用户聊天，回答要简短自然。',
-    'speaking_style': '语气活泼、亲切、口语化。',
 }
 
 LLM_ENV_KEYS = {
     'api_base': 'LLM_API_BASE',
     'api_key': 'LLM_API_KEY',
     'model': 'LLM_MODEL',
-    'max_tokens': 'LLM_MAX_TOKENS',
+    'memory_turns': 'LLM_MEMORY_TURNS',
     'system_prompt': 'LLM_SYSTEM_PROMPT',
+}
+
+LLM_LEGACY_ENV_KEYS = {
+    'LLM_MAX_TOKENS',
+    'CHAT_RESTORE_ENABLED',
+    'CHAT_RESTORE_MAX_MESSAGES',
+    'CHAT_RESTORE_MAX_DAYS',
 }
 
 TTS_ENV_KEYS = {
@@ -151,12 +141,24 @@ TTS_ENV_KEYS = {
 }
 
 DOUBAO_CALL_ENV_KEYS = {
-    'enabled': 'DOUBAO_CALL_ENABLED',
-    'model': 'DOUBAO_CALL_MODEL',
     'speaker': 'DOUBAO_CALL_SPEAKER',
-    'bot_name': 'DOUBAO_CALL_BOT_NAME',
-    'system_role': 'DOUBAO_CALL_SYSTEM_ROLE',
-    'speaking_style': 'DOUBAO_CALL_SPEAKING_STYLE',
+}
+
+DOUBAO_CALL_LEGACY_ENV_KEYS = {
+    'DOUBAO_CALL_ENABLED',
+    'DOUBAO_CALL_MODEL',
+    'DOUBAO_CALL_BOT_NAME',
+    'DOUBAO_CALL_SYSTEM_ROLE',
+    'DOUBAO_CALL_SPEAKING_STYLE',
+    'CHAT_RESTORE_ENABLED',
+    'CHAT_RESTORE_MAX_MESSAGES',
+    'CHAT_RESTORE_MAX_DAYS',
+    'REALTIME_ENABLED',
+    'REALTIME_MODEL',
+    'REALTIME_SPEAKER',
+    'REALTIME_BOT_NAME',
+    'REALTIME_SYSTEM_ROLE',
+    'REALTIME_SPEAKING_STYLE',
 }
 
 app_config = dict(DEFAULT_APP_CONFIG)
@@ -165,7 +167,6 @@ tts_config = dict(DEFAULT_TTS_CONFIG)
 doubao_call_config = dict(DEFAULT_DOUBAO_CALL_CONFIG)
 voice_chat_config = dict(DEFAULT_VOICE_CHAT_CONFIG)
 typewriter_config = dict(DEFAULT_TYPEWRITER_CONFIG)
-chat_restore_config = dict(DEFAULT_CHAT_RESTORE_CONFIG)
 wake_word_config = dict(DEFAULT_WAKE_WORD_CONFIG)
 
 # 桌宠窗口运行态。历史代码直接从 config 模块读写这些状态，先保留集中入口。
@@ -299,7 +300,7 @@ def _load_env_config(defaults, env_keys):
     return cfg
 
 
-def _save_env_config(config_data, env_keys, defaults, section_title):
+def _save_env_config(config_data, env_keys, defaults, section_title, extra_managed_keys=None):
     """
     将一组配置写回 .env，同时保留其他未知配置项。
 
@@ -311,6 +312,8 @@ def _save_env_config(config_data, env_keys, defaults, section_title):
         existing = ENV_FILE.read_text(encoding='utf-8').splitlines()
 
     managed_keys = set(env_keys.values())
+    if extra_managed_keys:
+        managed_keys.update(extra_managed_keys)
     kept = []
     for line in existing:
         stripped = line.strip()
@@ -333,7 +336,7 @@ def _save_env_config(config_data, env_keys, defaults, section_title):
 
 def load():
     """加载所有配置，并初始化当前宠物等运行时状态。"""
-    global app_config, llm_config, tts_config, doubao_call_config, voice_chat_config, typewriter_config, chat_restore_config, wake_word_config, current_pet
+    global app_config, llm_config, tts_config, doubao_call_config, voice_chat_config, typewriter_config, wake_word_config, current_pet
     ensure_data_dir()
     pets = get_pet_list()
 
@@ -366,7 +369,6 @@ def load():
     doubao_call_config = _load_env_config(DEFAULT_DOUBAO_CALL_CONFIG, DOUBAO_CALL_ENV_KEYS)
     voice_chat_config = _load_env_config(DEFAULT_VOICE_CHAT_CONFIG, VOICE_CHAT_ENV_KEYS)
     typewriter_config = _load_env_config(DEFAULT_TYPEWRITER_CONFIG, TYPEWRITER_ENV_KEYS)
-    chat_restore_config = _load_env_config(DEFAULT_CHAT_RESTORE_CONFIG, CHAT_RESTORE_ENV_KEYS)
     wake_word_config = _load_env_config(DEFAULT_WAKE_WORD_CONFIG, WAKE_WORD_ENV_KEYS)
     save_app_config()
 
@@ -381,7 +383,7 @@ def save_llm_config(config):
     """保存大模型配置到 .env。"""
     global llm_config
     llm_config = dict(config)
-    _save_env_config(llm_config, LLM_ENV_KEYS, DEFAULT_LLM_CONFIG, '# MINIPET LLM settings')
+    _save_env_config(llm_config, LLM_ENV_KEYS, DEFAULT_LLM_CONFIG, '# MINIPET LLM settings', LLM_LEGACY_ENV_KEYS)
 
 
 def save_tts_config(config):
@@ -399,10 +401,10 @@ def save_typewriter_config(config):
 
 
 def save_doubao_call_config(config):
-    """保存豆包 豆包通话配置到 .env。"""
+    """保存豆包通话音色配置到 .env。"""
     global doubao_call_config
     doubao_call_config = dict(config)
-    _save_env_config(doubao_call_config, DOUBAO_CALL_ENV_KEYS, DEFAULT_DOUBAO_CALL_CONFIG, '# MINIPET DoubaoCall settings')
+    _save_env_config(doubao_call_config, DOUBAO_CALL_ENV_KEYS, DEFAULT_DOUBAO_CALL_CONFIG, '# MINIPET DoubaoCall settings', DOUBAO_CALL_LEGACY_ENV_KEYS)
 
 
 def save_voice_chat_config(config):
@@ -410,13 +412,6 @@ def save_voice_chat_config(config):
     global voice_chat_config
     voice_chat_config = dict(config)
     _save_env_config(voice_chat_config, VOICE_CHAT_ENV_KEYS, DEFAULT_VOICE_CHAT_CONFIG, '# MINIPET VoiceChat settings')
-
-
-def save_chat_restore_config(config):
-    """保存启动恢复历史对话配置到 .env。"""
-    global chat_restore_config
-    chat_restore_config = dict(config)
-    _save_env_config(chat_restore_config, CHAT_RESTORE_ENV_KEYS, DEFAULT_CHAT_RESTORE_CONFIG, '# MINIPET ChatRestore settings')
 
 
 def save_wake_word_config(config):

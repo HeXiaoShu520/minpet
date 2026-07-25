@@ -61,6 +61,8 @@ CHANNELS = 1
 SAMPLE_WIDTH = 2
 INPUT_CHUNK_MS = 20
 INPUT_CHUNK_BYTES = int(INPUT_SAMPLE_RATE * INPUT_CHUNK_MS / 1000) * SAMPLE_WIDTH
+DOUBAO_CALL_MODEL = '1.2.1.1'
+DOUBAO_CALL_SPEAKING_STYLE = '语气活泼、亲切、口语化，回答简短自然。'
 
 
 class DoubaoCallError(Exception):
@@ -159,15 +161,14 @@ class DoubaoCallSession:
         return payload
 
     def _build_start_session_payload(self):
-        model = self.cfg.get('model') or config.DEFAULT_DOUBAO_CALL_CONFIG['model']
         dialog_extra = {
             'input_mod': 'keep_alive',
             'strict_audit': True,
             'enable_conversation_truncate': True,
             'enable_user_query_exit': True,
-            'model': model,
+            'model': DOUBAO_CALL_MODEL,
         }
-        if model == '1.2.1.1':
+        if DOUBAO_CALL_MODEL == '1.2.1.1':
             dialog_extra['enable_music'] = True
         return {
             'asr': {
@@ -182,9 +183,9 @@ class DoubaoCallSession:
                 },
             },
             'dialog': {
-                'bot_name': self.cfg.get('bot_name') or config.DEFAULT_DOUBAO_CALL_CONFIG['bot_name'],
-                'system_role': self.cfg.get('system_role') or config.DEFAULT_DOUBAO_CALL_CONFIG['system_role'],
-                'speaking_style': self.cfg.get('speaking_style') or config.DEFAULT_DOUBAO_CALL_CONFIG['speaking_style'],
+                'bot_name': config.current_pet or 'miniPet',
+                'system_role': (config.llm_config.get('system_prompt', '') or '').strip(),
+                'speaking_style': DOUBAO_CALL_SPEAKING_STYLE,
                 'dialog_id': self.dialog_id,
                 'extra': dialog_extra,
             },

@@ -14,7 +14,7 @@ import urllib.request
 import websockets
 from PySide6.QtCore import QThread, Signal
 
-from miniPet.protocols.protocol_v1 import SESSION_HELLO, USER_ACTION, hello_payload, normalize_inbound_event
+from miniPet.protocols.protocol_v1 import SESSION_HELLO, USER_INPUT, hello_payload, normalize_inbound_event
 
 
 class EventClient(QThread):
@@ -56,8 +56,7 @@ class EventClient(QThread):
                     await self._send({
                         'version': '1.0',
                         'type': SESSION_HELLO,
-                        'source': 'minipet',
-                        'payload': hello_payload('miniPet'),
+                        'payload': hello_payload(),
                     })
                     async for raw in ws:
                         if not self.running:
@@ -128,7 +127,6 @@ class EventClient(QThread):
         message = {
             'version': '1.0',
             'type': event_type,
-            'source': 'minipet',
             'payload': payload or {},
         }
         if request_id:
@@ -158,18 +156,11 @@ class EventClient(QThread):
             return False
 
     def execute_action(self, event, action):
-        surface_id = event.get('surface_id') or event.get('card_id') or event.get('confirm_id') or event.get('interaction_id')
-        action_id = action.get('id') or action.get('type')
-        payload = {
-            'surface_id': surface_id,
-            'action_id': action_id,
-            'intent': action.get('intent'),
-            'action': action,
-            'metadata': event.get('metadata') or {},
-        }
-        if event.get('values') is not None:
-            payload['values'] = event.get('values')
-        return self.send_event(USER_ACTION, payload)
+        action_text = action.get('label') or action.get('text') or action.get('id') or action.get('type') or '确认'
+        values = event.get('values')
+        if values:
+            action_text += '\n' + json.dumps(values, ensure_ascii=False)
+        return self.send_event(USER_INPUT, {'text': action_text})
 
     def set_url(self, url):
         self.url = url or self.default_url
