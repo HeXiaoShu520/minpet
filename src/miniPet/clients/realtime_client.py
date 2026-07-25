@@ -293,14 +293,15 @@ class RealtimeSession:
             elif packet.event == EVENT_TTS_ENDED:
                 asyncio.create_task(self._finish_tts_playback())
             elif packet.event == EVENT_CHAT_ENDED:
-                self._emit_status('回复结束')
                 if self.single_turn:
+                    self._emit_status('等待播放完成')
                     await self._wait_playback_done()
                     await self._send_json(EVENT_FINISH_SESSION, {})
                     await asyncio.sleep(0.1)
                     await self._send_json(EVENT_FINISH_CONNECTION, {})
                     self.closed = True
                     return
+                self._emit_status('回复结束')
             elif packet.event == EVENT_SESSION_CANCELED:
                 self._emit_status('会话已取消')
                 self.closed = True
