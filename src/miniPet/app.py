@@ -93,6 +93,7 @@ class MiniPetApp(QApplication):
         self.pet_voice_shared_screen = None  # 语音球屏幕共享
         self.wake_word_worker = None
         self.singing_worker = None
+        self.singing_text = ''
         self.is_quitting = False
 
         self.pet.show_settings.connect(self.settings.show_window)
@@ -337,6 +338,7 @@ class MiniPetApp(QApplication):
             self.singing_worker.finish()
             self.singing_worker.wait(1500)
             self.singing_worker = None
+            self.singing_text = ''
         stop_tts()
         self.pet.close_voice_popup()
         if not self.is_quitting:
@@ -409,6 +411,7 @@ class MiniPetApp(QApplication):
             'skip_welcome': True,
         })
         self.pet_voice_waiting_reply = True
+        self.singing_text = ''
         self.pet.update_voice_popup('speaking', '唱歌中')
         self._append_chat_message('user', user_text, 'voice_singing')
         self.singing_worker = RealtimeWorker(cfg, parent=self)
@@ -423,8 +426,10 @@ class MiniPetApp(QApplication):
             self.pet.update_voice_popup('speaking', text)
 
     def _on_singing_chat(self, text):
-        if text and self.pet_voice_active:
-            self.pet.update_voice_popup('speaking', text)
+        if not text or not self.pet_voice_active:
+            return
+        self.singing_text += text
+        self.pet.update_voice_popup('speaking', self.singing_text[-220:])
 
     def _on_singing_error(self, text):
         x, y = self.pet.bubble_anchor()
@@ -433,7 +438,10 @@ class MiniPetApp(QApplication):
             self.pet.update_voice_popup('error', str(text)[:60])
 
     def _on_singing_finished(self):
+        if self.singing_text.strip():
+            self._append_chat_message('assistant', self.singing_text.strip(), 'voice_singing')
         self.singing_worker = None
+        self.singing_text = ''
         if self.pet_voice_active:
             self._finish_voice_turn(delay_ms=800)
 
