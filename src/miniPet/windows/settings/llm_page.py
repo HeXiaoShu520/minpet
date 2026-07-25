@@ -18,13 +18,13 @@ class LLMPage(MiniPetScrollPage):
         cfg = config.llm_config
 
         self.apiGroup = SettingCardGroup('API 配置', self.scrollWidget)
-        self.providerCard = ComboSettingCard([('openai', 'OpenAI 兼容'), ('anthropic', 'Anthropic / Claude')], FIF.CLOUD, '服务商', '选择大模型 API 格式', self.apiGroup)
-        self.providerCard.setCurrentValue(cfg.get('provider', 'openai'))
-        self.apiBaseCard = LineEditSettingCard(FIF.GLOBE, 'API 地址', 'OpenAI 兼容接口地址，或 Anthropic 自定义 base_url', placeholder='https://api.openai.com/v1', parent=self.apiGroup)
+        self.providerCard = ComboSettingCard([('openai', 'OpenAI 兼容')], FIF.CLOUD, '接口类型', '当前仅支持 OpenAI 兼容 Chat Completions 接口', self.apiGroup)
+        self.providerCard.setCurrentValue('openai')
+        self.apiBaseCard = LineEditSettingCard(FIF.GLOBE, 'API 地址', 'OpenAI 兼容接口地址，例如 https://api.openai.com/v1', placeholder='https://api.openai.com/v1', parent=self.apiGroup)
         self.apiBaseCard.setText(cfg.get('api_base', ''))
         self.apiKeyCard = LineEditSettingCard(FIF.VPN, 'API Key', '密钥会保存在本地 .env', password=True, placeholder='sk-...', parent=self.apiGroup)
         self.apiKeyCard.setText(cfg.get('api_key', ''))
-        self.modelCard = LineEditSettingCard(FIF.ROBOT, '模型名称', '如 gpt-4o-mini / deepseek-chat / claude-sonnet-4-6', placeholder='gpt-4o-mini', parent=self.apiGroup)
+        self.modelCard = LineEditSettingCard(FIF.ROBOT, '模型名称', 'OpenAI 兼容模型名，如 gpt-4o-mini / deepseek-chat', placeholder='gpt-4o-mini', parent=self.apiGroup)
         self.modelCard.setText(cfg.get('model', ''))
         self.maxTokenCard = LineEditSettingCard(FIF.FONT_SIZE, '最大 Token', '单次回复的最大 token 数', placeholder='1024', parent=self.apiGroup)
         self.maxTokenCard.setText(cfg.get('max_tokens', 1024))
@@ -45,9 +45,8 @@ class LLMPage(MiniPetScrollPage):
             max_tokens = int(self.maxTokenCard.text() or 1024)
         except ValueError:
             max_tokens = 1024
-        provider = (self.providerCard.currentValue() or 'openai').lower()
         return {
-            'provider': provider,
+            'provider': 'openai',
             'api_base': self.apiBaseCard.text(),
             'api_key': self.apiKeyCard.text(),
             'model': self.modelCard.text(),
