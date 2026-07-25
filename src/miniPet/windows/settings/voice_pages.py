@@ -270,9 +270,9 @@ class RealtimePage(MiniPetScrollPage):
     def __init__(self, parent=None):
         super().__init__('豆包通话设置', parent, save_callback=lambda: self._save())
         cfg = config.realtime_config
-        self.apiGroup = SettingCardGroup('豆包 Realtime API', self.scrollWidget)
+        self.apiGroup = SettingCardGroup('豆包通话 API', self.scrollWidget)
         self.keyHintCard = SettingCard(FIF.VPN, '认证方式', '豆包通话复用语音设置里的 TTS API Key', self.apiGroup)
-        self.speakerCard = ComboSettingCard(REALTIME_VOICE_OPTIONS, FIF.PEOPLE, '音色', 'Realtime 语音回复使用的发音人', self.apiGroup)
+        self.speakerCard = ComboSettingCard(REALTIME_VOICE_OPTIONS, FIF.PEOPLE, '音色', '豆包通话语音回复使用的发音人', self.apiGroup)
         self.speakerCard.setCurrentValue(cfg.get('speaker', config.DEFAULT_REALTIME_CONFIG['speaker']))
         self.systemRoleCard = SettingCard(FIF.MESSAGE, '角色背景', 'O2.0 的 system_role', self.apiGroup)
         self.systemRoleEdit = QPlainTextEdit(self.systemRoleCard)

@@ -2,7 +2,7 @@
 """
 豆包 Realtime 通话窗口。
 
-这个模块只负责端到端实时通话的窗口表现：头像、状态、字幕、麦克风音量、
+这个模块只负责豆包通话的窗口表现：头像、状态、字幕、麦克风音量、
 屏幕共享选择和挂断/打断按钮。真正的 WebSocket 协议、音频采集和播放逻辑
 在 realtime_client.py 中实现。
 """
@@ -117,7 +117,7 @@ class MicLevelButton(QPushButton):
 
 
 class DoubaoCallWindow(QWidget):
-    """豆包端到端实时通话窗口。
+    """豆包端到端通话窗口。
 
     窗口维护 UI 状态和 RealtimeWorker 生命周期：开始录音、显示 ASR、追加 AI
     回复、控制静音、共享屏幕和安全关闭。append_message 用于把最终 ASR/回复写回

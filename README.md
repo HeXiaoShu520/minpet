@@ -1,6 +1,6 @@
 # miniPet
 
-miniPet 是一个独立桌面 AI 宠物应用。它由 MINIPET 简化整合而来，把桌宠窗口、动画、右键菜单、系统设置、AI 对话、语音播报、语音聊天、实时通话、通知气泡和外部事件接入统一收敛到 `miniPet/` 内，形成可以单独维护和发布的整体。
+miniPet 是一个独立桌面 AI 宠物应用。它由 MINIPET 简化整合而来，把桌宠窗口、动画、右键菜单、系统设置、AI 对话、语音播报、语音聊天、豆包通话、通知气泡和外部事件接入统一收敛到 `miniPet/` 内，形成可以单独维护和发布的整体。
 
 ## 参考
 基于呆啵宠物 DyberPet开发 https://github.com/ChaozhongLiu/DyberPet
@@ -117,10 +117,10 @@ DESKTOP_API_PORT=18889
   - 设置
   - 文本聊天
   - 语音聊天
-  - 实时通话
+  - 豆包通话
   - 退出
 - 右下角托盘菜单保留完整功能
-  - 设置、聊天、语音聊天、实时通话、动作播放、角色切换、找回宠物、退出
+  - 设置、聊天、语音聊天、豆包通话、动作播放、角色切换、找回宠物、退出
 
 ### AI 文本聊天
 
@@ -181,7 +181,7 @@ wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async
 volc.seedasr.sauc.duration
 ```
 
-### 实时通话（豆包端到端模式）
+### 豆包通话（豆包端到端模式）
 
 这是“豆包自己听、自己想、自己说”的低延迟模式。
 
@@ -231,7 +231,7 @@ volc.speech.dialog
 - 支持本地缓存预览音频
 - 支持语音聊天欢迎语缓存，缓存路径为 `data/tts_welcome/`
 - 普通文本聊天和语音聊天都会复用它播报回复
-- 普通 TTS 不使用双向长连接；双向链路只保留在“实时通话”端到端模式中
+- 普通 TTS 不使用双向长连接；双向链路只保留在“豆包通话”端到端模式中
 
 当前 TTS 接口：
 
@@ -314,7 +314,7 @@ widgets.pet_voice_popup.PetVoicePopup
 → clients.asr_client.AsrWorker → 命中唱歌意图
 → clients.realtime_client.RealtimeWorker 单次文本任务 → O2.0 enable_music 音频流 → 播放
 
-实时通话：
+豆包通话：
 windows.doubao_call_window.DoubaoCallWindow
 → clients.realtime_client.RealtimeWorker → 豆包端到端 WebSocket → 远端音频流 → 播放
 
@@ -403,9 +403,9 @@ WAKE_WORDS=小月小月
 - `WAKE_WORD_ENABLED` 开启后，语音球打开时使用本地 Vosk 模型监听唤醒词，不调用火山 ASR
 - Vosk 中文小模型固定读取 `data/vosk/vosk-model-small-cn-0.22`
 
-### 实时通话配置
+### 豆包通话配置
 
-实时通话配置也从 `.env` 读取，并可在设置页保存。设置页只暴露音色、角色背景和说话风格；实时通话入口不再依赖单独的启用开关，模型固定为 O2.0 通用对话 `1.2.1.1`。
+豆包通话配置也从 `.env` 读取，并可在设置页保存。设置页只暴露音色、角色背景和说话风格；豆包通话入口不再依赖单独的启用开关，模型固定为 O2.0 通用对话 `1.2.1.1`。
 
 ```text
 REALTIME_ENABLED=true
@@ -428,7 +428,7 @@ REALTIME_SPEAKING_STYLE=语气活泼、亲切、口语化。
 - 快速输入浮层粘贴图片后显示缩略图预览
 - 图片编码统一改为 JPEG 85 质量压缩，避免超出 5MB 限制
 - 接入豆包端到端 Realtime WebSocket
-- 新增 `实时通话` 功能
+- 新增 `豆包通话` 功能
 - 将 Realtime 鉴权改为复用 `TTS_API_KEY`
 - 修正 Realtime 连接事件帧，不再在二进制 optional 里重复写 `connect_id`
 - 新增纯净通话 UI
@@ -438,9 +438,9 @@ REALTIME_SPEAKING_STYLE=语气活泼、亲切、口语化。
 - 新增 `语音聊天` 功能：ASR → 本地 LLM → TTS
 - 保留两种语音模式：豆包端到端模式与本地 AI 模式
 - 语音聊天新增欢迎语缓存播放，先播欢迎词再开始语音识别
-- 语音聊天和实时通话都支持播放时打断当前语音输出
+- 语音聊天和豆包通话都支持播放时打断当前语音输出
 - 调整通话窗口字幕：用户识别文本显示在状态行，AI 回复显示在下方区域
-- 调整实时通话设置页，固定 O2.0 模型并精简启用、模型和 Bot 名称配置项
+- 调整豆包通话设置页，固定 O2.0 模型并精简启用、模型和 Bot 名称配置项
 - 基础设置头像选择增加图片预览
 - 新增自动总结重点管理
 - 去掉默认历史记录逻辑，只保留当前运行短期上下文和自动总结重点
