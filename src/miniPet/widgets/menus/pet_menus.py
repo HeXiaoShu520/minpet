@@ -409,6 +409,7 @@ class PetQuickMenu(QFrame):
         voice_chat_btn.setToolTip('语音球')
         share_screen_btn.setToolTip('共享屏幕（语音时附带截图）')
         share_screen_btn.setChecked(share_screen_active)
+        share_screen_btn.setVisible(config.SCREEN_SHARE_ENABLED)
         voice_chat_btn.setChecked(voice_chat_active)
         quit_btn.setToolTip('退出')
 

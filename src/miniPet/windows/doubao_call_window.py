@@ -227,6 +227,7 @@ class DoubaoCallWindow(QWidget):
         controls.setSpacing(34)
         controls.addStretch(1)
         self.share_btn = self._tool_button(QIcon(str(config.RES_DIR / 'icons' / 'system' / 'screen_share.svg')), '共享屏幕', checkable=True)
+        self.share_btn.setVisible(config.SCREEN_SHARE_ENABLED)
         self.mic_btn = MicLevelButton(FIF.MICROPHONE.icon(), self)
         self.end_btn = EndCallButton(self)
         controls.addWidget(self.share_btn)
@@ -372,6 +373,9 @@ class DoubaoCallWindow(QWidget):
             self._start_recording()
 
     def _share_screen(self):
+        if not config.SCREEN_SHARE_ENABLED:
+            self.share_btn.setChecked(False)
+            return
         screens = QApplication.screens()
         if self.shared_screen is not None:
             self.shared_screen = None

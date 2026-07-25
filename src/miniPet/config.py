@@ -24,6 +24,7 @@ AVATARS_DIR = DATA_DIR / 'avatars'
 SETTINGS_FILE = DATA_DIR / 'minipet_settings.json'
 ENV_FILE = ROOT_DIR / '.env'
 DEFAULT_THEME_COLOR = '#009faa'
+SCREEN_SHARE_ENABLED = False
 
 TRUE_VALUES = {'1', 'true', 'yes', 'on'}
 FALSE_VALUES = {'0', 'false', 'no', 'off'}

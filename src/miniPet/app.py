@@ -406,6 +406,9 @@ class MiniPetApp(QApplication):
             QTimer.singleShot(int(config.wake_word_config.get('restart_delay_ms') or 1200), self._resume_wake_word_listener)
 
     def _on_voice_share_screen_toggled(self, enabled):
+        if not config.SCREEN_SHARE_ENABLED:
+            self.pet_voice_shared_screen = None
+            return
         if enabled:
             screen = QApplication.primaryScreen()
             self.pet_voice_shared_screen = screen
@@ -413,6 +416,8 @@ class MiniPetApp(QApplication):
             self.pet_voice_shared_screen = None
 
     def _capture_voice_screenshot(self):
+        if not config.SCREEN_SHARE_ENABLED:
+            return ''
         import base64
         from PySide6.QtCore import QByteArray, QBuffer, QIODevice
         from PySide6.QtCore import Qt as _Qt
