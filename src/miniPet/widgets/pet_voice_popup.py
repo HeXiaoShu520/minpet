@@ -77,10 +77,10 @@ class VoiceOrbWidget(QWidget):
     def _tick_ripples(self):
         # 推进所有涟漪，progress 0.0→1.0
         self._ripples = [p + 0.022 for p in self._ripples if p + 0.022 < 1.0]
-        # listening/speaking 状态每隔一定 tick 生成新涟漪，最多同时 3 个
-        if self.state in ('listening', 'speaking'):
+        # listening/speaking/wakeup 状态每隔一定 tick 生成新涟漪，最多同时 3 个
+        if self.state in ('listening', 'speaking', 'wakeup'):
             self._ripple_tick += 1
-            interval = 22 if self.state == 'listening' else 18
+            interval = 28 if self.state == 'wakeup' else (22 if self.state == 'listening' else 18)
             if self._ripple_tick >= interval and len(self._ripples) < 3:
                 self._ripples.append(0.0)
                 self._ripple_tick = 0
@@ -118,6 +118,8 @@ class VoiceOrbWidget(QWidget):
         icon_rect = QRectF(0, 0, self.icon_area_width, self.height()).adjusted(4, 4, -4, -4)
         if self.state == 'listening':
             self._paint_listening(painter, icon_rect)
+        elif self.state == 'wakeup':
+            self._paint_wakeup(painter, icon_rect)
         elif self.state == 'thinking':
             self._paint_thinking(painter, icon_rect)
         elif self.state == 'speaking':
@@ -170,6 +172,8 @@ class VoiceOrbWidget(QWidget):
             return QColor(255, 244, 244, 245), QColor(255, 150, 140, 235)
         if self.state == 'idle':
             return self._color('bg'), self._color('border')
+        if self.state == 'wakeup':
+            return self._color('bg'), self._color('ring', 245)
         return self._color('bg'), self._color('border')
 
     def _paint_text(self, painter):
@@ -202,6 +206,23 @@ class VoiceOrbWidget(QWidget):
             x = start_x + i * (bar_w + gap)
             y = center_y - height / 2
             painter.drawRoundedRect(QRectF(x, y, bar_w, height), 2, 2)
+
+    def _paint_wakeup(self, painter, rect):
+        center = rect.center()
+        pulse = (math.sin(self.phase * 0.42) + 1) / 2
+        outer_radius = 12 + pulse * 3
+        painter.setPen(QPen(self._color('ring', 120 - int(pulse * 45)), 2.0))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawEllipse(QRectF(center.x() - outer_radius, center.y() - outer_radius, outer_radius * 2, outer_radius * 2))
+        painter.setPen(QPen(self._color('wave', 210), 2.3))
+        arc_rect = QRectF(center.x() - 8.5, center.y() - 8.5, 17, 17)
+        start = int((self.phase * 18) % 360) * 16
+        painter.drawArc(arc_rect, start, 250 * 16)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(self._color('core')))
+        painter.drawEllipse(QRectF(center.x() - 4.2, center.y() - 4.2, 8.4, 8.4))
+        painter.setBrush(QBrush(self._color('core2')))
+        painter.drawEllipse(QRectF(center.x() - 1.8, center.y() - 1.8, 3.6, 3.6))
 
     def _paint_thinking(self, painter, rect):
         painter.setPen(Qt.NoPen)
@@ -400,6 +421,7 @@ class PetVoicePopup(QFrame):
             'listening': '正在听你说话',
             'thinking': '正在思考',
             'speaking': '正在播放回复',
+            'wakeup': '等待唤醒词',
             'idle': '语音聊天已结束',
             'error': '语音聊天出错',
         }

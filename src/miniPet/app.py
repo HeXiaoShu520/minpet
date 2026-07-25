@@ -7,6 +7,7 @@ MiniPetApp 是整个桌宠程序的协调层，负责把桌宠窗口、设置窗
 分散在各自模块中，这里只保留跨模块流程编排。
 """
 
+import hashlib
 import json
 import re
 import signal
@@ -28,12 +29,13 @@ from miniPet.storage.memory_store import MEMORY_CATEGORIES, MemoryStore
 from miniPet.widgets.notifications.center import NotificationCenter
 from miniPet.protocols.protocol_v1 import AGENT_STATE, SESSION_PING, SESSION_PONG, SESSION_READY, SURFACE_KINDS, SURFACE_SHOW, SURFACE_UPDATE, USER_COMMAND, USER_DROP, USER_INPUT, V1_CAPABILITIES, normalize_inbound_event
 from miniPet.settings_window import SettingsWindow
-from miniPet.clients.tts_client import TtsPreviewWorker, TtsWorker, stop_tts
+from miniPet.clients.tts_client import TtsCacheWorker, TtsPreviewWorker, TtsWorker, stop_tts
 from miniPet.clients.wake_word_client import WakeWordWorker
 from miniPet.clients.realtime_client import RealtimeWorker
 
 
 SINGING_KEYWORDS = ('唱歌', '唱个歌', '唱首歌', '唱一首', '来首歌', '来一首', '唱两句', '哼一段', '哼首歌')
+WAKE_ACK_TEXTS = ('哎？', '我在呢。', '怎么啦？')
 
 
 class MiniPetApp(QApplication):
@@ -94,6 +96,9 @@ class MiniPetApp(QApplication):
         self.wake_word_worker = None
         self.singing_worker = None
         self.singing_text = ''
+        self.wake_ack_worker = None
+        self.wake_ack_pending_start = False
+        self.wake_ack_index = 0
         self.is_quitting = False
 
         self.pet.show_settings.connect(self.settings.show_window)
@@ -202,9 +207,35 @@ class MiniPetApp(QApplication):
         if self.is_quitting or not self.pet_voice_active or self.pet_voice_listening or self.pet_voice_waiting_reply:
             return
         self._pause_wake_word_listener()
-        x, y = self.pet.bubble_anchor()
-        self.note.setup_bubble('我在，开始听你说。', x, y, 2600, title=config.current_pet or '宠物')
-        self._start_pet_voice_chat_once('wake_word')
+        self._play_wake_ack_then_start()
+
+    def _wake_ack_path(self, text):
+        voice_name = config.tts_config.get('voice_name') or config.DEFAULT_TTS_CONFIG['voice_name']
+        safe_voice = ''.join(ch if ch.isalnum() or ch in ('-', '_') else '_' for ch in voice_name)
+        digest = hashlib.sha1(text.encode('utf-8')).hexdigest()[:10]
+        return config.DATA_DIR / 'tts_wake_ack' / ('%s_%s.pcm' % (safe_voice, digest))
+
+    def _play_wake_ack_then_start(self):
+        if not self.pet_voice_active or self.wake_ack_worker is not None:
+            return
+        text = WAKE_ACK_TEXTS[self.wake_ack_index % len(WAKE_ACK_TEXTS)]
+        self.wake_ack_index += 1
+        cfg = dict(config.tts_config)
+        cfg['enabled'] = True
+        self.wake_ack_pending_start = True
+        self.pet.update_voice_popup('thinking', '')
+        stop_tts()
+        self.wake_ack_worker = TtsCacheWorker(text, cfg, self._wake_ack_path(text), parent=self)
+        self.wake_ack_worker.result_ready.connect(self._on_wake_ack_done)
+        self.wake_ack_worker.start()
+
+    def _on_wake_ack_done(self, success, text):
+        if not success:
+            print('Wake ack TTS failed:', text)
+        self.wake_ack_worker = None
+        if self.wake_ack_pending_start and self.pet_voice_active and not self.pet_voice_paused:
+            self.wake_ack_pending_start = False
+            self._start_pet_voice_chat_once('wake_word')
 
     def _on_wake_word_status(self, text):
         if text and text not in ('等待唤醒词',):
@@ -279,7 +310,7 @@ class MiniPetApp(QApplication):
         self.pet_voice_waiting_reply = False
         self.pet_voice_paused = False
         if self._wake_word_enabled() and trigger != 'wake_word':
-            self.pet.update_voice_popup('idle', '等待“小月小月”')
+            self.pet.update_voice_popup('wakeup', '')
             self._apply_wake_word_settings()
             return
         self._pause_wake_word_listener()
@@ -334,6 +365,11 @@ class MiniPetApp(QApplication):
             self.pet_voice_asr_worker.finish()
             self.pet_voice_asr_worker.wait(1200)
             self.pet_voice_asr_worker = None
+        if self.wake_ack_worker is not None:
+            self.wake_ack_pending_start = False
+            stop_tts()
+            self.wake_ack_worker.wait(1200)
+            self.wake_ack_worker = None
         if self.singing_worker is not None:
             self.singing_worker.finish()
             self.singing_worker.wait(1500)
@@ -777,7 +813,7 @@ class MiniPetApp(QApplication):
             return
         self.pet_voice_paused = False
         if self._wake_word_enabled():
-            self.pet.update_voice_popup('idle', '等待“小月小月”')
+            self.pet.update_voice_popup('wakeup', '')
             QTimer.singleShot(int(config.wake_word_config.get('restart_delay_ms') or 1200), self._resume_wake_word_listener)
         else:
             self.pet.update_voice_popup('idle', '')
@@ -1073,7 +1109,7 @@ class MiniPetApp(QApplication):
             self.pet_voice_asr_worker.finish()
             self.pet_voice_asr_worker.wait(1500)
             self.pet_voice_asr_worker = None
-        for worker_name in ('quick_chat_worker', 'quick_tts_worker', 'event_tts_worker', 'memory_worker', 'singing_worker'):
+        for worker_name in ('quick_chat_worker', 'quick_tts_worker', 'event_tts_worker', 'memory_worker', 'singing_worker', 'wake_ack_worker'):
             worker = getattr(self, worker_name, None)
             if worker is not None and worker.isRunning():
                 worker.requestInterruption()
