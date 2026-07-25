@@ -10,7 +10,6 @@ from miniPet import config
 from miniPet.protocol_test_page import ProtocolTestPage
 from miniPet.windows.settings.basic_pages import AgentPage, BasicPage
 from miniPet.windows.settings.llm_page import LLMPage
-from miniPet.windows.settings.resource_page import RoleToolsPage
 from miniPet.windows.settings.role_page import RolePage
 from miniPet.windows.settings.voice_pages import DoubaoCallPage, ReplyDisplayPage, TTSPage
 
@@ -45,8 +44,6 @@ class SettingsWindow(FluentWindow):
         self.reply_display.setObjectName('ReplyDisplayPage')
         self.doubao_call = DoubaoCallPage(self)
         self.doubao_call.setObjectName('DoubaoCallPage')
-        self.role_tools = RoleToolsPage(self)
-        self.role_tools.setObjectName('RoleToolsPage')
         self.protocol_test = ProtocolTestPage(self)
         self.protocol_test.setObjectName('ProtocolTestPage')
         self.basic.settings_changed.connect(self.settings_changed)
@@ -61,7 +58,6 @@ class SettingsWindow(FluentWindow):
         self.addSubInterface(self.tts, FIF.VOLUME, '语音')
         self.addSubInterface(self.reply_display, FIF.MESSAGE, '回复显示')
         self.addSubInterface(self.doubao_call, FIF.PHONE, '豆包通话')
-        self.addSubInterface(self.role_tools, _icon('minipet.svg'), '角色资源')
         self.addSubInterface(self.protocol_test, FIF.DEVELOPER_TOOLS, '协议测试')
         self.navigationInterface.setExpandWidth(180)
         self.navigationInterface.setMinimumExpandWidth(180)
