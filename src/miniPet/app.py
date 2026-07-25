@@ -8,6 +8,7 @@ MiniPetApp 是整个桌宠程序的协调层，负责把桌宠窗口、设置窗
 """
 
 import json
+import re
 import signal
 import sys
 from datetime import datetime, timedelta
@@ -32,7 +33,7 @@ from miniPet.clients.wake_word_client import WakeWordWorker
 from miniPet.clients.realtime_client import RealtimeWorker
 
 
-SINGING_KEYWORDS = ('唱歌', '唱一首', '来首歌', '唱两句', '哼一段', '哼首歌')
+SINGING_KEYWORDS = ('唱歌', '唱个歌', '唱一首', '来首歌', '来一首', '唱两句', '哼一段', '哼首歌')
 
 
 class MiniPetApp(QApplication):
@@ -392,7 +393,8 @@ class MiniPetApp(QApplication):
                 QTimer.singleShot(800, self._start_pet_voice_recording)
 
     def _is_singing_request(self, text):
-        return any(keyword in (text or '') for keyword in SINGING_KEYWORDS)
+        normalized = re.sub(r'[\s，。！？!?、,.；;：:~～“”"\'（）()【】\[\]{}]+', '', text or '')
+        return any(keyword in normalized for keyword in SINGING_KEYWORDS)
 
     def _start_singing_once(self, user_text):
         if self.singing_worker is not None:
