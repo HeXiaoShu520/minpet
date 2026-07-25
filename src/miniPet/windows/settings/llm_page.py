@@ -8,7 +8,7 @@ from qfluentwidgets import FluentIcon as FIF
 from miniPet import config
 from miniPet.base_page import MiniPetScrollPage
 from miniPet.clients.llm_client import ChatWorker
-from miniPet.widgets.setting_cards import ComboSettingCard, LineEditSettingCard
+from miniPet.widgets.setting_cards import LineEditSettingCard
 
 
 class LLMPage(MiniPetScrollPage):
@@ -18,8 +18,6 @@ class LLMPage(MiniPetScrollPage):
         cfg = config.llm_config
 
         self.apiGroup = SettingCardGroup('API 配置', self.scrollWidget)
-        self.providerCard = ComboSettingCard([('openai', 'OpenAI 兼容')], FIF.CLOUD, '接口类型', '当前仅支持 OpenAI 兼容 Chat Completions 接口', self.apiGroup)
-        self.providerCard.setCurrentValue('openai')
         self.apiBaseCard = LineEditSettingCard(FIF.GLOBE, 'API 地址', 'OpenAI 兼容接口地址，例如 https://api.openai.com/v1', placeholder='https://api.openai.com/v1', parent=self.apiGroup)
         self.apiBaseCard.setText(cfg.get('api_base', ''))
         self.apiKeyCard = LineEditSettingCard(FIF.VPN, 'API Key', '密钥会保存在本地 .env', password=True, placeholder='sk-...', parent=self.apiGroup)
@@ -36,7 +34,7 @@ class LLMPage(MiniPetScrollPage):
         self.actionCard.hBoxLayout.addSpacing(16)
         self.testBtn.clicked.connect(self._test)
 
-        for card in [self.providerCard, self.apiBaseCard, self.apiKeyCard, self.modelCard, self.maxTokenCard, self.actionCard]:
+        for card in [self.apiBaseCard, self.apiKeyCard, self.modelCard, self.maxTokenCard, self.actionCard]:
             self.apiGroup.addSettingCard(card)
         self.expandLayout.addWidget(self.apiGroup)
 
@@ -46,7 +44,6 @@ class LLMPage(MiniPetScrollPage):
         except ValueError:
             max_tokens = 1024
         return {
-            'provider': 'openai',
             'api_base': self.apiBaseCard.text(),
             'api_key': self.apiKeyCard.text(),
             'model': self.modelCard.text(),

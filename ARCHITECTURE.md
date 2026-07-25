@@ -25,7 +25,7 @@ miniPet QApplication
 
 ```text
 clients/
-  llm_client.py        # OpenAI/Anthropic 聊天客户端，支持流式 delta
+  llm_client.py        # OpenAI 兼容聊天客户端，支持流式 delta
   tts_client.py        # 火山豆包 TTS WebSocket 与 PCM 播放
   asr_client.py        # 火山豆包 ASR WebSocket 与麦克风采集
   doubao_call_client.py   # 豆包端到端 豆包通话 WebSocket、麦克风和远端音频

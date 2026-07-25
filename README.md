@@ -153,7 +153,7 @@ DESKTOP_API_PORT=18889
 
 - 使用火山豆包纯 ASR 服务，只做语音转文字
 - 复用 `TTS_API_KEY` 鉴权
-- 使用当前 `LLM_PROVIDER / LLM_API_BASE / LLM_MODEL` 配置生成回复
+- 使用当前 `LLM_API_BASE / LLM_MODEL` 配置生成回复
 - 能吃到 miniPet 的角色设定和本地聊天上下文
 - 菜单语音入口会打开语音球；语音球存在时才启用语音功能
 - 可选离线唤醒词监听：打开语音球后，本地 Vosk 小模型识别“小月小月”，命中后再打开火山流式 ASR，避免云端 ASR 常驻计费
@@ -194,7 +194,7 @@ volc.seedasr.sauc.duration
 特点：
 
 - 低延迟，更接近豆包原生通话体验
-- 不走本地 LLM，因此不会使用 miniPet 配置的 OpenAI/Claude/DeepSeek 等模型
+- 不走本地 LLM，因此不会使用 miniPet 配置的 OpenAI 兼容模型
 - 适合快速闲聊或备用通话
 - 复用 `TTS_API_KEY` 鉴权
 - 默认固定使用 O2.0 通用对话模型 `1.2.1.1`
@@ -344,7 +344,6 @@ miniPet/data/minipet_settings.json
 大模型配置从环境变量或 `.env` 读取，并可在设置页保存。
 
 ```text
-LLM_PROVIDER=openai
 LLM_API_BASE=https://api.openai.com/v1
 LLM_API_KEY=
 LLM_MODEL=gpt-4o-mini
@@ -352,10 +351,7 @@ LLM_MAX_TOKENS=1024
 LLM_SYSTEM_PROMPT=你是一只可爱的桌面宠物，性格活泼亲切，会用简短、口语化、带点撒娇的语气陪伴主人聊天。
 ```
 
-`LLM_PROVIDER` 可选：
-
-- `openai`：OpenAI 兼容 Chat Completions API
-- `anthropic`：Claude 原生 Messages API
+当前仅支持 OpenAI 兼容 Chat Completions API。
 
 ### 语音配置
 
@@ -403,7 +399,6 @@ DOUBAO_CALL_SPEAKING_STYLE=语气活泼、亲切、口语化。
 
 ## 这轮我们做了什么
 
-- 修复多模态图片消息链路：Anthropic 现在收到真实 base64 图片块，不再是占位文字
 - 快速输入浮层粘贴图片后显示缩略图预览
 - 图片编码统一改为 JPEG 85 质量压缩，避免超出 5MB 限制
 - 接入豆包端到端 豆包通话 WebSocket

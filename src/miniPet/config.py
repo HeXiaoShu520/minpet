@@ -51,7 +51,6 @@ DEFAULT_APP_CONFIG = {
 }
 
 DEFAULT_LLM_CONFIG = {
-    'provider': 'openai',
     'api_base': 'https://api.openai.com/v1',
     'api_key': '',
     'model': 'gpt-4o-mini',
@@ -136,7 +135,6 @@ DEFAULT_DOUBAO_CALL_CONFIG = {
 }
 
 LLM_ENV_KEYS = {
-    'provider': 'LLM_PROVIDER',
     'api_base': 'LLM_API_BASE',
     'api_key': 'LLM_API_KEY',
     'model': 'LLM_MODEL',
