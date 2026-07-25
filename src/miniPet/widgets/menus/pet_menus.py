@@ -376,7 +376,6 @@ class PetQuickMenu(QFrame):
             }
             QPushButton:hover { background: #eef6ff; }
             QPushButton:pressed { background: #dbeeff; }
-            QPushButton#ShareScreenBtn:checked { background: #dbeeff; }
             QPushButton#VoiceChatBtn:checked { background: #dff8ee; border: 1px solid #8bd8bc; }
             QPushButton#VoiceChatBtn:hover { background: #edf7ff; }
             QPushButton#VoiceChatBtn:checked:hover { background: #d3f2e7; }
@@ -391,36 +390,27 @@ class PetQuickMenu(QFrame):
         voice_chat_btn = QPushButton(card)
         voice_chat_btn.setObjectName('VoiceChatBtn')
         voice_chat_btn.setCheckable(True)
-        share_screen_btn = QPushButton(card)
-        share_screen_btn.setObjectName('ShareScreenBtn')
-        share_screen_btn.setCheckable(True)
         quit_btn = QPushButton(card)
         settings_btn.setIcon(FIF.SETTING.icon())
         chat_btn.setIcon(QIcon(str(config.RES_DIR / 'icons' / 'Dialogue_icon.png')))
         voice_chat_btn.setIcon(QIcon(str(config.RES_DIR / 'icons' / 'system' / 'voice_orb.svg')))
-        share_screen_btn.setIcon(QIcon(str(config.RES_DIR / 'icons' / 'system' / 'screen_share.svg')))
         quit_btn.setIcon(FIF.POWER_BUTTON.icon())
-        for btn in (settings_btn, chat_btn, share_screen_btn, voice_chat_btn, quit_btn):
+        for btn in (settings_btn, chat_btn, voice_chat_btn, quit_btn):
             btn.setIconSize(QSize(18, 18))
             btn.setFixedSize(30, 30)
         voice_chat_btn.setIconSize(QSize(24, 24))
         settings_btn.setToolTip('设置')
         chat_btn.setToolTip('聊天')
         voice_chat_btn.setToolTip('语音球')
-        share_screen_btn.setToolTip('共享屏幕（语音时附带截图）')
-        share_screen_btn.setChecked(share_screen_active)
-        share_screen_btn.setVisible(config.SCREEN_SHARE_ENABLED)
         voice_chat_btn.setChecked(voice_chat_active)
         quit_btn.setToolTip('退出')
 
         settings_btn.clicked.connect(lambda: self._trigger(on_settings))
         chat_btn.clicked.connect(lambda: self._trigger(on_chat))
         voice_chat_btn.clicked.connect(lambda: self._trigger(on_voice_chat))
-        share_screen_btn.clicked.connect(lambda checked: on_share_screen(checked))
         quit_btn.clicked.connect(lambda: self._trigger(on_quit))
         row.addWidget(settings_btn)
         row.addWidget(chat_btn)
-        row.addWidget(share_screen_btn)
         row.addWidget(voice_chat_btn)
         row.addWidget(quit_btn)
         outer = QHBoxLayout(self)

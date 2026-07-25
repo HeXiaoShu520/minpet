@@ -120,7 +120,7 @@ class DoubaoCallWindow(QWidget):
     """豆包端到端通话窗口。
 
     窗口维护 UI 状态和 DoubaoCallWorker 生命周期：开始录音、显示 ASR、追加 AI
-    回复、控制静音、共享屏幕和安全关闭。append_message 用于把最终 ASR/回复写回
+    回复、控制静音和安全关闭。append_message 用于把最终 ASR/回复写回
     主聊天历史。
     """
 
@@ -138,7 +138,6 @@ class DoubaoCallWindow(QWidget):
         self.input_level = 0
         self.mic_muted = False
         self.anim_index = 0
-        self.shared_screen = None
         self._drag_pos = None
         self._closing = False
         self.setWindowTitle('豆包通话')
@@ -226,17 +225,13 @@ class DoubaoCallWindow(QWidget):
         controls.setContentsMargins(18, 0, 18, 0)
         controls.setSpacing(34)
         controls.addStretch(1)
-        self.share_btn = self._tool_button(QIcon(str(config.RES_DIR / 'icons' / 'system' / 'screen_share.svg')), '共享屏幕', checkable=True)
-        self.share_btn.setVisible(config.SCREEN_SHARE_ENABLED)
         self.mic_btn = MicLevelButton(FIF.MICROPHONE.icon(), self)
         self.end_btn = EndCallButton(self)
-        controls.addWidget(self.share_btn)
         controls.addWidget(self.mic_btn)
         controls.addWidget(self.end_btn)
         controls.addStretch(1)
         root.addLayout(controls)
 
-        self.share_btn.clicked.connect(self._share_screen)
         self.mic_btn.clicked.connect(self._toggle_mute)
         self.interrupt_btn.clicked.connect(self._interrupt_speech)
         self.end_btn.clicked.connect(self._finish_session)
@@ -371,42 +366,6 @@ class DoubaoCallWindow(QWidget):
             self.worker.start_recording()
         else:
             self._start_recording()
-
-    def _share_screen(self):
-        if not config.SCREEN_SHARE_ENABLED:
-            self.share_btn.setChecked(False)
-            return
-        screens = QApplication.screens()
-        if self.shared_screen is not None:
-            self.shared_screen = None
-            self.share_btn.setChecked(False)
-            self._set_state('listening' if self.worker is not None else 'idle', '已停止共享屏幕')
-            return
-        if not screens:
-            self.share_btn.setChecked(False)
-            InfoBar.error('共享屏幕', '没有检测到可共享的屏幕', duration=3000, position=InfoBarPosition.BOTTOM, parent=self)
-            return
-        if len(screens) == 1:
-            self._select_screen(screens[0], 1)
-            return
-        self.share_btn.setChecked(False)
-        menu = QMenu(self)
-        for index, screen in enumerate(screens, 1):
-            geometry = screen.geometry()
-            name = screen.name() or ('屏幕 %d' % index)
-            text = '%s  %dx%d' % (name, geometry.width(), geometry.height())
-            action = menu.addAction(text)
-            action.triggered.connect(lambda checked=False, s=screen, i=index: self._select_screen(s, i))
-        menu.exec(self.share_btn.mapToGlobal(self.share_btn.rect().bottomLeft()))
-
-    def _select_screen(self, screen, index):
-        self.shared_screen = screen
-        self.share_btn.setChecked(True)
-        geometry = screen.geometry()
-        name = screen.name() or ('屏幕 %d' % index)
-        text = '已共享 %s（%dx%d）' % (name, geometry.width(), geometry.height())
-        self._set_state('listening' if self.worker is not None else 'idle', text)
-        InfoBar.success('共享屏幕', text, duration=2600, position=InfoBarPosition.BOTTOM, parent=self)
 
     def _finish_session(self):
         self._set_state('connecting', '正在挂断...')
@@ -543,7 +502,6 @@ class DoubaoCallWindow(QWidget):
                 pass
         self.mic_btn.setLevel(0)
         self.mic_btn.setMuted(False)
-        self.shared_screen = None
         self.current_asr = ''
         self.current_reply = ''
 
