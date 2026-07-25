@@ -3,14 +3,32 @@
 
 import re
 
-from PySide6.QtCore import QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, Qt, QTimer, Signal
-from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QButtonGroup, QCheckBox, QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton, QVBoxLayout
-from qfluentwidgets import TextWrap, TransparentToolButton
+from PySide6.QtCore import QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, QPoint, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPixmap
+from PySide6.QtWidgets import QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton, QVBoxLayout
+from qfluentwidgets import TransparentToolButton
 from qfluentwidgets import FluentIcon as FIF
 
 from miniPet import config
+from miniPet.clients.tts_client import stop_tts
+from miniPet.typewriter import Typewriter
 from miniPet.widgets.notifications.constants import BUBBLE_ANIM_IN_MS, BUBBLE_ANIM_MOVE_MS, BUBBLE_ANIM_OUT_MS, BUBBLE_ENTER_OFFSET, BUBBLE_EXIT_OFFSET, SMART_BUBBLE_TIMEOUT_MS
+
+SMART_BUBBLE_DEFAULT_WIDTH = 390
+SMART_BUBBLE_MIN_WIDTH = 360
+SMART_BUBBLE_MAX_WIDTH = 460
+
+
+def _markdown_to_html(text):
+    if not text:
+        return ''
+    html = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    html = re.sub(r'```([^`]+)```', r'<pre style="background:#f5f5f5;padding:8px;border-radius:4px;margin:4px 0;">\1</pre>', html, flags=re.DOTALL)
+    html = re.sub(r'`([^`]+)`', r'<code style="background:#f0f0f0;padding:2px 4px;border-radius:3px;">\1</code>', html)
+    html = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', html)
+    html = re.sub(r'\*([^*]+)\*', r'<i>\1</i>', html)
+    html = re.sub(r'\n\n+', '\n', html)
+    return html.replace('\n', '<br>')
 
 
 def _smart_bubble_style_qss(style):
@@ -28,11 +46,12 @@ def _smart_bubble_style_qss(style):
     box_bg = 'rgba(255,255,255,35)' if dark else '#ffffff'
     return f'''
             QFrame#SmartCard {{ border-radius: 22px; {card} }}
-            QFrame#SmartAccent {{ border: none; border-radius: 3px; background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #8fd3ff, stop:1 #c7a8ff); }}
             QFrame#SmartSectionBox {{ border: 1px solid rgba(222,231,255,180); border-radius: 14px; background: {box_bg}; }}
             QFrame#SmartHr {{ border: none; border-top: 1px solid rgba(180,190,215,130); background: transparent; max-height: 1px; }}
             QLabel {{ border: none; background: transparent; font-family: "Microsoft YaHei UI", "Microsoft YaHei"; }}
             QLabel#SmartTitle {{ color: {title}; font-size: 16px; font-weight: 700; }}
+            QLabel#SmartAvatar {{ border-radius: 17px; background: #e8f2ff; }}
+            QLabel#SmartStatus {{ color: {meta}; font-size: 12px; font-weight: 700; }}
             QLabel#SmartMeta, QLabel#SmartControlLabel, QLabel#SmartOptionDescription {{ color: {meta}; font-size: 12px; }}
             QLabel#SmartSummary, QLabel#SmartElement {{ color: {body}; font-size: 13px; line-height: 1.45; }}
             QRadioButton, QCheckBox {{ color: {body}; font: 13px "Microsoft YaHei UI"; background: transparent; border: none; }}
@@ -59,28 +78,34 @@ class SmartBubble(QFrame):
         self.closing = False
         self.closed_emitted = False
         self.control_widgets = {}
-        self._status_frames = ['·', '··', '···']
+        self._typewriters = []
+        self.dragging = False
+        self.drag_start_pos = QPoint()
+        self.drag_window_pos = QPoint()
+        self.manual_position = False
+        self._status_frames = ['', '.', '..', '...']
         self._status_frame = 0
         self._status_animating = False
+        self._primary_text = ''
+        self._primary_text_html = ''
+        self._primary_typewriter = None
+        self._body_structure_signature = None
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.NoDropShadowWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setWindowOpacity(0.0)
         self.setStyleSheet(_smart_bubble_style_qss(config.app_config.get('smart_bubble_style', 'aurora')))
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(34)
-        shadow.setOffset(0, 12)
-        shadow.setColor(QColor(94, 84, 135, 44))
-        self.setGraphicsEffect(shadow)
+        # 顶层透明窗口叠加 QGraphicsDropShadowEffect 在 Windows 多屏/缩放环境下
+        # 容易产生负 dirty rect，触发 UpdateLayeredWindowIndirect 参数错误。
+        # 卡片本身已有边框和半透明背景，这里不再给顶层窗口加 Qt 阴影。
 
+        self._card_width = self._normalized_card_width(self.event_data.get('width'))
+        self._content_width = max(300, self._card_width - 80)
+        self.setFixedWidth(self._card_width)
         card = QFrame(self)
         card.setObjectName('SmartCard')
         shell = QHBoxLayout(card)
         shell.setContentsMargins(0, 0, 0, 0)
         shell.setSpacing(0)
-        accent = QFrame(card)
-        accent.setObjectName('SmartAccent')
-        accent.setFixedWidth(6)
-        shell.addWidget(accent)
         self.layout_box = QVBoxLayout()
         self.layout_box.setContentsMargins(15, 13, 15, 13)
         self.layout_box.setSpacing(9)
@@ -102,32 +127,62 @@ class SmartBubble(QFrame):
         if timeout > 0:
             self.timer.start(timeout)
 
+    def _normalized_card_width(self, width):
+        try:
+            value = int(width or SMART_BUBBLE_DEFAULT_WIDTH)
+        except (TypeError, ValueError):
+            value = SMART_BUBBLE_DEFAULT_WIDTH
+        return max(SMART_BUBBLE_MIN_WIDTH, min(SMART_BUBBLE_MAX_WIDTH, value))
+
     def _build_header(self, card):
         header = QHBoxLayout()
         header.setSpacing(10)
-        self.badge = QLabel(self._badge_text(self.event_data), card)
-        self.badge.setFixedSize(34, 34)
-        self.badge.setAlignment(Qt.AlignCenter)
-        self._set_badge_color(self._badge_color(self.event_data))
-        header.addWidget(self.badge, 0, Qt.AlignTop)
-        title_box = QVBoxLayout()
-        title_box.setContentsMargins(0, 0, 0, 0)
-        title_box.setSpacing(3)
-        self.title_label = QLabel(self.event_data.get('title') or self.event_data.get('sender') or 'AI 回复', card)
+        self.avatar_label = QLabel(card)
+        self.avatar_label.setObjectName('SmartAvatar')
+        self.avatar_label.setFixedSize(34, 34)
+        self.avatar_label.setAlignment(Qt.AlignCenter)
+        icon = QPixmap(str(config.avatar_path('pet')))
+        if not icon.isNull():
+            self.avatar_label.setPixmap(self._rounded_avatar(icon, 34))
+        else:
+            self.avatar_label.setText('宠')
+        header.addWidget(self.avatar_label, 0, Qt.AlignTop)
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(6)
+        self.title_label = QLabel(config.current_pet or '宠物', card)
         self.title_label.setObjectName('SmartTitle')
         self.title_label.setWordWrap(True)
-        self.title_label.setMaximumWidth(330)
-        self.meta_label = QLabel('', card)
-        self.meta_label.setObjectName('SmartMeta')
-        title_box.addWidget(self.title_label)
-        title_box.addWidget(self.meta_label)
-        header.addLayout(title_box, 1)
+        self.title_label.setMaximumWidth(280)
+        self.status_label = QLabel('', card)
+        self.status_label.setObjectName('SmartStatus')
+        title_row.addWidget(self.title_label, 0, Qt.AlignVCenter)
+        title_row.addWidget(self.status_label, 0, Qt.AlignVCenter)
+        title_row.addStretch(1)
+        header.addLayout(title_row, 1)
         close_btn = TransparentToolButton(FIF.CLOSE, card)
         close_btn.setFixedSize(28, 28)
         close_btn.clicked.connect(self.request_close)
         header.addWidget(close_btn, 0, Qt.AlignTop)
         self.layout_box.addLayout(header)
         self._refresh_title_meta()
+
+    def _rounded_avatar(self, pixmap, size):
+        scaled = pixmap.scaled(size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+        if scaled.width() != size or scaled.height() != size:
+            x = max(0, (scaled.width() - size) // 2)
+            y = max(0, (scaled.height() - size) // 2)
+            scaled = scaled.copy(x, y, size, size)
+        result = QPixmap(size, size)
+        result.fill(Qt.transparent)
+        painter = QPainter(result)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        path = QPainterPath()
+        path.addEllipse(0, 0, size, size)
+        painter.setClipPath(path)
+        painter.drawPixmap(0, 0, scaled)
+        painter.end()
+        return result
 
     def _clear_layout(self, layout):
         while layout.count():
@@ -141,6 +196,8 @@ class SmartBubble(QFrame):
 
     def _render_body(self, card=None):
         card = card or self
+        for tw in self._typewriters:
+            tw.set_text('')
         if hasattr(self, 'body_layout'):
             self._clear_layout(self.body_layout)
         else:
@@ -149,23 +206,42 @@ class SmartBubble(QFrame):
             self.body_layout.setSpacing(9)
             self.layout_box.addLayout(self.body_layout)
         self.control_widgets = {}
+        self._typewriters = []
+        self._primary_typewriter = None
         self._add_elements(self.body_layout, card, self._normalized_elements())
         self._add_controls(self.body_layout, card, self.event_data.get('controls') or [])
         self._add_actions(self.body_layout, card, self.event_data.get('actions') or [])
+        self._body_structure_signature = self._structure_signature()
+
+    def _primary_text_value(self):
+        return self.event_data.get('summary') or self.event_data.get('content') or self.event_data.get('message') or ''
 
     def _normalized_elements(self):
         elements = self.event_data.get('elements') or []
-        if elements:
-            return elements
-        text = self.event_data.get('summary') or self.event_data.get('content') or self.event_data.get('message') or ''
-        return [{'type': 'text', 'content': text}] if text else []
+        normalized = elements if isinstance(elements, list) else []
+        text = self._primary_text_value()
+        if text:
+            normalized = [{'type': 'text', 'content': text, '_primary': True}] + normalized
+        return normalized
+
+    def _structure_signature(self):
+        return (repr(self.event_data.get('elements') or []), repr(self.event_data.get('controls') or []), repr(self.event_data.get('actions') or []))
 
     def update_card(self, event, timeout=None):
         if self.closing:
             return
+        previous_html = self._primary_text_html
         self.event_data.update(event or {})
         self._refresh_title_meta()
-        self._render_body()
+        new_html = _markdown_to_html(str(self._primary_text_value()))
+        if self._structure_signature() == self._body_structure_signature and self._primary_typewriter is not None:
+            if new_html.startswith(previous_html):
+                self._primary_typewriter.append_chunk(new_html[len(previous_html):])
+            else:
+                self._primary_typewriter.set_text(new_html)
+            self._primary_text_html = new_html
+        else:
+            self._render_body()
         self._refresh_status()
         if timeout is not None:
             self.timer.stop()
@@ -173,11 +249,12 @@ class SmartBubble(QFrame):
                 self.timer.start(int(timeout))
         self.adjustSize()
 
+    def update_message(self, message, timeout=None):
+        """兼容普通气泡的文本更新入口。"""
+        self.update_card({'content': message, 'elements': []}, timeout=timeout)
+
     def _refresh_title_meta(self):
-        self.title_label.setText(self.event_data.get('title') or self.event_data.get('sender') or 'AI 回复')
-        meta_text = self.event_data.get('subtitle') or self.event_data.get('sender') or self.event_data.get('source') or self._kind_text(self.event_data)
-        self.meta_label.setText(meta_text)
-        self.meta_label.setVisible(bool(meta_text))
+        self.title_label.setText(config.current_pet or '宠物')
 
     def _status_value(self):
         if self.event_data.get('done'):
@@ -191,31 +268,25 @@ class SmartBubble(QFrame):
         if status in ('running', 'streaming', 'thinking', 'working'):
             self._status_animating = True
             self._status_frame = 0
-            self.badge.setText(self._status_frames[self._status_frame])
-            self._set_badge_color(self._badge_color({'status': 'streaming'}))
+            self.status_label.setText(self._status_frames[self._status_frame])
+            self.status_label.setVisible(True)
             if not self.status_timer.isActive():
                 self.status_timer.start(420)
             return
         self._status_animating = False
         self.status_timer.stop()
-        if status in ('done', 'completed', 'complete', 'success'):
-            self.badge.setText('✓')
-            self._set_badge_color('qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #74d680,stop:1 #22c55e)')
-        elif status in ('failed', 'failure', 'error'):
-            self.badge.setText('!')
-            self._set_badge_color('qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #ff8a80,stop:1 #ff5f7e)')
+        if status in ('failed', 'failure', 'error'):
+            self.status_label.setText('发送失败')
+            self.status_label.setVisible(True)
         else:
-            self.badge.setText(self._badge_text(self.event_data))
-            self._set_badge_color(self._badge_color(self.event_data))
+            self.status_label.clear()
+            self.status_label.setVisible(False)
 
     def _tick_status(self):
         if not self._status_animating:
             return
         self._status_frame = (self._status_frame + 1) % len(self._status_frames)
-        self.badge.setText(self._status_frames[self._status_frame])
-
-    def _set_badge_color(self, color):
-        self.badge.setStyleSheet('QLabel{border-radius:17px;background:%s;color:white;font-size:15px;font-weight:700;}' % color)
+        self.status_label.setText(self._status_frames[self._status_frame])
 
     def animate_in(self, end_pos):
         if self.anim_group is not None:
@@ -258,6 +329,41 @@ class SmartBubble(QFrame):
         self.status_timer.stop()
         self._animate_out()
 
+    def mousePressEvent(self, event):
+        if event.button() == Qt.RightButton:
+            self._interrupt()
+            event.accept()
+            return
+        if event.button() == Qt.LeftButton:
+            self.dragging = True
+            self.drag_start_pos = event.globalPos()
+            self.drag_window_pos = self.pos()
+            if self.anim_group is not None:
+                self.anim_group.stop()
+            self.timer.stop()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self.dragging and event.buttons() & Qt.LeftButton:
+            self.move(self.drag_window_pos + event.globalPos() - self.drag_start_pos)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self.dragging:
+            self.dragging = False
+            self.manual_position = True
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def _interrupt(self):
+        stop_tts()
+        self.request_close()
+
     def _animate_out(self):
         if self.anim_group is not None:
             self.anim_group.stop()
@@ -292,11 +398,22 @@ class SmartBubble(QFrame):
             content = element.get('content') or element.get('text') or ''
             if not content:
                 continue
-            label = QLabel(TextWrap.wrap(self._plain_card_text(str(content)), 36, False)[0], card)
+            is_primary = bool(element.get('_primary'))
+            label = QLabel('', card)
             label.setObjectName('SmartElement')
+            label.setTextFormat(Qt.RichText)
             label.setWordWrap(True)
-            label.setMaximumWidth(360)
+            label.setFixedWidth(self._content_width)
+            html_text = _markdown_to_html(str(content))
+            label.setText(html_text)
             layout.addWidget(label)
+            tw = Typewriter(label)
+            self._typewriters.append(tw)
+            if is_primary:
+                self._primary_text = str(content)
+                self._primary_text_html = html_text
+                self._primary_typewriter = tw
+            tw.typewrite(html_text)
 
     def _add_controls(self, layout, card, controls):
         for control in controls[:5]:
@@ -416,45 +533,6 @@ class SmartBubble(QFrame):
                     values[cid + '_text'] = spec['custom_edit'].text()
         return values
 
-    def _plain_card_text(self, text):
-        text = re.sub(r'```[^\n]*\n(.*?)```', r'\1', text, flags=re.DOTALL)
-        text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
-        text = re.sub(r'`([^`]+)`', r'\1', text)
-        text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'\1', text)
-        return text
-
-    def _badge_text(self, event):
-        kind = (event.get('kind') or event.get('type') or '').lower()
-        priority = (event.get('priority') or '').lower()
-        if priority in ('urgent', 'high'):
-            return '!'
-        if priority == 'important':
-            return '★'
-        if 'progress' in kind:
-            return '…'
-        return 'AI'
-
-    def _badge_color(self, event):
-        status = (event.get('status') or event.get('state') or '').lower()
-        priority = (event.get('priority') or '').lower()
-        if status in ('failed', 'failure', 'error') or priority in ('urgent', 'high'):
-            return 'qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #ff8a80,stop:1 #ff5f7e)'
-        if status in ('done', 'completed', 'complete', 'success'):
-            return 'qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #74d680,stop:1 #22c55e)'
-        if priority == 'important':
-            return 'qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #ffd66b,stop:1 #ff9f43)'
-        return 'qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #73c8ff,stop:1 #9d8cff)'
-
-    def _kind_text(self, event):
-        kind = event.get('kind') or event.get('type') or ''
-        labels = {
-            'message': 'AI 后端',
-            'card': 'AI 后端',
-            'surface.show': 'AI 后端',
-            'surface.update': 'AI 后端',
-        }
-        return labels.get(kind, kind.replace('_', ' ') if kind else '')
-
     def _click_action(self, action):
         event = dict(self.event_data)
         values = self._collect_values()
@@ -465,6 +543,8 @@ class SmartBubble(QFrame):
 
     def closeEvent(self, event):
         self.status_timer.stop()
+        for tw in self._typewriters:
+            tw.set_text('')
         if not self.closed_emitted:
             self.closed_emitted = True
             self.closed.emit(self.bubble_id)

@@ -10,6 +10,7 @@
 """
 
 import json
+import re
 import uuid
 
 from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QSize, Qt, QUrl, Signal
@@ -23,6 +24,8 @@ from qfluentwidgets import FluentIcon as FIF
 from miniPet import config
 from miniPet.clients.llm_client import ChatWorker
 from miniPet.clients.tts_client import TtsWorker, stop_tts
+
+STREAM_TTS_MIN_CHARS = 12
 
 try:
     from PySide6.QtTextEdit import QTextEdit
@@ -154,17 +157,21 @@ class ChatWindow(QWidget):
     则在本地列表里维护临时历史，便于独立测试。
     """
 
-    def __init__(self, pet_name='', parent=None, history=None, append_message=None, content_for_llm=None, system_prompt_builder=None):
+    def __init__(self, pet_name='', parent=None, history=None, append_message=None, content_for_llm=None, system_prompt_builder=None, clear_history_callback=None):
         super().__init__(parent)
         self.pet_name = pet_name
         self.history = history if history is not None else []
         self.append_message = append_message
         self.content_for_llm = content_for_llm
         self.system_prompt_builder = system_prompt_builder
+        self.clear_history_callback = clear_history_callback
         self.worker = None
         self.tts_worker = None
         self._stream_id = None
         self._stream_text = ''
+        self._tts_queue = []
+        self._tts_consumed = 0
+        self._tts_final_received = False
         self.pending_images = []
         self._web_ready = False
         self._pending_js = []
@@ -363,21 +370,26 @@ class ChatWindow(QWidget):
         # 开始流式气泡
         stream_id = str(uuid.uuid4())
         self._start_stream(stream_id)
+        self._reset_stream_tts()
         self.input.setEnabled(False)
         self.worker = ChatWorker(self._build_messages(), parent=self)
         self.worker.delta_ready.connect(lambda d: self._on_delta(stream_id, d))
         self.worker.result_ready.connect(lambda ok, t: self._on_reply(stream_id, ok, t))
         self.worker.start()
 
+    def _memory_message_limit(self):
+        return max(0, int(config.llm_config.get('memory_turns') or 0)) * 2
+
     def _build_messages(self):
-        """构造发给 LLM 的上下文，保留最近 20 条聊天记录。"""
+        """构造发给 LLM 的上下文，保留配置的最近 N 轮聊天记录。"""
         messages = []
         system = self.system_prompt_builder() if self.system_prompt_builder else ''
         if not system:
             system = (config.llm_config.get('system_prompt', '') or '').strip()
         if system:
             messages.append({'role': 'system', 'content': system})
-        for msg in self.history[-20:]:
+        memory_limit = self._memory_message_limit()
+        for msg in (self.history[-memory_limit:] if memory_limit > 0 else []):
             content = msg.get('content', '')
             if self.content_for_llm:
                 content = self.content_for_llm(content)
@@ -389,6 +401,7 @@ class ChatWindow(QWidget):
             self._stream_text += text
             escaped = json.dumps(text, ensure_ascii=False)
             self._js('Chat.appendDelta(%s, %s)' % (json.dumps(stream_id), escaped))
+            self._queue_stream_tts(self._stream_text.strip(), terminal=False)
 
     def _on_reply(self, stream_id, success, text):
         self.input.setEnabled(True)
@@ -400,23 +413,91 @@ class ChatWindow(QWidget):
                 self.append_message('assistant', final, 'chat_window')
             else:
                 self.history.append({'role': 'assistant', 'content': final})
-            self._speak_reply(final)
+            self._stream_text = final
+            self._tts_final_received = True
+            self._queue_stream_tts(final, terminal=True)
         else:
+            self._reset_stream_tts()
             self._js('Chat.endStream(%s, %s)' % (json.dumps(stream_id), json.dumps('⚠️ ' + text[:200], ensure_ascii=False)))
         self.input.setFocus()
 
-    def _speak_reply(self, text):
+    def _queue_stream_tts(self, text, terminal=False):
         cfg = config.tts_config
         if not cfg.get('enabled') or not cfg.get('api_key'):
+            return False
+        consumed = self._tts_consumed
+        if consumed > len(text):
+            consumed = 0
+        delta = text[consumed:]
+        if not delta.strip():
+            return False
+        cut = self._stream_tts_cut_index(delta, terminal)
+        if cut <= 0:
+            return False
+        chunk = delta[:cut].strip()
+        self._tts_consumed = consumed + cut
+        if not chunk:
+            return False
+        self._tts_queue.append(chunk)
+        self._start_next_tts()
+        return True
+
+    def _stream_tts_cut_index(self, text, terminal=False):
+        if terminal:
+            return len(text)
+        if len(self._tts_countable_text(text)) < STREAM_TTS_MIN_CHARS:
+            return 0
+        hard_marks = '\n。！？!?；;'
+        hard_cut = max(text.rfind(mark) for mark in hard_marks) + 1
+        if hard_cut > 0:
+            return hard_cut
+        if len(text) < 42:
+            return 0
+        soft_marks = '，,、：: '
+        soft_cut = max(text.rfind(mark, 0, 56) for mark in soft_marks) + 1
+        if soft_cut >= 18:
+            return soft_cut
+        return min(len(text), 56)
+
+    def _tts_countable_text(self, text):
+        return re.sub(r"[\s\n\r\t。！？!?；;，,、：:,.…~`*_#\\-\\[\\](){}<>\"']+", '', text or '')
+
+    def _start_next_tts(self):
+        if self.tts_worker is not None or not self._tts_queue:
             return
-        stop_tts()
+        cfg = config.tts_config
+        if not cfg.get('enabled') or not cfg.get('api_key'):
+            self._tts_queue.clear()
+            return
+        text = self._tts_queue.pop(0)
         self.tts_worker = TtsWorker(text, cfg, parent=self)
-        self.tts_worker.result_ready.connect(lambda ok, t: setattr(self, 'tts_worker', None))
+        self.tts_worker.result_ready.connect(self._on_stream_tts_done)
         self.tts_worker.start()
+
+    def _on_stream_tts_done(self, success, text):
+        if not success:
+            print('Chat TTS failed:', text)
+        self.tts_worker = None
+        self._start_next_tts()
+
+    def _reset_stream_tts(self):
+        self._tts_queue.clear()
+        self._tts_consumed = 0
+        self._tts_final_received = False
+        if self.tts_worker is not None:
+            try:
+                self.tts_worker.result_ready.disconnect(self._on_stream_tts_done)
+            except (TypeError, RuntimeError):
+                pass
+            stop_tts()
+            self.tts_worker = None
 
     def clear_history(self, show_hint=False):
         stop_tts()
-        self.history.clear()
+        if self.clear_history_callback:
+            self.clear_history_callback()
+        else:
+            self.history.clear()
         self._js('Chat.clear()')
         if show_hint:
             self._push_message('assistant', '对话已清空，重新开始吧。')

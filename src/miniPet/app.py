@@ -15,7 +15,7 @@ import sys
 
 from PySide6.QtCore import QLocale, QTimer
 from PySide6.QtGui import QFont, QGuiApplication
-from PySide6.QtWidgets import QApplication, QInputDialog
+from PySide6.QtWidgets import QApplication
 from qfluentwidgets import FluentTranslator, setThemeColor
 
 from miniPet import config
@@ -25,7 +25,7 @@ from miniPet.pet.desktop_pet import DesktopPet
 from miniPet.clients.event_client import EventClient
 from miniPet.clients.llm_client import ChatWorker
 from miniPet.widgets.notifications.center import NotificationCenter
-from miniPet.protocols.protocol_v1 import SESSION_PING, SESSION_PONG, SESSION_READY, SURFACE_CLOSE, SURFACE_KINDS, SURFACE_SHOW, SURFACE_UPDATE, USER_COMMAND, USER_DROP, USER_INPUT, V1_CAPABILITIES, normalize_inbound_event
+from miniPet.protocols.protocol_v1 import SESSION_PING, SESSION_PONG, SESSION_READY, SURFACE_CLOSE, SURFACE_SHOW, SURFACE_UPDATE, USER_INPUT, V1_CAPABILITIES, normalize_inbound_event
 from miniPet.settings_window import SettingsWindow
 from miniPet.clients.tts_client import TtsPreviewWorker, TtsWorker, stop_tts
 from miniPet.clients.wake_word_client import WakeWordWorker
@@ -33,6 +33,7 @@ from miniPet.clients.doubao_call_client import DoubaoCallWorker
 
 
 WAKE_ACK_KEYS = ('wake_ack_1', 'wake_ack_2', 'wake_ack_3', 'wake_ack_4')
+STREAM_TTS_MIN_CHARS = 12
 
 
 class MiniPetApp(QApplication):
@@ -74,10 +75,18 @@ class MiniPetApp(QApplication):
         # quick_chat_* 管理桌宠头顶快速输入：LLM 请求、回复气泡和可选 TTS 播报。
         self.quick_chat_worker = None
         self.quick_tts_worker = None
+        self.external_tts_worker = None
         self.event_tts_worker = None
         self.quick_chat_source = 'quick_chat'
-        self.quick_thinking_bubble_id = None
+        self.quick_reply_bubble_id = None
+        self._quick_stream_text = ''
+        self._quick_tts_queue = []
+        self._quick_tts_consumed = 0
+        self._quick_tts_final_received = False
         self._surface_bubbles = {}
+        self._surface_text_cache = {}
+        self._external_tts_queue = []
+        self._external_tts_consumed = {}
         self._silent_surface_texts = {'我在处理...', '我在处理…', '正在处理...', '正在处理…', '处理中...', '处理中…'}
 
         # pet_voice_* 是桌宠旁边的轻量语音聊天状态，不等同于独立 豆包通话窗口。
@@ -444,9 +453,8 @@ class MiniPetApp(QApplication):
         else:
             submitted = self._send_external_command(text, 'voice', 'voice_orb', screenshot=screenshot)
             if submitted:
-                self.pet_voice_waiting_reply = False
-                if self.pet_voice_active:
-                    QTimer.singleShot(800, self._start_pet_voice_recording)
+                self.quick_chat_source = 'voice_chat'
+                self.pet.update_voice_popup('thinking', '等待回复')
         if not submitted:
             self.pet_voice_waiting_reply = False
             if self.pet_voice_active:
@@ -514,24 +522,48 @@ class MiniPetApp(QApplication):
     def _send_external_command(self, content, mode='text', surface='pet_popup', screenshot=''):
         x, y = self.pet.bubble_anchor()
         self.note.setup_bubble(self._content_preview(content), x, y, 2000, title='你')
+        if mode in ('text', 'voice'):
+            self._reset_external_stream_tts()
+            self._show_reply_card('正在思考...', status='streaming', timeout_ms=60000)
         payload = {
             'text': self._content_preview(content),
-            'content': content,
-            'mode': 'text',
-            'backend': self._agent_backend(),
-            'surface': surface,
-            'context': {'surface': surface},
         }
-        sent = self.events.send_event(USER_COMMAND, payload) if self.events else False
+        sent = self.events.send_event(USER_INPUT, payload) if self.events else False
         if not sent:
+            self._close_reply_card()
             self.note.setup_bubble('外置智能体还没连接，先检查“智能体”设置。', x, y, 4500, title=config.current_pet or '宠物')
         return sent
+
+    def _show_reply_card(self, content, status='streaming', timeout_ms=60000):
+        event = {
+            'surface_id': 'local-quick-reply',
+            'content': content,
+            'status': status,
+            'timeout_ms': timeout_ms,
+        }
+        x, y = self.pet.bubble_anchor()
+        if self.quick_reply_bubble_id and self.note.update_bubble(self.quick_reply_bubble_id, event, timeout=timeout_ms):
+            return
+        self.quick_reply_bubble_id = self.note.setup_smart_bubble(event, x, y, play_sound=False)
+
+    def _close_reply_card(self):
+        if self.quick_reply_bubble_id:
+            self.note.close_bubble(self.quick_reply_bubble_id)
+            self.quick_reply_bubble_id = None
 
     def _on_quick_chat_prompt(self, text):
         if self._agent_backend() == 'builtin':
             self._submit_quick_chat(text, 'quick_chat')
             return
         self._send_external_command(text, 'text', 'pet_popup')
+        # 外置后端会用 surface 卡片回复，不使用快速输入弹窗自己的思考浮层。
+        # submitted 信号返回后 PetInputPopup 才会 start_thinking，所以延后一拍关闭。
+        QTimer.singleShot(0, self._close_input_popup)
+
+    def _close_input_popup(self):
+        if self.pet.input_popup is not None:
+            self.pet.input_popup.close()
+            self.pet.input_popup = None
 
     def _on_drop_intent(self, drop_payload, intent):
         payload = dict(drop_payload)
@@ -550,7 +582,7 @@ class MiniPetApp(QApplication):
             prompt = self._drop_prompt_for_builtin(payload, intent_labels.get(intent, intent))
             self._submit_quick_chat(prompt, 'drop')
             return
-        sent = self.events.send_event('user.drop', payload) if self.events else False
+        sent = self.events.send_event(USER_INPUT, {'text': self._drop_prompt_for_builtin(payload, intent_labels.get(intent, intent))}) if self.events else False
         if sent:
             self.note.setup_bubble('收到，我交给外置智能体处理：' + intent_labels.get(intent, intent), x, y, 3500, title=config.current_pet or '宠物')
         else:
@@ -572,7 +604,7 @@ class MiniPetApp(QApplication):
         """提交桌宠快速输入或语音识别文本到内置 LLM。"""
         if self.quick_chat_worker is not None:
             if source == 'quick_chat' and self.pet.input_popup is not None:
-                self.pet.input_popup.finish_thinking()
+                self.pet.input_popup.close()
                 self.pet.input_popup = None
             x, y = self.pet.bubble_anchor()
             self.note.setup_bubble('我还在想上一句话，稍等一下。', x, y, 3000, title=config.current_pet or '宠物')
@@ -581,16 +613,13 @@ class MiniPetApp(QApplication):
         self._append_chat_message('user', text, source)
         if self.pet.chat_window is not None and self.pet.chat_window.isVisible():
             self.pet.chat_window.reload_history()
+        self._show_reply_card('正在思考...', status='streaming', timeout_ms=60000)
+        self._reset_quick_stream_tts()
         self.quick_chat_worker = ChatWorker(self._build_quick_chat_messages(screenshot=screenshot), parent=self)
+        self.quick_chat_worker.delta_ready.connect(self._on_quick_chat_delta)
         self.quick_chat_worker.result_ready.connect(self._on_quick_chat_reply)
         self.quick_chat_worker.start()
         return True
-
-    def _show_quick_thinking_bubble(self, source):
-        if self.quick_chat_worker is None or self.quick_chat_source != source or self.quick_thinking_bubble_id:
-            return
-        x, y = self.pet.bubble_anchor()
-        self.quick_thinking_bubble_id = self.note.setup_bubble('让我想想...', x, y, 60000, title=config.current_pet or '宠物')
 
     def _build_quick_chat_messages(self, screenshot=''):
         """构造快速聊天的 LLM 消息，只保留最近 10 条上下文。"""
@@ -617,36 +646,70 @@ class MiniPetApp(QApplication):
             messages.append({'role': last.get('role'), 'content': content})
         return messages
 
+    def _on_quick_chat_delta(self, text):
+        if not text or self.quick_chat_worker is None:
+            return
+        self._quick_stream_text += text
+        shown = self._quick_stream_text.strip()
+        if shown:
+            self._show_reply_card(shown, status='streaming', timeout_ms=60000)
+            self._queue_quick_stream_tts(shown, terminal=False)
+
     def _on_quick_chat_reply(self, success, text):
         """处理快速聊天回复：保存历史、展示气泡，并按配置触发 TTS。"""
         self.quick_chat_worker = None
-        if self.quick_thinking_bubble_id:
-            self.note.close_bubble(self.quick_thinking_bubble_id)
-            self.quick_thinking_bubble_id = None
         if self.quick_chat_source == 'quick_chat' and self.pet.input_popup is not None:
-            self.pet.input_popup.finish_thinking()
+            self.pet.input_popup.close()
             self.pet.input_popup = None
         x, y = self.pet.bubble_anchor()
         if success:
-            reply = text.strip() or '嗯。'
+            reply = (text or self._quick_stream_text).strip() or '嗯。'
             self._append_chat_message('assistant', reply, self.quick_chat_source or 'quick_chat')
             if self.pet.chat_window is not None and self.pet.chat_window.isVisible():
                 self.pet.chat_window.reload_history()
-            self.note.setup_bubble(reply, x, y, max(5000, min(25000, len(reply) * 180)), title=config.current_pet or '宠物')
-            if self.quick_chat_source == 'voice_chat' and self.pet_voice_active:
-                self.pet.update_voice_popup('speaking', '')
-            self._speak_quick_reply(reply)
+            self._show_reply_card(reply, status='done', timeout_ms=max(5000, min(25000, len(reply) * 180)))
+            self._quick_stream_text = reply
+            self._quick_tts_final_received = True
+            self._queue_quick_stream_tts(reply, terminal=True)
+            self._finish_quick_voice_if_tts_idle()
         else:
-            self.note.setup_bubble('我现在说不出来：' + text, x, y, 6000, title=config.current_pet or '宠物')
+            self._reset_quick_stream_tts()
+            self._show_reply_card('我现在说不出来：' + text, status='failed', timeout_ms=6000)
             if self.quick_chat_source == 'voice_chat' and self.pet_voice_active:
                 self._finish_voice_turn(delay_ms=800)
 
-    def _speak_quick_reply(self, text):
+    def _queue_quick_stream_tts(self, text, terminal=False):
         cfg = config.tts_config
         if not cfg.get('enabled') or not cfg.get('api_key'):
-            self._on_quick_tts_done(True, '')
+            return False
+        consumed = self._quick_tts_consumed
+        if consumed > len(text):
+            consumed = 0
+        delta = text[consumed:]
+        if not delta.strip():
+            return False
+        cut = self._stream_tts_cut_index(delta, terminal)
+        if cut <= 0:
+            return False
+        chunk = delta[:cut].strip()
+        self._quick_tts_consumed = consumed + cut
+        if not chunk:
+            return False
+        self._quick_tts_queue.append(chunk)
+        self._start_next_quick_tts()
+        return True
+
+    def _start_next_quick_tts(self):
+        if self.quick_tts_worker is not None or not self._quick_tts_queue:
             return
-        stop_tts()
+        cfg = config.tts_config
+        if not cfg.get('enabled') or not cfg.get('api_key'):
+            self._quick_tts_queue.clear()
+            self._finish_quick_voice_if_tts_idle()
+            return
+        text = self._quick_tts_queue.pop(0)
+        if self.quick_chat_source == 'voice_chat' and self.pet_voice_active:
+            self.pet.update_voice_popup('speaking', '')
         self.quick_tts_worker = TtsWorker(text, cfg, parent=self)
         self.quick_tts_worker.result_ready.connect(self._on_quick_tts_done)
         self.quick_tts_worker.start()
@@ -655,8 +718,29 @@ class MiniPetApp(QApplication):
         if not success:
             print('TTS failed:', text)
         self.quick_tts_worker = None
+        self._start_next_quick_tts()
+        self._finish_quick_voice_if_tts_idle()
+
+    def _finish_quick_voice_if_tts_idle(self):
+        if not self._quick_tts_final_received:
+            return
+        if self.quick_tts_worker is not None or self._quick_tts_queue:
+            return
         if self.quick_chat_source == 'voice_chat' and self.pet_voice_active:
             self._finish_voice_turn(delay_ms=500)
+
+    def _reset_quick_stream_tts(self):
+        self._quick_stream_text = ''
+        self._quick_tts_queue.clear()
+        self._quick_tts_consumed = 0
+        self._quick_tts_final_received = False
+        if self.quick_tts_worker is not None:
+            try:
+                self.quick_tts_worker.result_ready.disconnect(self._on_quick_tts_done)
+            except (TypeError, RuntimeError):
+                pass
+            stop_tts()
+            self.quick_tts_worker = None
 
     def _finish_voice_turn(self, delay_ms=500):
         self.pet_voice_waiting_reply = False
@@ -697,27 +781,45 @@ class MiniPetApp(QApplication):
             self.note.setup_notification(payload.get('title', '外部事件'), payload.get('summary') or payload.get('content') or '')
 
     def _surface_text(self, payload):
-        return (payload.get('text') or payload.get('message') or payload.get('summary') or payload.get('content') or '').strip()
+        text = payload.get('text') or payload.get('message') or payload.get('summary') or payload.get('content') or ''
+        if text:
+            return str(text).strip()
+        parts = []
+        for element in payload.get('elements') or []:
+            if not isinstance(element, dict):
+                continue
+            tag = element.get('tag') or element.get('type')
+            if tag in ('markdown', 'text', 'plain_text', 'code'):
+                content = element.get('content') or element.get('text') or ''
+                if content:
+                    parts.append(str(content))
+        return '\n'.join(parts).strip()
 
     def _is_silent_surface(self, text):
         return not text or text in self._silent_surface_texts
 
     def _handle_surface_show(self, payload):
         card_event = self._normalize_display_event(SURFACE_SHOW, payload)
-        card_event['kind'] = 'card'
+        self._close_reply_card()
         text = self._surface_text(card_event)
+        speech_text = self._remember_surface_text(card_event, text)
+        self._queue_external_reply_tts(card_event, speech_text)
         if self._is_silent_surface(text) and not card_event.get('elements') and not card_event.get('actions') and not card_event.get('controls'):
             return
         x, y = self.pet.bubble_anchor()
-        bubble_id = self.note.setup_smart_bubble(card_event, x, y)
+        bubble_id = self.note.setup_smart_bubble(card_event, x, y, play_sound=False)
         surface_id = card_event.get('surface_id')
         if surface_id:
             self._surface_bubbles[surface_id] = bubble_id
-        self._trigger_pet_reaction(card_event)
+        self._handle_external_voice_surface(card_event)
+        if surface_id and self._is_terminal_surface_status(card_event):
+            self._surface_bubbles.pop(surface_id, None)
+            self._surface_text_cache.pop(surface_id, None)
+            self._external_tts_consumed.pop(surface_id, None)
 
     def _is_terminal_surface_status(self, payload):
         status = str(payload.get('status') or payload.get('state') or '').strip().lower().replace('_', '-')
-        return bool(payload.get('done')) or status in ('done', 'completed', 'complete', 'success', 'failed', 'failure', 'error')
+        return status in ('done', 'completed', 'complete', 'success', 'failed', 'failure', 'error')
 
     def _surface_timeout(self, payload):
         if payload.get('timeout_ms') is not None:
@@ -734,21 +836,127 @@ class MiniPetApp(QApplication):
         if not surface_id:
             return
         card_event = self._normalize_display_event(SURFACE_UPDATE, payload)
-        card_event['kind'] = 'card'
+        self._close_reply_card()
         text = self._surface_text(card_event)
+        speech_text = self._remember_surface_text(card_event, text)
+        self._queue_external_reply_tts(card_event, speech_text)
         if self._is_silent_surface(text) and not card_event.get('elements') and not card_event.get('actions') and not card_event.get('controls'):
             return
         timeout = self._surface_timeout(card_event)
         bubble_id = self._surface_bubbles.get(surface_id)
         if bubble_id and self.note.update_bubble(bubble_id, card_event, timeout=timeout):
+            self._handle_external_voice_surface(card_event)
             if self._is_terminal_surface_status(card_event):
                 self._surface_bubbles.pop(surface_id, None)
+                self._surface_text_cache.pop(surface_id, None)
+                self._external_tts_consumed.pop(surface_id, None)
             return
         x, y = self.pet.bubble_anchor()
-        bubble_id = self.note.setup_smart_bubble(card_event, x, y)
+        bubble_id = self.note.setup_smart_bubble(card_event, x, y, play_sound=False)
         self._surface_bubbles[surface_id] = bubble_id
+        self._handle_external_voice_surface(card_event)
         if self._is_terminal_surface_status(card_event):
             self._surface_bubbles.pop(surface_id, None)
+            self._surface_text_cache.pop(surface_id, None)
+            self._external_tts_consumed.pop(surface_id, None)
+
+    def _remember_surface_text(self, card_event, text):
+        surface_id = card_event.get('surface_id')
+        if not surface_id:
+            return text
+        if text:
+            self._surface_text_cache[surface_id] = text
+            return text
+        return self._surface_text_cache.get(surface_id, '')
+
+    def _queue_external_reply_tts(self, card_event, text):
+        if self._agent_backend() == 'builtin' or not text:
+            return
+        cfg = config.tts_config
+        if not cfg.get('enabled') or not cfg.get('api_key'):
+            return
+        if self._is_silent_surface(text):
+            return
+        surface_id = card_event.get('surface_id') or '__external_reply__'
+        consumed = int(self._external_tts_consumed.get(surface_id, 0) or 0)
+        if consumed > len(text):
+            consumed = 0
+        delta = text[consumed:]
+        if not delta.strip():
+            return
+        terminal = self._is_terminal_surface_status(card_event)
+        cut = self._stream_tts_cut_index(delta, terminal)
+        if cut <= 0:
+            return
+        chunk = delta[:cut].strip()
+        self._external_tts_consumed[surface_id] = consumed + cut
+        if chunk:
+            self._external_tts_queue.append((surface_id, chunk))
+            self._start_next_external_tts()
+
+    def _stream_tts_cut_index(self, text, terminal=False):
+        if terminal:
+            return len(text)
+        if len(self._tts_countable_text(text)) < STREAM_TTS_MIN_CHARS:
+            return 0
+        hard_marks = '\n。！？!?；;'
+        hard_positions = [text.rfind(mark) for mark in hard_marks]
+        hard_cut = max(hard_positions) + 1
+        if hard_cut > 0:
+            return hard_cut
+        if len(text) < 42:
+            return 0
+        soft_marks = '，,、：: '
+        soft_positions = [text.rfind(mark, 0, 56) for mark in soft_marks]
+        soft_cut = max(soft_positions) + 1
+        if soft_cut >= 18:
+            return soft_cut
+        return min(len(text), 56)
+
+    def _tts_countable_text(self, text):
+        return re.sub(r"[\s\n\r\t。！？!?；;，,、：:,.…~`*_#\\-\\[\\](){}<>\"']+", '', text or '')
+
+    def _start_next_external_tts(self):
+        if self.external_tts_worker is not None or not self._external_tts_queue:
+            return
+        cfg = config.tts_config
+        if not cfg.get('enabled') or not cfg.get('api_key'):
+            self._external_tts_queue.clear()
+            return
+        _surface_id, text = self._external_tts_queue.pop(0)
+        self.external_tts_worker = TtsWorker(text, cfg, parent=self)
+        self.external_tts_worker.result_ready.connect(self._on_external_tts_done)
+        self.external_tts_worker.start()
+
+    def _on_external_tts_done(self, success, text):
+        if not success:
+            print('External TTS failed:', text)
+        self.external_tts_worker = None
+        self._start_next_external_tts()
+
+    def _reset_external_stream_tts(self):
+        self._surface_text_cache.clear()
+        self._external_tts_queue.clear()
+        self._external_tts_consumed.clear()
+        if self.external_tts_worker is not None:
+            try:
+                self.external_tts_worker.result_ready.disconnect(self._on_external_tts_done)
+            except (TypeError, RuntimeError):
+                pass
+            stop_tts()
+            self.external_tts_worker = None
+
+    def _handle_external_voice_surface(self, card_event):
+        if not self.pet_voice_active or not self.pet_voice_waiting_reply or self.quick_chat_source != 'voice_chat':
+            return
+        text = self._surface_text(card_event)
+        if text:
+            # 外置后端已经用卡片在回复了，语音等待浮层不应该继续盖在卡片上。
+            # V1 surface 协议不允许后端控制宠物动作；有正文后就清掉本地等待动作。
+            self.pet.close_voice_popup()
+            self.pet.play_action('idle')
+        if self._is_terminal_surface_status(card_event):
+            self._finish_voice_turn(delay_ms=500)
 
     def _handle_surface_close(self, payload):
         surface_id = payload.get('surface_id')
@@ -757,171 +965,15 @@ class MiniPetApp(QApplication):
         bubble_id = self._surface_bubbles.pop(surface_id, None)
         if bubble_id:
             self.note.close_bubble(bubble_id)
-
-    def _handle_input_request(self, payload):
-        title = payload.get('title') or '需要你的输入'
-        metadata = payload.get('metadata') or {}
-        input_spec = payload.get('input') if isinstance(payload.get('input'), dict) else {}
-        kind = payload.get('kind') or input_spec.get('type')
-        surface_id = payload.get('surface_id')
-        if kind in ('input', 'text'):
-            default = payload.get('default_text') or input_spec.get('default_value') or ''
-            prompt = payload.get('description') or input_spec.get('placeholder') or payload.get('placeholder') or '请输入'
-            text, ok = QInputDialog.getText(None, title, prompt, text=default)
-            if self.events:
-                self.events.send_event(USER_INPUT, {
-                    'surface_id': surface_id,
-                    'action_id': 'submit' if ok else 'cancel',
-                    'kind': 'text',
-                    'value': text if ok else '',
-                    'metadata': metadata,
-                })
-            return
-        if kind == 'choice':
-            options = payload.get('options') or input_spec.get('options') or []
-            labels = [str(opt.get('label') or opt.get('id')) for opt in options if isinstance(opt, dict)]
-            if not labels:
-                return
-            label, ok = QInputDialog.getItem(None, title, payload.get('description') or payload.get('content') or '请选择', labels, 0, False)
-            selected = []
-            if ok:
-                for opt in options:
-                    if str(opt.get('label') or opt.get('id')) == label:
-                        selected = [opt.get('id')]
-                        break
-            if self.events:
-                self.events.send_event(USER_INPUT, {
-                    'surface_id': surface_id,
-                    'action_id': 'submit' if ok else 'cancel',
-                    'kind': 'choice',
-                    'value': selected,
-                    'metadata': metadata,
-                })
-            return
-        actions = [
-            {'id': 'confirm', 'label': payload.get('confirm_label') or '确认', 'style': 'primary'},
-            {'id': 'cancel', 'label': payload.get('cancel_label') or '取消', 'style': 'quiet'},
-        ]
-        event = dict(payload)
-        event['actions'] = actions
-        event['summary'] = payload.get('content') or payload.get('description') or ''
-        x, y = self.pet.bubble_anchor()
-        self.note.setup_smart_bubble(event, x, y)
-
-    def _codex_pet_action(self, value):
-        state = str(value or '').strip().lower().replace('_', '-')
-        return {
-            'idle': 'idle',
-            'default': 'idle',
-            'done': 'waving',
-            'complete': 'waving',
-            'completed': 'waving',
-            'success': 'waving',
-            'happy': 'waving',
-            'celebrate': 'waving',
-            'wave': 'waving',
-            'waving': 'waving',
-            'jump': 'jumping',
-            'jumping': 'jumping',
-            'error': 'failed',
-            'failed': 'failed',
-            'failure': 'failed',
-            'urgent': 'failed',
-            'waiting': 'waiting',
-            'wait': 'waiting',
-            'approval': 'waiting',
-            'need-approval': 'waiting',
-            'waiting-approval': 'waiting',
-            'thinking': 'running',
-            'working': 'running',
-            'running': 'running',
-            'coding': 'running',
-            'tool-use': 'running',
-            'review': 'review',
-            'reviewing': 'review',
-            'reading': 'review',
-            'drag-right': 'running-right',
-            'running-right': 'running-right',
-            'right': 'running-right',
-            'drag-left': 'running-left',
-            'running-left': 'running-left',
-            'left': 'running-left',
-        }.get(state, value)
-
-    def _handle_pet_control(self, event_type, payload):
-        if event_type in ('pet.emotion.set', 'pet.nudge'):
-            emotion = payload.get('emotion') or payload.get('intensity') or payload.get('reason') or payload.get('state') or ''
-            text = payload.get('text') or payload.get('message') or ''
-            action = payload.get('action') or payload.get('fallback_action') or payload.get('state')
-            action = self._codex_pet_action(action or emotion)
-            if action:
-                self.pet.play_action(action)
-            if text:
-                x, y = self.pet.bubble_anchor()
-                self.note.setup_bubble(text, x, y, int(payload.get('timeout_ms') or 4000), title=config.current_pet or '宠物')
-            return
-        self._trigger_pet_reaction(payload)
-
-    def _send_context_status(self, request_id=None):
-        if not self.events:
-            return
-        pos = self.pet.pos()
-        self.events.send_event('session.context', {
-            'pet': config.current_pet,
-            'visible': self.pet.isVisible(),
-            'agent_backend': self._agent_backend(),
-            'position': {'x': pos.x(), 'y': pos.y(), 'width': self.pet.width(), 'height': self.pet.height()},
-            'protocol': 'minipet.v1',
-            'surface_kinds': list(SURFACE_KINDS),
-            'capabilities': list(V1_CAPABILITIES),
-        }, request_id=request_id)
+        self._surface_text_cache.pop(surface_id, None)
+        self._external_tts_consumed.pop(surface_id, None)
+        self._external_tts_queue = [item for item in self._external_tts_queue if item[0] != surface_id]
 
     def _normalize_display_event(self, event_type, payload):
         event = dict(payload)
         event['type'] = event_type
-        if event_type == 'display.message.show':
-            self._normalize_display_message(event)
-        elif event_type == 'interaction.present':
-            event['summary'] = event.get('assistant_message') or event.get('content') or event.get('subtitle') or ''
-        else:
-            event.setdefault('summary', event.get('content') or event.get('description') or '')
-        if event.get('preview') and isinstance(event.get('preview'), dict) and not event.get('assistant_message'):
-            event['assistant_message'] = event['preview'].get('content') or ''
-        if 'priority' not in event:
-            event['priority'] = 'normal'
+        event.setdefault('summary', event.get('content') or event.get('description') or '')
         return event
-
-    def _normalize_display_message(self, event):
-        chat = event.get('chat') if isinstance(event.get('chat'), dict) else {}
-        sender = event.get('sender') if isinstance(event.get('sender'), dict) else {}
-        message = event.get('message') if isinstance(event.get('message'), dict) else {}
-        content = message.get('content') if isinstance(message.get('content'), dict) else {}
-        event['title'] = event.get('title') or chat.get('name') or '外部消息'
-        event['subtitle'] = event.get('subtitle') or sender.get('name') or chat.get('type') or event.get('source') or ''
-        text = content.get('plain_text') or content.get('text') or message.get('text') or event.get('summary') or ''
-        event['summary'] = text
-        event['kind'] = 'external_message'
-        metadata = dict(event.get('metadata') or {})
-        for key in ('chat_id', 'message_id', 'thread_id', 'root_id', 'parent_id'):
-            if event.get(key) and key not in metadata:
-                metadata[key] = event.get(key)
-            if message.get(key) and key not in metadata:
-                metadata[key] = message.get(key)
-            if chat.get('id') and key == 'chat_id' and key not in metadata:
-                metadata[key] = chat.get('id')
-        event['metadata'] = metadata
-
-    def _trigger_pet_reaction(self, event):
-        action = event.get('pet_action') or event.get('action') or event.get('state')
-        if not action:
-            priority = event.get('priority', 'normal')
-            if priority in ('high', 'urgent'):
-                action = 'failed'
-            elif event.get('is_at_me'):
-                action = 'idle'
-        action = self._codex_pet_action(action)
-        if action:
-            self.pet.play_action(action)
 
     def _on_smart_action(self, event, action):
         action_id = action.get('id') or action.get('type')
@@ -954,7 +1006,7 @@ class MiniPetApp(QApplication):
             self.pet_voice_asr_worker.finish()
             self.pet_voice_asr_worker.wait(1500)
             self.pet_voice_asr_worker = None
-        for worker_name in ('quick_chat_worker', 'quick_tts_worker', 'event_tts_worker', 'wake_ack_worker'):
+        for worker_name in ('quick_chat_worker', 'quick_tts_worker', 'external_tts_worker', 'event_tts_worker', 'wake_ack_worker'):
             worker = getattr(self, worker_name, None)
             if worker is not None and worker.isRunning():
                 worker.requestInterruption()
