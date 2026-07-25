@@ -25,7 +25,7 @@ from miniPet.pet.desktop_pet import DesktopPet
 from miniPet.clients.event_client import EventClient
 from miniPet.clients.llm_client import ChatWorker
 from miniPet.widgets.notifications.center import NotificationCenter
-from miniPet.protocols.protocol_v1 import AGENT_STATE, SESSION_PING, SESSION_PONG, SESSION_READY, SURFACE_KINDS, SURFACE_SHOW, SURFACE_UPDATE, USER_COMMAND, USER_DROP, USER_INPUT, V1_CAPABILITIES, normalize_inbound_event
+from miniPet.protocols.protocol_v1 import SESSION_PING, SESSION_PONG, SESSION_READY, SURFACE_CLOSE, SURFACE_KINDS, SURFACE_SHOW, SURFACE_UPDATE, USER_COMMAND, USER_DROP, USER_INPUT, V1_CAPABILITIES, normalize_inbound_event
 from miniPet.settings_window import SettingsWindow
 from miniPet.clients.tts_client import TtsPreviewWorker, TtsWorker, stop_tts
 from miniPet.clients.wake_word_client import WakeWordWorker
@@ -78,6 +78,7 @@ class MiniPetApp(QApplication):
         self.quick_chat_source = 'quick_chat'
         self.quick_thinking_bubble_id = None
         self._surface_bubbles = {}
+        self._silent_surface_texts = {'我在处理...', '我在处理…', '正在处理...', '正在处理…', '处理中...', '处理中…'}
 
         # pet_voice_* 是桌宠旁边的轻量语音聊天状态，不等同于独立 豆包通话窗口。
         self.pet_voice_active = False
@@ -105,7 +106,6 @@ class MiniPetApp(QApplication):
         self.settings.settings_changed.connect(self._apply_agent_settings)
         self.settings.settings_changed.connect(self._apply_wake_word_settings)
         self.settings.pet_changed.connect(self.pet.load_pet)
-        self.settings.clear_history_requested.connect(self._clear_chat_history)
         self.note.smart_action_clicked.connect(self._on_smart_action)
         if self.events:
             self.events.event_received.connect(self._on_event)
@@ -115,23 +115,16 @@ class MiniPetApp(QApplication):
         self._apply_wake_word_settings()
         QTimer.singleShot(0, self._show_startup_greeting)
 
+    def _memory_message_limit(self):
+        turns = max(0, int(config.llm_config.get('memory_turns') or 0))
+        return turns * 2
+
     def _restore_chat_history(self):
-        """按配置恢复最近聊天消息，作为本次运行的短期上下文。"""
-        cfg = config.chat_restore_config
-        if not cfg.get('enabled', True):
+        """启动时默认恢复最近 N 轮历史消息，作为统一对话上下文。"""
+        max_messages = self._memory_message_limit()
+        if max_messages <= 0:
             return
-        max_messages = max(1, int(cfg.get('max_messages') or 20))
-        max_days = max(1, int(cfg.get('max_days') or 1))
-        from datetime import date, timedelta
-        collected = []
-        for delta in range(max_days):
-            day = date.today() - timedelta(days=delta)
-            date_text = day.strftime('%Y-%m-%d')
-            messages = self.chat_store.load_date(date_text)
-            collected = messages + collected
-            if len(collected) >= max_messages:
-                break
-        self.chat_history = collected[-max_messages:]
+        self.chat_history = self.chat_store.load_recent(max_messages)
 
     def _agent_backend(self):
         return config.app_config.get('agent_backend', 'builtin') or 'builtin'
@@ -275,7 +268,7 @@ class MiniPetApp(QApplication):
         self._play_event_tts('startup')
 
     def _show_chat_window(self):
-        self.pet.show_chat(self.chat_history, self._append_chat_message, self.chat_store.content_for_llm, self._build_system_prompt)
+        self.pet.show_chat(self.chat_history, self._append_chat_message, self.chat_store.content_for_llm, self._build_system_prompt, self._clear_chat_history)
 
     def _toggle_pet_voice_chat(self):
         """兼容旧调用：切换语音球显示状态。"""
@@ -446,7 +439,15 @@ class MiniPetApp(QApplication):
         self.pet_voice_waiting_reply = True
         self.pet.update_voice_popup('thinking', text)
         screenshot = self._capture_voice_screenshot()
-        if not self._submit_quick_chat(text, 'voice_chat', screenshot=screenshot):
+        if self._agent_backend() == 'builtin':
+            submitted = self._submit_quick_chat(text, 'voice_chat', screenshot=screenshot)
+        else:
+            submitted = self._send_external_command(text, 'voice', 'voice_orb', screenshot=screenshot)
+            if submitted:
+                self.pet_voice_waiting_reply = False
+                if self.pet_voice_active:
+                    QTimer.singleShot(800, self._start_pet_voice_recording)
+        if not submitted:
             self.pet_voice_waiting_reply = False
             if self.pet_voice_active:
                 QTimer.singleShot(800, self._start_pet_voice_recording)
@@ -484,6 +485,10 @@ class MiniPetApp(QApplication):
         self.chat_history.append(stored_message)
         return stored_message
 
+    def _clear_chat_history(self):
+        self.chat_history.clear()
+        self.chat_store.clear_all()
+
     def _build_system_prompt(self):
         """组合角色设定，作为 LLM system prompt。"""
         return (config.llm_config.get('system_prompt', '') or '').strip()
@@ -506,24 +511,27 @@ class MiniPetApp(QApplication):
         image_count = sum(1 for block in content or [] if block.get('type') == 'image')
         return (text + '\n' if text else '') + ('[图片] × %d' % image_count if image_count else '')
 
+    def _send_external_command(self, content, mode='text', surface='pet_popup', screenshot=''):
+        x, y = self.pet.bubble_anchor()
+        self.note.setup_bubble(self._content_preview(content), x, y, 2000, title='你')
+        payload = {
+            'text': self._content_preview(content),
+            'content': content,
+            'mode': 'text',
+            'backend': self._agent_backend(),
+            'surface': surface,
+            'context': {'surface': surface},
+        }
+        sent = self.events.send_event(USER_COMMAND, payload) if self.events else False
+        if not sent:
+            self.note.setup_bubble('外置智能体还没连接，先检查“智能体”设置。', x, y, 4500, title=config.current_pet or '宠物')
+        return sent
+
     def _on_quick_chat_prompt(self, text):
         if self._agent_backend() == 'builtin':
             self._submit_quick_chat(text, 'quick_chat')
             return
-        x, y = self.pet.bubble_anchor()
-        self.note.setup_bubble(self._content_preview(text), x, y, 2000, title='你')
-        sent = self.events.send_event(USER_COMMAND, {
-            'text': self._content_preview(text),
-            'content': text,
-            'mode': 'text',
-            'backend': self._agent_backend(),
-            'surface': 'pet_popup',
-            'context': {'surface': 'pet_popup'},
-        }) if self.events else False
-        if sent:
-            self.note.setup_bubble('收到，我交给外置智能体处理。', x, y, 3000, title=config.current_pet or '宠物')
-        else:
-            self.note.setup_bubble('外置智能体还没连接，先检查“智能体”设置。', x, y, 4500, title=config.current_pet or '宠物')
+        self._send_external_command(text, 'text', 'pet_popup')
 
     def _on_drop_intent(self, drop_payload, intent):
         payload = dict(drop_payload)
@@ -584,19 +592,14 @@ class MiniPetApp(QApplication):
         x, y = self.pet.bubble_anchor()
         self.quick_thinking_bubble_id = self.note.setup_bubble('让我想想...', x, y, 60000, title=config.current_pet or '宠物')
 
-    def _clear_chat_history(self):
-        if self.pet.chat_window is not None:
-            self.pet.chat_window.clear_history()
-        else:
-            self.chat_history.clear()
-
     def _build_quick_chat_messages(self, screenshot=''):
         """构造快速聊天的 LLM 消息，只保留最近 10 条上下文。"""
         messages = []
         system = self._build_system_prompt()
         if system:
             messages.append({'role': 'system', 'content': system})
-        history = list(self.chat_history[-10:])
+        memory_limit = self._memory_message_limit()
+        history = list(self.chat_history[-memory_limit:] if memory_limit > 0 else [])
         # 历史消息除最后一条外都用纯文本
         for message in history[:-1]:
             messages.append({'role': message.get('role'), 'content': self.chat_store.content_for_llm(message.get('content', ''))})
@@ -671,10 +674,7 @@ class MiniPetApp(QApplication):
             self.pet.update_voice_popup('idle', '')
 
     def _on_event_connection_changed(self, connected):
-        if connected:
-            x, y = self.pet.bubble_anchor()
-            name = '通用 AI 后端' if self._agent_backend() == 'custom' else 'OpenClaw AI'
-            self.note.setup_bubble('已连接 ' + name + '。', x, y, 3000, title=config.current_pet or '宠物')
+        pass
 
     def _on_event(self, event):
         event = normalize_inbound_event(event)
@@ -688,48 +688,75 @@ class MiniPetApp(QApplication):
             self._handle_surface_show(payload)
         elif event_type == SURFACE_UPDATE:
             self._handle_surface_update(payload)
-        elif event_type == AGENT_STATE:
-            self._handle_agent_status(event_type, payload)
+        elif event_type == SURFACE_CLOSE:
+            self._handle_surface_close(payload)
         elif event_type == SESSION_PING:
             if self.events:
                 self.events.send_event(SESSION_PONG, {'ts': payload.get('ts')})
         else:
             self.note.setup_notification(payload.get('title', '外部事件'), payload.get('summary') or payload.get('content') or '')
 
+    def _surface_text(self, payload):
+        return (payload.get('text') or payload.get('message') or payload.get('summary') or payload.get('content') or '').strip()
+
+    def _is_silent_surface(self, text):
+        return not text or text in self._silent_surface_texts
+
     def _handle_surface_show(self, payload):
-        kind = payload.get('kind') or ''
-        x, y = self.pet.bubble_anchor()
-        if kind in ('input', 'choice'):
-            self._handle_input_request(payload)
-            return
-        if kind == 'bubble' and not payload.get('actions'):
-            timeout = payload.get('timeout_ms') or (payload.get('lifetime') or {}).get('ttl_ms') or int(payload.get('timeout', 6)) * 1000
-            bubble_id = self.note.setup_bubble(payload.get('text') or payload.get('message') or payload.get('summary') or payload.get('content') or '', x, y, int(timeout), title=payload.get('title') or config.current_pet or '宠物')
-            surface_id = payload.get('surface_id')
-            if surface_id:
-                self._surface_bubbles[surface_id] = bubble_id
-            return
         card_event = self._normalize_display_event(SURFACE_SHOW, payload)
-        self.note.setup_smart_bubble(card_event, x, y)
+        card_event['kind'] = 'card'
+        text = self._surface_text(card_event)
+        if self._is_silent_surface(text) and not card_event.get('elements') and not card_event.get('actions') and not card_event.get('controls'):
+            return
+        x, y = self.pet.bubble_anchor()
+        bubble_id = self.note.setup_smart_bubble(card_event, x, y)
+        surface_id = card_event.get('surface_id')
+        if surface_id:
+            self._surface_bubbles[surface_id] = bubble_id
         self._trigger_pet_reaction(card_event)
+
+    def _is_terminal_surface_status(self, payload):
+        status = str(payload.get('status') or payload.get('state') or '').strip().lower().replace('_', '-')
+        return bool(payload.get('done')) or status in ('done', 'completed', 'complete', 'success', 'failed', 'failure', 'error')
+
+    def _surface_timeout(self, payload):
+        if payload.get('timeout_ms') is not None:
+            return int(payload.get('timeout_ms') or 0)
+        lifetime = payload.get('lifetime') if isinstance(payload.get('lifetime'), dict) else {}
+        if lifetime.get('ttl_ms') is not None:
+            return int(lifetime.get('ttl_ms') or 0)
+        if payload.get('timeout') is not None:
+            return int(float(payload.get('timeout') or 0) * 1000)
+        return 6000 if self._is_terminal_surface_status(payload) else 60000
 
     def _handle_surface_update(self, payload):
         surface_id = payload.get('surface_id')
         if not surface_id:
             return
+        card_event = self._normalize_display_event(SURFACE_UPDATE, payload)
+        card_event['kind'] = 'card'
+        text = self._surface_text(card_event)
+        if self._is_silent_surface(text) and not card_event.get('elements') and not card_event.get('actions') and not card_event.get('controls'):
+            return
+        timeout = self._surface_timeout(card_event)
         bubble_id = self._surface_bubbles.get(surface_id)
-        content = payload.get('text') or payload.get('message') or payload.get('summary') or payload.get('content') or ''
-        timeout = payload.get('timeout_ms') or (6000 if payload.get('done') else 60000)
-        if bubble_id and self.note.update_bubble(bubble_id, content, timeout=timeout):
-            if payload.get('done'):
+        if bubble_id and self.note.update_bubble(bubble_id, card_event, timeout=timeout):
+            if self._is_terminal_surface_status(card_event):
                 self._surface_bubbles.pop(surface_id, None)
             return
         x, y = self.pet.bubble_anchor()
-        title = payload.get('title') or config.current_pet or '宠物'
-        bubble_id = self.note.setup_bubble(content, x, y, int(timeout), title=title)
+        bubble_id = self.note.setup_smart_bubble(card_event, x, y)
         self._surface_bubbles[surface_id] = bubble_id
-        if payload.get('done'):
+        if self._is_terminal_surface_status(card_event):
             self._surface_bubbles.pop(surface_id, None)
+
+    def _handle_surface_close(self, payload):
+        surface_id = payload.get('surface_id')
+        if not surface_id:
+            return
+        bubble_id = self._surface_bubbles.pop(surface_id, None)
+        if bubble_id:
+            self.note.close_bubble(bubble_id)
 
     def _handle_input_request(self, payload):
         title = payload.get('title') or '需要你的输入'
@@ -834,34 +861,6 @@ class MiniPetApp(QApplication):
                 self.note.setup_bubble(text, x, y, int(payload.get('timeout_ms') or 4000), title=config.current_pet or '宠物')
             return
         self._trigger_pet_reaction(payload)
-
-    def _handle_agent_status(self, event_type, payload):
-        x, y = self.pet.bubble_anchor()
-        if event_type == 'agent.step.update':
-            steps = payload.get('steps') or []
-            lines = []
-            for step in steps[:6]:
-                status = step.get('status') if isinstance(step, dict) else ''
-                mark = '✓' if status == 'done' else '●' if status == 'running' else '○'
-                lines.append('%s %s' % (mark, step.get('title') or step.get('id') if isinstance(step, dict) else step))
-            text = '\n'.join(lines) or '正在处理...'
-            self.note.setup_bubble(text, x, y, 8000, title=payload.get('title') or '任务步骤')
-            return
-        if event_type == 'agent.task.done':
-            self.pet.play_action(self._codex_pet_action('done'))
-            self.note.setup_bubble(payload.get('summary') or payload.get('title') or '任务完成', x, y, 6000, title='完成')
-            return
-        if event_type == 'agent.task.failed':
-            self.pet.play_action(self._codex_pet_action('failed'))
-            self.note.setup_bubble(payload.get('error') or '任务失败', x, y, 6000, title='失败')
-            return
-        title = payload.get('title') or payload.get('state') or (payload.get('task') or {}).get('title') or '智能体状态'
-        text = payload.get('text') or payload.get('status') or payload.get('state') or '正在处理...'
-        emotion = payload.get('emotion') or payload.get('state')
-        action = self._codex_pet_action(emotion)
-        if action != emotion:
-            self.pet.play_action(action)
-        self.note.setup_bubble(text, x, y, 5000, title=title)
 
     def _send_context_status(self, request_id=None):
         if not self.events:

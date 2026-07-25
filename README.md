@@ -85,16 +85,15 @@ curl http://127.0.0.1:18889/health
 链路如下：
 
 ```text
-miniPet user.command
+miniPet user.command 文本命令
 → miniClaw /ws/minipet
 → miniClaw LLM/Agent
-→ surface.show 创建气泡
-→ surface.update 流式更新气泡
-→ surface.update done=true 完成
+→ surface.show 创建通用卡片
+→ surface.update 流式更新同一张卡片
+→ surface.update done=true / status=done 完成
 ```
 
-miniPet 使用 `surface_id` 追踪同一个气泡，因此 miniClaw 的流式回复会在同一个气泡里持续刷新，不会生成多条气泡。
-
+miniPet 使用 `surface_id` 追踪同一张卡片，因此 miniClaw 的流式回复会在同一张卡片里持续刷新，不会生成多条气泡。外置后端协议只推荐卡片输出，普通文字、按钮、富文本、选择和输入都放进 `kind: card` 的 payload。
 miniClaw 侧可选环境变量：
 
 ```text
@@ -235,7 +234,7 @@ wss://openspeech.bytedance.com/api/v3/tts/unidirectional/stream
 
 ### 通知与外部事件
 
-miniPet 可以作为独立桌宠运行，也可以可选连接外部事件源。
+miniPet 可以作为独立桌宠运行，也可以可选连接外部事件源。外置 AI 后端通信使用 miniPet v1 WebSocket 协议，显示层统一为通用卡片。
 
 默认事件 WebSocket 地址：
 
@@ -243,13 +242,25 @@ miniPet 可以作为独立桌宠运行，也可以可选连接外部事件源。
 ws://localhost:18888/ws/pet
 ```
 
-支持事件类型：
+推荐事件类型：
 
-- `message`：显示智能气泡，支持标题、发送人、摘要、建议和按钮
-- `bubble`：显示普通宠物气泡
-- `action`：触发宠物动作
+- `user.command`：miniPet 发给后端的文字命令，`mode` 固定为 `text`
+- `user.drop`：桌宠拖拽/投喂内容
+- `surface.show`：创建通用卡片
+- `surface.update`：按 `surface_id` 更新同一张卡片，用于流式输出
+- `surface.close`：关闭指定卡片
+- `user.action`：用户点击卡片按钮后回传后端
 
-用户点击智能气泡按钮时，可以回调外部服务：
+通用卡片结构：
+
+```text
+Card
+├─ elements：展示内容，普通文本、Markdown、分隔线等
+├─ controls：输入/选择控件，文本框、单选、多选、自定义输入等
+└─ actions：按钮，提交、取消、确认、复制、重试等
+```
+
+卡片按需渲染：不存在的 `elements` / `controls` / `actions` 不占空间。用户点击按钮时会回调外部服务；WebSocket 不在线时 fallback 到：
 
 ```text
 POST http://localhost:18888/actions/execute
@@ -304,7 +315,7 @@ windows.doubao_call_window.DoubaoCallWindow
 
 外部事件：
 clients.event_client.EventClient → protocols.protocol_v1
-→ NotificationCenter → 气泡/动作/聊天入口
+→ NotificationCenter → 通用卡片/动作/聊天入口
 ```
 
 ## 运行
@@ -347,7 +358,7 @@ miniPet/data/minipet_settings.json
 LLM_API_BASE=https://api.openai.com/v1
 LLM_API_KEY=
 LLM_MODEL=gpt-4o-mini
-LLM_MAX_TOKENS=1024
+LLM_MEMORY_TURNS=10
 LLM_SYSTEM_PROMPT=你是一只可爱的桌面宠物，性格活泼亲切，会用简短、口语化、带点撒娇的语气陪伴主人聊天。
 ```
 
@@ -380,15 +391,10 @@ WAKE_WORDS=小月小月
 
 ### 豆包通话配置
 
-豆包通话配置也从 `.env` 读取，并可在设置页保存。设置页只暴露音色、角色背景和说话风格；豆包通话入口不再依赖单独的启用开关，模型固定为 O2.0 通用对话 `1.2.1.1`。
+豆包通话配置也从 `.env` 读取，并可在“语音”设置页保存。设置页只暴露豆包通话音色；角色背景复用“角色”页的宠物性格，说话风格由代码固定，模型固定为 O2.0 通用对话 `1.2.1.1`。
 
 ```text
-DOUBAO_CALL_ENABLED=true
-DOUBAO_CALL_MODEL=1.2.1.1
 DOUBAO_CALL_SPEAKER=zh_female_vv_jupiter_bigtts
-DOUBAO_CALL_BOT_NAME=miniPet
-DOUBAO_CALL_SYSTEM_ROLE=你是一只可爱的桌面宠物，陪伴用户聊天，回答要简短自然。
-DOUBAO_CALL_SPEAKING_STYLE=语气活泼、亲切、口语化。
 ```
 
 当前欢迎词固定为：
@@ -519,24 +525,86 @@ ENV_FILE = ROOT_DIR / '.env'
 
 因此删除外层 `res/` 后，miniPet 仍会读取内部资源。
 
-## 外部事件示例
+## 外部通用卡片示例
+
+普通文字和流式状态：
 
 ```json
 {
-  "type": "message",
-  "title": "模拟事件",
-  "sender": "mock",
-  "summary": "这是一条高优先级提醒",
-  "suggestion": "点击按钮可以执行动作",
-  "priority": "high",
-  "actions": [
-    { "id": "ignore", "label": "忽略" },
-    { "id": "later", "label": "稍后" }
-  ]
+  "type": "surface.show",
+  "payload": {
+    "surface_id": "reply-1",
+    "kind": "card",
+    "title": "AI 回复",
+    "content": "正在生成回复...",
+    "status": "streaming",
+    "timeout_ms": 0
+  }
 }
 ```
 
-miniPet 收到后会显示智能气泡，并根据 `priority` 或 `pet_action` 触发动作。
+```json
+{
+  "type": "surface.update",
+  "payload": {
+    "surface_id": "reply-1",
+    "content": "这是最终回复。",
+    "status": "done",
+    "done": true,
+    "timeout_ms": 8000
+  }
+}
+```
+
+带展示内容、选择输入和按钮：
+
+```json
+{
+  "type": "surface.show",
+  "payload": {
+    "surface_id": "plan-choice-1",
+    "kind": "card",
+    "title": "请选择方案",
+    "elements": [
+      {"type": "markdown", "content": "请选择一种实现方式，也可以输入其他方案。"}
+    ],
+    "controls": [
+      {
+        "id": "plan",
+        "type": "radio_group",
+        "label": "方案",
+        "options": [
+          {"id": "simple", "label": "简单方案", "description": "改动少"},
+          {"id": "full", "label": "完整方案", "description": "功能完整"}
+        ],
+        "allow_custom": true
+      }
+    ],
+    "actions": [
+      {"id": "cancel", "label": "取消", "style": "quiet"},
+      {"id": "submit", "label": "提交", "style": "primary"}
+    ]
+  }
+}
+```
+
+用户点击按钮后，miniPet 回传：
+
+```json
+{
+  "type": "user.action",
+  "source": "minipet",
+  "payload": {
+    "surface_id": "plan-choice-1",
+    "action_id": "submit",
+    "values": {
+      "plan": "simple"
+    },
+    "action": {"id": "submit", "label": "提交", "style": "primary"},
+    "metadata": {}
+  }
+}
+```
 
 ## 开发原则
 

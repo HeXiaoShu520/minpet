@@ -54,9 +54,14 @@ class NotificationCenter(QWidget):
 
     def update_bubble(self, bubble_id, message, timeout=None):
         bubble = self.bubbles.get(bubble_id)
-        if bubble is None or not hasattr(bubble, 'update_message'):
+        if bubble is None:
             return False
-        bubble.update_message(message, timeout=timeout)
+        if isinstance(message, dict) and hasattr(bubble, 'update_card'):
+            bubble.update_card(message, timeout=timeout)
+        elif hasattr(bubble, 'update_message'):
+            bubble.update_message(message, timeout=timeout)
+        else:
+            return False
         self._reflow_bubbles(animate=True)
         return True
 

@@ -76,7 +76,7 @@ class EventClient(QThread):
 
     def _normalize(self, data):
         if not isinstance(data, dict):
-            return {'type': 'message', 'summary': str(data)}
+            return normalize_inbound_event(data)
         event = dict(data)
         event.setdefault('type', 'message')
         event.setdefault('priority', 'normal')
@@ -167,6 +167,8 @@ class EventClient(QThread):
             'action': action,
             'metadata': event.get('metadata') or {},
         }
+        if event.get('values') is not None:
+            payload['values'] = event.get('values')
         return self.send_event(USER_ACTION, payload)
 
     def set_url(self, url):
