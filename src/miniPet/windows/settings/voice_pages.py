@@ -124,6 +124,14 @@ class TTSPage(MiniPetScrollPage):
         self.expandLayout.addWidget(self.linkGroup)
         self._initializing = False
 
+    def _style_editor(self, editor):
+        editor.setFixedSize(520, 78)
+        editor.setStyleSheet(
+            'QPlainTextEdit{background:#ffffff;border:1px solid #dfe3e8;border-radius:8px;'
+            'padding:8px 10px;font-size:14px;color:#1f2328;}'
+            'QPlainTextEdit:focus{border:1px solid #8ab4f8;}'
+        )
+
     def _voice_preview_path(self, voice_value, text=''):
         safe_name = ''.join(ch if ch.isalnum() or ch in ('-', '_') else '_' for ch in voice_value)
         text = (text or '').strip()
