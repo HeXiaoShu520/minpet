@@ -37,7 +37,7 @@ def is_horizontal_hover_entry(owner):
     dy = end.y() - start.y()
     adx = abs(dx)
     ady = abs(dy)
-    return adx >= 18 and adx >= ady * 1.6
+    return adx >= 10 and adx >= ady * 1.6
 
 
 def arm_hover_menu_from_cursor(owner):
@@ -54,7 +54,7 @@ def arm_hover_menu_from_cursor(owner):
         owner.hover_timer.stop()
         return
     owner.hover_menu_armed = True
-    owner.hover_timer.start(600)
+    owner.hover_timer.start(300)
 
 
 def disarm_hover_menu(owner):
