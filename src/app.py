@@ -99,6 +99,7 @@ class MiniPetApp(QApplication):
         self.pet_voice_asr_worker = None
         self.pet_voice_waiting_reply = False
         self.pet_voice_paused = False
+        self.pet_voice_paused_stage = 'idle'
         self.pet_voice_shared_screen = None  # 语音球屏幕共享
         self.wake_word_worker = None
         self.wake_ack_worker = None
@@ -114,6 +115,7 @@ class MiniPetApp(QApplication):
         self.pet.chat_requested.connect(self._show_chat_window)
         self.pet.voice_chat_requested.connect(self._toggle_voice_orb)
         self.pet.voice_pause_requested.connect(self._pause_pet_voice_chat)
+        self.pet.voice_stop_requested.connect(self._stop_pet_voice_chat)
         self.pet.share_screen_requested.connect(self._on_voice_share_screen_toggled)
         self.pet.doubao_call_requested.connect(self._show_doubao_call_window)
         self.pet.quit_requested.connect(self._on_quit_requested)
@@ -311,12 +313,7 @@ class MiniPetApp(QApplication):
         self._open_voice_orb()
 
     def _open_voice_orb(self):
-        popup = self.pet.show_voice_popup()
-        try:
-            popup.stop_requested.disconnect(self._stop_pet_voice_chat)
-        except (TypeError, RuntimeError):
-            pass
-        popup.stop_requested.connect(self._stop_pet_voice_chat)
+        self.pet.show_voice_popup()
         if not config.tts_config.get('api_key'):
             self.pet.update_voice_popup('error', '缺少语音配置')
             x, y = self.pet.reply_card_anchor()
@@ -339,12 +336,7 @@ class MiniPetApp(QApplication):
                 self._pause_wake_word_listener()
                 self._start_pet_voice_recording()
             return
-        popup = self.pet.show_voice_popup()
-        try:
-            popup.stop_requested.disconnect(self._stop_pet_voice_chat)
-        except (TypeError, RuntimeError):
-            pass
-        popup.stop_requested.connect(self._stop_pet_voice_chat)
+        self.pet.show_voice_popup()
         if not config.tts_config.get('api_key'):
             self.pet.update_voice_popup('error', '缺少语音配置')
             x, y = self.pet.reply_card_anchor()
@@ -389,9 +381,21 @@ class MiniPetApp(QApplication):
             return
         if self.pet_voice_paused:
             self.pet_voice_paused = False
-            self._start_pet_voice_recording()
+            if self.pet_voice_paused_stage == 'wakeup':
+                self.pet.update_voice_popup('wakeup', '')
+                self._resume_wake_word_listener()
+            else:
+                self._start_pet_voice_recording()
+            self.pet_voice_paused_stage = 'idle'
             return
         self.pet_voice_paused = True
+        if self.pet_voice_listening or self.pet_voice_waiting_reply or self.quick_stream_tts.is_active() or self.external_stream_tts.is_active() or self.wake_ack_worker is not None:
+            self.pet_voice_paused_stage = 'recording'
+        elif self._wake_word_enabled():
+            self.pet_voice_paused_stage = 'wakeup'
+        else:
+            self.pet_voice_paused_stage = 'recording'
+        self._pause_wake_word_listener()
         self._stop_pet_voice_recording()
         stop_tts()
         self._cancel_current_reply_workers()
@@ -411,7 +415,9 @@ class MiniPetApp(QApplication):
         self.pet_voice_listening = False
         self.pet_voice_waiting_reply = False
         self.pet_voice_paused = False
+        self.pet_voice_paused_stage = 'idle'
         self.pet_voice_shared_screen = None
+        self._stop_wake_word_listener()
         if self.pet_voice_asr_worker is not None:
             self.pet_voice_asr_worker.finish()
             self.pet_voice_asr_worker.wait(1200)

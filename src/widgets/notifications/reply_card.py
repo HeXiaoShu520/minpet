@@ -1,9 +1,9 @@
 # coding:utf-8
 """回复卡片窗口。"""
 
-from PySide6.QtCore import QEasingCurve, Property, QPropertyAnimation, Qt, QTimer, Signal
-from PySide6.QtGui import QPainter, QPainterPath, QPixmap
-from PySide6.QtWidgets import QApplication, QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton, QVBoxLayout
+from PySide6.QtCore import QEasingCurve, Property, QElapsedTimer, QPropertyAnimation, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap, QTextDocument
+from PySide6.QtWidgets import QApplication, QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QRadioButton, QVBoxLayout
 
 import config
 from typewriter import Typewriter
@@ -17,6 +17,66 @@ REPLY_CARD_MIN_WIDTH = REPLY_CARD_WIDTH_LEVELS[0]
 REPLY_CARD_MAX_WIDTH = REPLY_CARD_WIDTH_LEVELS[-1]
 REPLY_CARD_AVATAR_SIZE = 36
 REPLY_CARD_RESIZE_ANIM_MS = 180
+REPLY_CARD_COUNTDOWN_TICK_MS = 80
+
+
+class CountdownAvatarLabel(QLabel):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._progress = 1.0
+        self._permanent = False
+
+    def set_progress(self, value):
+        self._permanent = False
+        self._progress = max(0.0, min(1.0, float(value)))
+        self.update()
+
+    def set_permanent(self):
+        self._permanent = True
+        self._progress = 1.0
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        progress = 1.0 if self._permanent else self._progress
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        width = 3.0
+        rect = QRectF(width / 2, width / 2, self.width() - width, self.height() - width)
+        painter.setPen(QPen(QColor(255, 255, 255, 150), width, Qt.SolidLine, Qt.RoundCap))
+        painter.drawArc(rect, 0, 360 * 16)
+        if progress > 0:
+            painter.setPen(QPen(QColor(0, 168, 180, 235), width, Qt.SolidLine, Qt.RoundCap))
+            painter.drawArc(rect, 90 * 16, -int(360 * 16 * progress))
+        painter.end()
+
+
+class CopyableLabel(QLabel):
+    def __init__(self, text='', parent=None):
+        super().__init__(text, parent)
+        self.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
+        self.setCursor(Qt.IBeamCursor)
+
+    def contextMenuEvent(self, event):
+        text = self.selectedText().replace('\u2029', '\n') or self._visible_plain_text()
+        menu = QMenu(self)
+        copy_action = menu.addAction('复制')
+        copy_action.setEnabled(bool(text))
+        action = menu.exec(event.globalPos())
+        if action == copy_action and text:
+            QApplication.clipboard().setText(text)
+        event.accept()
+
+    def _visible_plain_text(self):
+        text = self.text()
+        if not text:
+            return ''
+        if self.textFormat() == Qt.RichText or text.lstrip().startswith('<'):
+            doc = QTextDocument()
+            doc.setHtml(text)
+            return doc.toPlainText()
+        return text
+
 
 def _reply_card_style_qss(style):
     card = {
@@ -74,6 +134,8 @@ class ReplyCard(ReplyCardWindow):
         self._resize_anim = None
         self._resize_anchor_center_x = None
         self._resize_anchor_bottom_y = None
+        self._timeout_ms = 0
+        self._countdown_elapsed = QElapsedTimer()
         self.setStyleSheet(_reply_card_style_qss(config.app_config.get('reply_card_style', 'aurora')))
         # 顶层透明窗口叠加 QGraphicsDropShadowEffect 在 Windows 多屏/缩放环境下
         # 容易产生负 dirty rect，触发 UpdateLayeredWindowIndirect 参数错误。
@@ -103,11 +165,12 @@ class ReplyCard(ReplyCardWindow):
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.request_close)
+        self.countdown_timer = QTimer(self)
+        self.countdown_timer.timeout.connect(self._tick_countdown)
         self.status_timer = QTimer(self)
         self.status_timer.timeout.connect(self._tick_status)
         self._refresh_status()
-        if timeout > 0:
-            self.timer.start(timeout)
+        self._start_auto_close(timeout)
 
     def _nearest_width_level(self, width):
         return min(REPLY_CARD_WIDTH_LEVELS, key=lambda level: abs(level - width))
@@ -132,6 +195,31 @@ class ReplyCard(ReplyCardWindow):
     def _sync_content_widths(self):
         for label in self.findChildren(QLabel, 'ReplyCardElement'):
             label.setFixedWidth(self._content_width)
+
+    def _start_auto_close(self, timeout):
+        self.timer.stop()
+        self.countdown_timer.stop()
+        self._timeout_ms = max(0, int(timeout or 0))
+        if self.manual_position or self._timeout_ms <= 0:
+            self.avatar_label.set_permanent()
+            return
+        self.avatar_label.set_progress(1.0)
+        self._countdown_elapsed.restart()
+        self.timer.start(self._timeout_ms)
+        self.countdown_timer.start(REPLY_CARD_COUNTDOWN_TICK_MS)
+
+    def _tick_countdown(self):
+        if self.manual_position:
+            self._make_permanent()
+            return
+        if self._timeout_ms <= 0 or not self._countdown_elapsed.isValid():
+            self.countdown_timer.stop()
+            self.avatar_label.set_permanent()
+            return
+        progress = 1.0 - (self._countdown_elapsed.elapsed() / self._timeout_ms)
+        self.avatar_label.set_progress(progress)
+        if progress <= 0:
+            self.countdown_timer.stop()
 
     def _get_adaptive_width(self):
         return int(self._animated_width or self.width() or self._card_width)
@@ -163,7 +251,7 @@ class ReplyCard(ReplyCardWindow):
         self._sync_content_widths()
         self.adjustSize()
         self._move_to_resize_anchor(anchor_center_x, anchor_bottom_y)
-        self._ensure_topmost()
+        self._refresh_topmost_soon()
 
     def _animate_card_width_to(self, width, anchor_center_x=None, anchor_bottom_y=None):
         width = self._normalized_card_width(width)
@@ -242,7 +330,7 @@ class ReplyCard(ReplyCardWindow):
     def _build_header(self, card):
         header = QHBoxLayout()
         header.setSpacing(9)
-        self.avatar_label = QLabel(card)
+        self.avatar_label = CountdownAvatarLabel(card)
         self.avatar_label.setObjectName('ReplyCardAvatar')
         self.avatar_label.setFixedSize(REPLY_CARD_AVATAR_SIZE, REPLY_CARD_AVATAR_SIZE)
         self.avatar_label.setAlignment(Qt.AlignCenter)
@@ -256,7 +344,7 @@ class ReplyCard(ReplyCardWindow):
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
         title_row.setSpacing(6)
-        self.title_label = QLabel(config.pet_display_name(), card)
+        self.title_label = CopyableLabel(config.pet_display_name(), card)
         self.title_label.setObjectName('ReplyCardTitle')
         self.title_label.setWordWrap(True)
         self.title_label.setMaximumWidth(280)
@@ -362,15 +450,13 @@ class ReplyCard(ReplyCardWindow):
             self._render_body()
         self._refresh_status()
         if timeout is not None:
-            self.timer.stop()
-            if int(timeout) > 0:
-                self.timer.start(int(timeout))
+            self._start_auto_close(timeout)
         if width_changed:
             self._animate_card_width_to(new_width, anchor_center_x, anchor_bottom_y)
         else:
             self.adjustSize()
             self._move_to_resize_anchor(anchor_center_x, anchor_bottom_y)
-            self._ensure_topmost()
+            self._refresh_topmost_soon()
 
     def update_message(self, message, timeout=None):
         """兼容纯文本回复的更新入口。"""
@@ -411,8 +497,19 @@ class ReplyCard(ReplyCardWindow):
         self._status_frame = (self._status_frame + 1) % len(self._status_frames)
         self.status_label.setText(self._status_frames[self._status_frame])
 
+    def _make_permanent(self):
+        self.timer.stop()
+        self.countdown_timer.stop()
+        self.avatar_label.set_permanent()
+
+    def _on_manual_positioned(self):
+        self._make_permanent()
+
     def _before_request_close(self):
         super()._before_request_close()
+        self.countdown_timer.stop()
+        if hasattr(self, 'avatar_label'):
+            self.avatar_label.set_progress(0.0)
         self.status_timer.stop()
 
     def _add_elements(self, layout, card, elements):
@@ -432,7 +529,7 @@ class ReplyCard(ReplyCardWindow):
             if not content:
                 continue
             is_primary = bool(element.get('_primary'))
-            label = QLabel('', card)
+            label = CopyableLabel('', card)
             label.setObjectName('ReplyCardElement')
             label.setTextFormat(Qt.RichText)
             label.setWordWrap(True)
@@ -581,6 +678,7 @@ class ReplyCard(ReplyCardWindow):
         self.request_close()
 
     def _before_close_event(self):
+        self.countdown_timer.stop()
         self.status_timer.stop()
         if self._resize_anim is not None:
             self._resize_anim.stop()

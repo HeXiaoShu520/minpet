@@ -53,6 +53,7 @@ class DesktopPet(QWidget):
     chat_requested = Signal()
     voice_chat_requested = Signal()
     voice_pause_requested = Signal()
+    voice_stop_requested = Signal()
     share_screen_requested = Signal(bool)
     doubao_call_requested = Signal()
     pet_changed = Signal(str)
@@ -306,6 +307,7 @@ class DesktopPet(QWidget):
         x, y = self.reply_card_anchor()
         self.voice_popup = PetVoicePopup(x, y, self)
         self.voice_popup.pause_requested.connect(self.voice_pause_requested.emit)
+        self.voice_popup.stop_requested.connect(self.voice_stop_requested.emit)
         self.voice_popup.destroyed.connect(lambda: setattr(self, 'voice_popup', None))
         return self.voice_popup
 

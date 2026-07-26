@@ -4,7 +4,7 @@
 import ctypes
 import sys
 
-from PySide6.QtCore import QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, QPoint, Qt, Signal
+from PySide6.QtCore import QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, QPoint, Qt, QTimer, Signal
 from PySide6.QtWidgets import QFrame
 
 from clients.tts_client import stop_tts
@@ -25,6 +25,7 @@ class ReplyCardWindow(QFrame):
         self.closing = False
         self.closed_emitted = False
         self.dragging = False
+        self.drag_moved = False
         self.drag_start_pos = QPoint()
         self.drag_window_pos = QPoint()
         self.manual_position = False
@@ -33,7 +34,10 @@ class ReplyCardWindow(QFrame):
         self.setWindowOpacity(initial_opacity)
 
     def _ensure_topmost(self):
-        self.raise_()
+        try:
+            self.raise_()
+        except RuntimeError:
+            return
         if sys.platform != 'win32':
             return
         try:
@@ -43,12 +47,21 @@ class ReplyCardWindow(QFrame):
         except Exception:
             pass
 
+    def _refresh_topmost_soon(self):
+        self._ensure_topmost()
+        for delay in (0, 60, 180, 360):
+            QTimer.singleShot(delay, self._ensure_topmost)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._refresh_topmost_soon()
+
     def animate_in(self, end_pos):
         if self.anim_group is not None:
             self.anim_group.stop()
         self.move(end_pos + CARD_ENTER_OFFSET)
         self.show()
-        self._ensure_topmost()
+        self._refresh_topmost_soon()
         pos_anim = QPropertyAnimation(self, b'pos', self)
         pos_anim.setDuration(CARD_ANIM_IN_MS)
         pos_anim.setStartValue(self.pos())
@@ -64,7 +77,7 @@ class ReplyCardWindow(QFrame):
             self.anim_group.addAnimation(opacity_anim)
         else:
             self.setWindowOpacity(1.0)
-        self.anim_group.finished.connect(self._ensure_topmost)
+        self.anim_group.finished.connect(self._refresh_topmost_soon)
         self.anim_group.start()
 
     def animate_to(self, end_pos):
@@ -79,7 +92,7 @@ class ReplyCardWindow(QFrame):
         pos_anim.setEasingCurve(QEasingCurve.OutCubic)
         self.anim_group = QParallelAnimationGroup(self)
         self.anim_group.addAnimation(pos_anim)
-        self.anim_group.finished.connect(self._ensure_topmost)
+        self.anim_group.finished.connect(self._refresh_topmost_soon)
         self.anim_group.start()
 
     def request_close(self):
@@ -96,20 +109,20 @@ class ReplyCardWindow(QFrame):
             return
         if event.button() == Qt.LeftButton:
             self.dragging = True
+            self.drag_moved = False
             self.drag_start_pos = event.globalPos()
             self.drag_window_pos = self.pos()
             if self.anim_group is not None:
                 self.anim_group.stop()
             self._ensure_topmost()
-            timer = getattr(self, 'timer', None)
-            if timer is not None:
-                timer.stop()
             event.accept()
             return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
         if self.dragging and event.buttons() & Qt.LeftButton:
+            if (event.globalPos() - self.drag_start_pos).manhattanLength() >= 4:
+                self.drag_moved = True
             self.move(self.drag_window_pos + event.globalPos() - self.drag_start_pos)
             event.accept()
             return
@@ -118,7 +131,9 @@ class ReplyCardWindow(QFrame):
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton and self.dragging:
             self.dragging = False
-            self.manual_position = True
+            if self.drag_moved:
+                self.manual_position = True
+                self._on_manual_positioned()
             event.accept()
             return
         super().mouseReleaseEvent(event)
@@ -134,6 +149,9 @@ class ReplyCardWindow(QFrame):
             timer.stop()
 
     def _before_close_event(self):
+        pass
+
+    def _on_manual_positioned(self):
         pass
 
     def _animate_out(self):

@@ -3,7 +3,7 @@
 
 import math
 
-from PySide6.QtCore import QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, QPoint, QPointF, QRectF, Qt, QTimer, Signal, Property
+from PySide6.QtCore import QEasingCurve, QEvent, QParallelAnimationGroup, QPropertyAnimation, QPoint, QPointF, QRectF, Qt, QTimer, Signal, Property
 from PySide6.QtGui import QBrush, QColor, QFontMetrics, QPainter, QPen, QRadialGradient
 from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QWidget
 
@@ -297,6 +297,7 @@ class PetVoicePopup(QFrame):
         root.setSpacing(0)
 
         self.anim_widget = VoiceOrbWidget(card)
+        self.anim_widget.installEventFilter(self)
         self.anim_widget.width_changed.connect(self._sync_to_current_anchor)
         self.anim_widget.setToolTip('单击暂停/继续语音，双击结束语音聊天')
         root.addWidget(self.anim_widget)
@@ -316,6 +317,22 @@ class PetVoicePopup(QFrame):
         self.anim_timer = QTimer(self)
         self.anim_timer.timeout.connect(self._tick_animation)
         self.anim_timer.start(120)
+
+    def eventFilter(self, watched, event):
+        if watched is self.anim_widget:
+            if event.type() == QEvent.MouseButtonDblClick and event.button() == Qt.LeftButton:
+                self.click_timer.stop()
+                self.stop_requested.emit()
+                event.accept()
+                return True
+            if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                self.click_timer.start(QApplication.doubleClickInterval())
+                event.accept()
+                return True
+            if event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
+                event.accept()
+                return True
+        return super().eventFilter(watched, event)
 
     def _pos_from_anchor(self, x, y):
         side_overlap = 8

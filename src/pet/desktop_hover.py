@@ -41,20 +41,7 @@ def is_horizontal_hover_entry(owner):
 
 
 def arm_hover_menu_from_cursor(owner):
-    local = owner.mapFromGlobal(QCursor.pos()) - owner.label.pos()
-    inside = owner._current_visible_bounds().contains(local)
-    if not inside:
-        disarm_hover_menu(owner)
-        return
-    if owner.hover_inside_visible:
-        return
-    owner.hover_inside_visible = True
-    if not is_horizontal_hover_entry(owner):
-        owner.hover_menu_armed = False
-        owner.hover_timer.stop()
-        return
-    owner.hover_menu_armed = True
-    owner.hover_timer.start(300)
+    disarm_hover_menu(owner)
 
 
 def disarm_hover_menu(owner):

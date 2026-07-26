@@ -118,7 +118,10 @@ def handle_mouse_release(owner, event):
     if event.button() == Qt.RightButton:
         if owner.suppress_next_right_release_menu:
             owner.suppress_next_right_release_menu = False
-        owner.right_click_menu_timer.stop()
+            owner.right_click_menu_timer.stop()
+            event.accept()
+            return True
+        owner.right_click_menu_timer.start(QApplication.doubleClickInterval() + 40)
         event.accept()
         return True
     if event.button() != Qt.LeftButton:
