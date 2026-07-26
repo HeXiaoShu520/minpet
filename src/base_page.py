@@ -1,6 +1,6 @@
 # coding:utf-8
 """
-miniPet 设置页面基类，单独放置以避免循环导入。
+MiniPet 设置页面基类，单独放置以避免循环导入。
 """
 
 from PySide6.QtCore import Qt

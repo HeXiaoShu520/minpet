@@ -1,11 +1,11 @@
 # coding:utf-8
-"""通知气泡使用的轻量文本格式化。"""
+"""回复卡片使用的轻量文本格式化。"""
 
 import re
 
 
 def markdown_to_html(text):
-    """支持通知气泡里常用的少量 Markdown，并先做 HTML 转义。"""
+    """支持回复卡片里常用的少量 Markdown，并先做 HTML 转义。"""
     if not text:
         return ''
     html = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')

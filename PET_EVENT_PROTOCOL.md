@@ -1,16 +1,16 @@
-# MINIPET 通用事件协议（Legacy）
+# MiniPet 通用事件协议（Legacy）
 
-本文是旧版简化事件协议，继续用于兼容 miniClaw、脚本和早期 OpenClaw adapter。新后端优先阅读 `minipet交互协议设计.md`，使用 V1 的 `session` / `user` / `surface` / `agent` 核心协议。
+本文是旧版简化事件协议，继续用于兼容 miniClaw 和脚本。新后端优先阅读 `minipet交互协议设计.md`，使用 `session` / `user` / `surface` / `agent` 核心协议。
 
-MINIPET 不强绑定飞书。miniClaw、飞书、脚本或其他软件都可以作为外部事件源，通过 WebSocket 向 MINIPET 推送事件。
+MiniPet 不强绑定飞书。miniClaw、飞书、脚本或其他软件都可以作为外部事件源，通过 WebSocket 向 MiniPet 推送事件。
 
 默认连接地址：
 
 ```text
-ws://localhost:18888/ws/pet
+ws://127.0.0.1:18889/ws/minipet
 ```
 
-MINIPET 收到事件后只做三件事：
+MiniPet 收到事件后只做三件事：
 
 1. 展示宠物气泡
 2. 按优先级触发宠物动作
@@ -57,7 +57,7 @@ POST http://localhost:18888/actions/execute
 - `suggestion`：AI 建议回复或建议动作
 - `priority`：`normal` / `high` / `urgent`
 - `is_at_me`：是否需要用户关注
-- `pet_action`：显式指定宠物动作；为空时 MINIPET 按优先级自动选择
+- `pet_action`：显式指定宠物动作；为空时 MiniPet 按优先级自动选择
 - `timeout`：气泡显示秒数，默认 12 秒
 - `actions`：最多显示前三个按钮
 
@@ -88,7 +88,7 @@ POST http://localhost:18888/actions/execute
 
 ## 按钮回传
 
-用户点击智能气泡按钮时，MINIPET 会尝试 POST 到 `/actions/execute`：
+用户点击智能气泡按钮时，MiniPet 会尝试 POST 到 `/actions/execute`：
 
 ```json
 {
@@ -101,4 +101,4 @@ POST http://localhost:18888/actions/execute
 }
 ```
 
-如果外部服务不在线，MINIPET 会静默失败，不影响独立运行。
+如果外部服务不在线，MiniPet 会静默失败，不影响独立运行。

@@ -362,7 +362,7 @@ class ChatWindow(QWidget):
             self.history.append(message)
         self._push_message('user', message.get('content', content))
 
-        # 开始流式气泡
+        # 开始流式回复卡片
         stream_id = str(uuid.uuid4())
         self._start_stream(stream_id)
         self._reset_stream_tts()

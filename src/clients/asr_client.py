@@ -82,7 +82,7 @@ def _build_packet(message_type, flags, serialization, compression, payload=b'', 
 
 def build_start_request():
     payload = {
-        'user': {'uid': 'miniPet'},
+        'user': {'uid': config.APP_ID},
         'audio': {
             'format': 'pcm',
             'codec': 'raw',

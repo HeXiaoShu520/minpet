@@ -1,26 +1,26 @@
-# miniPet 桌面 AI 交互协议 V1
+# MiniPet 桌面 AI 交互协议
 
-miniPet V1 是外置 AI 后端与桌面宠物之间的轻量交互协议。
+MiniPet 通用协议是外置 AI 后端与桌面宠物之间的轻量交互协议。
 
-miniPet 不执行业务 API，不替代后端；它只负责：
+MiniPet 不执行业务 API，不替代后端；它只负责：
 
 - 接收用户在桌宠上的文字输入、拖拽投喂和卡片操作；
-- 在桌面上展示后端返回的通用卡片；
+- 在桌面上展示后端返回的回复卡片；
 - 把用户点击、选择、输入结果整理成文本回传给后端。
 
 一句话：
 
-> miniPet 发送 `user.input`，后端发送 `surface.*`，用户输入统一交给后端大模型理解。
+> MiniPet 发送 `user.input`，后端发送 `surface.*`，用户输入统一交给后端大模型理解。
 
 ## 1. 设计目标
 
 - 协议小：只保留 `session`、`user`、`surface` 三类顶层概念。
 - 输入简单：外置后端只接收 `user.input` 文本输入，不承载语音协议。
-- 输出统一：普通文字、按钮、富文本、选择、输入、流式状态都用通用卡片表达。
-- 交互闭环：用户点击按钮或提交控件值后，miniPet 整理成文本继续发送 `user.input`。
+- 输出统一：普通文字、按钮、富文本、选择、输入、流式状态都用回复卡片表达。
+- 交互闭环：用户点击按钮或提交控件值后，MiniPet 整理成文本继续发送 `user.input`。
 - 可扩展：后续增加更多控件时，扩展 `controls`，不增加新的 surface 类型。
 
-miniPet 的边界：
+MiniPet 的边界：
 
 - 不直接发送飞书消息、审批、创建日程或任务。
 - 不自动采集屏幕、窗口标题、选中文本等敏感上下文。
@@ -28,21 +28,122 @@ miniPet 的边界：
 
 ## 2. 传输模型
 
-miniPet 作为 WebSocket client 主动连接本地或自定义后端：
+MiniPet 作为 WebSocket client 主动连接本地或自定义后端：
 
 | 模式 | 默认地址 | 说明 |
 | --- | --- | --- |
-| OpenClaw adapter | `ws://127.0.0.1:18888/ws/pet` | miniPet 连接本地 adapter |
-| miniClaw / 通用后端 | `ws://127.0.0.1:18889/ws/minipet` | miniPet 连接遵循 V1 的后端 |
+| MiniPet 协议后端 | `ws://127.0.0.1:18889/ws/minipet` | MiniPet 连接遵循本协议的后端 |
 
 也支持环境变量覆盖：
 
 ```text
 MINIPET_EVENT_WS=ws://127.0.0.1:18889/ws/minipet
-MINIPET_ACTION_URL=http://localhost:18888/actions/execute
+MINIPET_ACTION_URL=http://127.0.0.1:18889/actions/execute
 ```
 
-WebSocket 不可用时，miniPet 发送事件会 fallback 到 HTTP POST，POST body 是同样的事件 JSON。
+WebSocket 不可用时，MiniPet 发送事件会 fallback 到 HTTP POST，POST body 是同样的事件 JSON。
+
+### 快速接入
+
+后端只需要实现一个 WebSocket 服务。启动后，在 MiniPet 的“设置 → 智能体设置”中选择“连接 MiniPet 协议后端”，地址填写：
+
+```text
+ws://127.0.0.1:18889/ws/minipet
+```
+
+MiniPet 连接后会先发送：
+
+```json
+{
+  "version": "1.0",
+  "type": "session.hello",
+  "payload": {
+    "protocol": "minipet.v1"
+  }
+}
+```
+
+后端可回复就绪：
+
+```json
+{
+  "version": "1.0",
+  "type": "session.ready",
+  "payload": {
+    "server": {
+      "name": "my-agent"
+    }
+  }
+}
+```
+
+用户输入会发送为：
+
+```json
+{
+  "version": "1.0",
+  "type": "user.input",
+  "payload": {
+    "text": "你好"
+  }
+}
+```
+
+后端返回普通文本卡片：
+
+```json
+{
+  "version": "1.0",
+  "type": "surface.show",
+  "payload": {
+    "surface_id": "reply-1",
+    "content": "你好，我是后端返回的回复。",
+    "status": "done",
+    "timeout_ms": 8000
+  }
+}
+```
+
+最小 Python 后端：
+
+```python
+import asyncio
+import json
+import websockets
+
+
+async def handler(ws):
+    async for raw in ws:
+        event = json.loads(raw)
+        if event.get("type") == "session.hello":
+            await ws.send(json.dumps({
+                "version": "1.0",
+                "type": "session.ready",
+                "payload": {"server": {"name": "demo-agent"}},
+            }, ensure_ascii=False))
+            continue
+
+        if event.get("type") == "user.input":
+            text = event.get("payload", {}).get("text", "")
+            await ws.send(json.dumps({
+                "version": "1.0",
+                "type": "surface.show",
+                "payload": {
+                    "surface_id": "reply-1",
+                    "content": "收到：" + text,
+                    "status": "done",
+                    "timeout_ms": 8000,
+                },
+            }, ensure_ascii=False))
+
+
+async def main():
+    async with websockets.serve(handler, "127.0.0.1", 18889):
+        await asyncio.Future()
+
+
+asyncio.run(main())
+```
 
 ## 3. 消息信封
 
@@ -70,20 +171,20 @@ WebSocket 不可用时，miniPet 发送事件会 fallback 到 HTTP POST，POST b
 
 | 类型 | 方向 | 用途 |
 | --- | --- | --- |
-| `session.hello` | miniPet → 后端 | miniPet 连接后声明协议和能力 |
-| `session.ready` | 后端 → miniPet | 后端就绪 |
-| `session.ping` | 后端 → miniPet | 心跳请求 |
-| `session.pong` | miniPet → 后端 | 心跳响应 |
-| `user.input` | miniPet → 后端 | 用户输入文本；文字命令、拖拽投喂、卡片操作都整理成文本发送 |
-| `surface.show` | 后端 → miniPet | 创建通用卡片 |
-| `surface.update` | 后端 → miniPet | 更新已有卡片 |
-| `surface.close` | 后端 → miniPet | 关闭已有卡片 |
+| `session.hello` | MiniPet → 后端 | MiniPet 连接后声明协议和能力 |
+| `session.ready` | 后端 → MiniPet | 后端就绪 |
+| `session.ping` | 后端 → MiniPet | 心跳请求 |
+| `session.pong` | MiniPet → 后端 | 心跳响应 |
+| `user.input` | MiniPet → 后端 | 用户输入文本；文字命令、拖拽投喂、卡片操作都整理成文本发送 |
+| `surface.show` | 后端 → MiniPet | 创建回复卡片 |
+| `surface.update` | 后端 → MiniPet | 更新已有卡片 |
+| `surface.close` | 后端 → MiniPet | 关闭已有卡片 |
 
 ## 5. Session
 
 ### session.hello
 
-miniPet 连接后发送：
+MiniPet 连接后发送：
 
 ```json
 {
@@ -134,7 +235,7 @@ miniPet 连接后发送：
 }
 ```
 
-miniPet 回：
+MiniPet 回：
 
 ```json
 {
@@ -150,7 +251,7 @@ miniPet 回：
 
 ### user.input
 
-miniPet 发给后端的唯一用户输入事件。文字命令、拖拽投喂、卡片按钮和控件提交都整理成文本，让后端大模型自行理解意图。
+MiniPet 发给后端的唯一用户输入事件。文字命令、拖拽投喂、卡片按钮和控件提交都整理成文本，让后端大模型自行理解意图。
 
 ```json
 {
@@ -186,7 +287,7 @@ miniPet 发给后端的唯一用户输入事件。文字命令、拖拽投喂、
 }
 ```
 
-miniPet 内置 action：
+MiniPet 内置 action：
 
 | action id | 本地行为 |
 | --- | --- |
@@ -197,9 +298,9 @@ miniPet 内置 action：
 
 其他 action 会整理成 `user.input.text` 发送给后端。
 
-## 7. Surface：通用卡片
+## 7. Surface：回复卡片
 
-后端所有展示和交互都通过通用卡片表达。
+后端所有展示和交互都通过回复卡片表达。
 
 ```json
 {
@@ -225,7 +326,7 @@ Card
 
 渲染规则：
 
-- Header 固定存在，由 miniPet 显示宠物头像、宠物名、状态和关闭按钮。
+- Header 固定存在，由 MiniPet 显示宠物头像、宠物名、状态和关闭按钮。
 - `elements` / `content` 存在才显示正文区域。
 - `controls` 存在才显示输入/选择区域。
 - `actions` 存在才显示按钮区域。
@@ -253,7 +354,7 @@ Card
 | `code` | 代码文本 |
 | `divider` / `hr` | 分隔线 |
 
-如果没有 `elements`，miniPet 会使用 `content` / `summary` / `message` 生成默认文本内容。
+如果没有 `elements`，MiniPet 会使用 `content` / `summary` / `message` 生成默认文本内容。
 
 ```json
 {
@@ -361,8 +462,8 @@ Card
 
 字段规则：
 
-- 所有 `surface.*` 都按通用卡片处理，不再需要 `kind` 字段。
-- 卡片头部由 miniPet 统一显示宠物头像和宠物名；协议不再使用 `title` / `subtitle` 作为卡片标题或副标题。
+- 所有 `surface.*` 都按回复卡片处理，不再需要 `kind` 字段。
+- 卡片头部由 MiniPet 统一显示宠物头像和宠物名；协议不再使用 `title` / `subtitle` 作为卡片标题或副标题。
 - 需要展示的信息都放进 `content` 或 `elements`。
 - 流式状态统一使用 `status` 表达，推荐值为 `streaming` / `done` / `failed`。不建议再使用 `done: true/false`，旧客户端如已支持可继续兼容，但新适配器不要依赖它。
 
@@ -486,7 +587,7 @@ Card
 
 - 默认只连接本机地址。
 - 自定义后端应被视为受信任后端。
-- miniPet 不直接执行业务 API。
+- MiniPet 不直接执行业务 API。
 - 文件拖拽只传路径和元信息。
 - 高风险业务动作必须通过卡片清楚展示，并由用户点击确认按钮。
 - 屏幕截图、选中文本、窗口标题等敏感上下文不属于外置后端默认协议。
@@ -509,7 +610,7 @@ async def main():
             'payload': {
                 'surface_id': 'demo-card-001',
                 'elements': [
-                    {'type': 'markdown', 'content': '**V1 通用卡片示例**\n\n这是通用卡片。'}
+                    {'type': 'markdown', 'content': '**MiniPet 回复卡片示例**\n\n这是回复卡片。'}
                 ],
                 'controls': [
                     {

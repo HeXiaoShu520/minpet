@@ -183,7 +183,7 @@ class DoubaoCallSession:
                 },
             },
             'dialog': {
-                'bot_name': config.current_pet or 'miniPet',
+                'bot_name': config.current_pet or config.APP_DISPLAY_NAME,
                 'system_role': (config.llm_config.get('system_prompt', '') or '').strip(),
                 'speaking_style': DOUBAO_CALL_SPEAKING_STYLE,
                 'dialog_id': self.dialog_id,

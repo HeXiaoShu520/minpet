@@ -1,21 +1,21 @@
 # coding:utf-8
-"""通知气泡顶层窗口的公共交互和动画。"""
+"""回复卡片顶层窗口的公共交互和动画。"""
 
 from PySide6.QtCore import QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, QPoint, Qt, Signal
 from PySide6.QtWidgets import QFrame
 
 from clients.tts_client import stop_tts
-from widgets.notifications.constants import BUBBLE_ANIM_IN_MS, BUBBLE_ANIM_MOVE_MS, BUBBLE_ANIM_OUT_MS, BUBBLE_ENTER_OFFSET, BUBBLE_EXIT_OFFSET
+from widgets.notifications.constants import CARD_ANIM_IN_MS, CARD_ANIM_MOVE_MS, CARD_ANIM_OUT_MS, CARD_ENTER_OFFSET, CARD_EXIT_OFFSET
 
 
-class NotificationBubbleWindow(QFrame):
-    """带拖拽、右键打断和进出动画的透明置顶通知窗口。"""
+class ReplyCardWindow(QFrame):
+    """带拖拽、右键打断和进出动画的透明置顶回复卡片窗口。"""
 
     closed = Signal(str)
 
-    def __init__(self, bubble_id, parent=None, fade_in=False, initial_opacity=0.0):
+    def __init__(self, card_id, parent=None, fade_in=False, initial_opacity=0.0):
         super().__init__(parent)
-        self.bubble_id = bubble_id
+        self.card_id = card_id
         self.fade_in = fade_in
         self.anim_group = None
         self.closing = False
@@ -31,10 +31,10 @@ class NotificationBubbleWindow(QFrame):
     def animate_in(self, end_pos):
         if self.anim_group is not None:
             self.anim_group.stop()
-        self.move(end_pos + BUBBLE_ENTER_OFFSET)
+        self.move(end_pos + CARD_ENTER_OFFSET)
         self.show()
         pos_anim = QPropertyAnimation(self, b'pos', self)
-        pos_anim.setDuration(BUBBLE_ANIM_IN_MS)
+        pos_anim.setDuration(CARD_ANIM_IN_MS)
         pos_anim.setStartValue(self.pos())
         pos_anim.setEndValue(end_pos)
         pos_anim.setEasingCurve(QEasingCurve.OutCubic)
@@ -42,7 +42,7 @@ class NotificationBubbleWindow(QFrame):
         self.anim_group.addAnimation(pos_anim)
         if self.fade_in:
             opacity_anim = QPropertyAnimation(self, b'windowOpacity', self)
-            opacity_anim.setDuration(BUBBLE_ANIM_IN_MS)
+            opacity_anim.setDuration(CARD_ANIM_IN_MS)
             opacity_anim.setStartValue(0.0)
             opacity_anim.setEndValue(1.0)
             self.anim_group.addAnimation(opacity_anim)
@@ -56,7 +56,7 @@ class NotificationBubbleWindow(QFrame):
         if self.anim_group is not None:
             self.anim_group.stop()
         pos_anim = QPropertyAnimation(self, b'pos', self)
-        pos_anim.setDuration(BUBBLE_ANIM_MOVE_MS)
+        pos_anim.setDuration(CARD_ANIM_MOVE_MS)
         pos_anim.setStartValue(self.pos())
         pos_anim.setEndValue(end_pos)
         pos_anim.setEasingCurve(QEasingCurve.OutCubic)
@@ -120,12 +120,12 @@ class NotificationBubbleWindow(QFrame):
         if self.anim_group is not None:
             self.anim_group.stop()
         pos_anim = QPropertyAnimation(self, b'pos', self)
-        pos_anim.setDuration(BUBBLE_ANIM_OUT_MS)
+        pos_anim.setDuration(CARD_ANIM_OUT_MS)
         pos_anim.setStartValue(self.pos())
-        pos_anim.setEndValue(self.pos() + BUBBLE_EXIT_OFFSET)
+        pos_anim.setEndValue(self.pos() + CARD_EXIT_OFFSET)
         pos_anim.setEasingCurve(QEasingCurve.InCubic)
         opacity_anim = QPropertyAnimation(self, b'windowOpacity', self)
-        opacity_anim.setDuration(BUBBLE_ANIM_OUT_MS)
+        opacity_anim.setDuration(CARD_ANIM_OUT_MS)
         opacity_anim.setStartValue(self.windowOpacity())
         opacity_anim.setEndValue(0.0)
         self.anim_group = QParallelAnimationGroup(self)
@@ -138,5 +138,5 @@ class NotificationBubbleWindow(QFrame):
         self._before_close_event()
         if not self.closed_emitted:
             self.closed_emitted = True
-            self.closed.emit(self.bubble_id)
+            self.closed.emit(self.card_id)
         super().closeEvent(event)

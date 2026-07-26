@@ -1,5 +1,5 @@
 # coding:utf-8
-"""外部事件智能通知气泡。"""
+"""回复卡片窗口。"""
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QPainter, QPainterPath, QPixmap
@@ -9,15 +9,15 @@ from qfluentwidgets import FluentIcon as FIF
 
 import config
 from typewriter import Typewriter
-from widgets.notifications.constants import SMART_BUBBLE_TIMEOUT_MS
+from widgets.notifications.constants import REPLY_CARD_TIMEOUT_MS
 from widgets.notifications.text_format import markdown_to_html
-from widgets.notifications.window_base import NotificationBubbleWindow
+from widgets.notifications.card_window import ReplyCardWindow
 
-SMART_BUBBLE_DEFAULT_WIDTH = 390
-SMART_BUBBLE_MIN_WIDTH = 360
-SMART_BUBBLE_MAX_WIDTH = 460
+REPLY_CARD_DEFAULT_WIDTH = 390
+REPLY_CARD_MIN_WIDTH = 360
+REPLY_CARD_MAX_WIDTH = 460
 
-def _smart_bubble_style_qss(style):
+def _reply_card_style_qss(style):
     card = {
         'glass': 'background: rgba(255,255,255,218); border: 1px solid rgba(255,255,255,210);',
         'cream': 'background: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #fffaf0,stop:1 #fff2dc); border: 1px solid rgba(245,210,160,220);',
@@ -31,15 +31,15 @@ def _smart_bubble_style_qss(style):
     meta = '#9faad0' if dark else '#8b93a7'
     box_bg = 'rgba(255,255,255,35)' if dark else '#ffffff'
     return f'''
-            QFrame#SmartCard {{ border-radius: 22px; {card} }}
-            QFrame#SmartSectionBox {{ border: 1px solid rgba(222,231,255,180); border-radius: 14px; background: {box_bg}; }}
-            QFrame#SmartHr {{ border: none; border-top: 1px solid rgba(180,190,215,130); background: transparent; max-height: 1px; }}
+            QFrame#ReplyCard {{ border-radius: 22px; {card} }}
+            QFrame#ReplyCardSectionBox {{ border: 1px solid rgba(222,231,255,180); border-radius: 14px; background: {box_bg}; }}
+            QFrame#ReplyCardHr {{ border: none; border-top: 1px solid rgba(180,190,215,130); background: transparent; max-height: 1px; }}
             QLabel {{ border: none; background: transparent; font-family: "Microsoft YaHei UI", "Microsoft YaHei"; }}
-            QLabel#SmartTitle {{ color: {title}; font-size: 16px; font-weight: 700; }}
-            QLabel#SmartAvatar {{ border-radius: 17px; background: #e8f2ff; }}
-            QLabel#SmartStatus {{ color: {meta}; font-size: 12px; font-weight: 700; }}
-            QLabel#SmartMeta, QLabel#SmartControlLabel, QLabel#SmartOptionDescription {{ color: {meta}; font-size: 12px; }}
-            QLabel#SmartSummary, QLabel#SmartElement {{ color: {body}; font-size: 13px; line-height: 1.45; }}
+            QLabel#ReplyCardTitle {{ color: {title}; font-size: 16px; font-weight: 700; }}
+            QLabel#ReplyCardAvatar {{ border-radius: 17px; background: #e8f2ff; }}
+            QLabel#ReplyCardStatus {{ color: {meta}; font-size: 12px; font-weight: 700; }}
+            QLabel#ReplyCardMeta, QLabel#ReplyCardControlLabel, QLabel#ReplyCardOptionDescription {{ color: {meta}; font-size: 12px; }}
+            QLabel#ReplyCardSummary, QLabel#ReplyCardElement {{ color: {body}; font-size: 13px; line-height: 1.45; }}
             QRadioButton, QCheckBox {{ color: {body}; font: 13px "Microsoft YaHei UI"; background: transparent; border: none; }}
             QLineEdit {{ border: 1px solid rgba(218,226,238,220); border-radius: 9px; background: rgba(255,255,255,210); color: {body}; padding: 6px 8px; font: 13px "Microsoft YaHei UI"; }}
             QPushButton {{ border: 1px solid rgba(218,226,238,220); border-radius: 13px; background: rgba(255,255,255,190); color: #3a4054; font: 13px "Microsoft YaHei UI"; padding: 7px 12px; }}
@@ -50,13 +50,13 @@ def _smart_bubble_style_qss(style):
         '''
 
 
-class SmartBubble(NotificationBubbleWindow):
-    """外部事件使用的通用卡片，按需渲染展示内容、输入控件和操作按钮。"""
+class ReplyCard(ReplyCardWindow):
+    """回复卡片，按需渲染展示内容、输入控件和操作按钮。"""
 
     action_clicked = Signal(dict, dict)
 
-    def __init__(self, bubble_id, event, timeout=SMART_BUBBLE_TIMEOUT_MS, parent=None):
-        super().__init__(bubble_id, parent, fade_in=True, initial_opacity=0.0)
+    def __init__(self, card_id, event, timeout=REPLY_CARD_TIMEOUT_MS, parent=None):
+        super().__init__(card_id, parent, fade_in=True, initial_opacity=0.0)
         self.event_data = dict(event)
         self.control_widgets = {}
         self._typewriters = []
@@ -67,7 +67,7 @@ class SmartBubble(NotificationBubbleWindow):
         self._primary_text_html = ''
         self._primary_typewriter = None
         self._body_structure_signature = None
-        self.setStyleSheet(_smart_bubble_style_qss(config.app_config.get('smart_bubble_style', 'aurora')))
+        self.setStyleSheet(_reply_card_style_qss(config.app_config.get('reply_card_style', 'aurora')))
         # 顶层透明窗口叠加 QGraphicsDropShadowEffect 在 Windows 多屏/缩放环境下
         # 容易产生负 dirty rect，触发 UpdateLayeredWindowIndirect 参数错误。
         # 卡片本身已有边框和半透明背景，这里不再给顶层窗口加 Qt 阴影。
@@ -76,7 +76,7 @@ class SmartBubble(NotificationBubbleWindow):
         self._content_width = max(300, self._card_width - 80)
         self.setFixedWidth(self._card_width)
         card = QFrame(self)
-        card.setObjectName('SmartCard')
+        card.setObjectName('ReplyCard')
         shell = QHBoxLayout(card)
         shell.setContentsMargins(0, 0, 0, 0)
         shell.setSpacing(0)
@@ -103,33 +103,34 @@ class SmartBubble(NotificationBubbleWindow):
 
     def _normalized_card_width(self, width):
         try:
-            value = int(width or SMART_BUBBLE_DEFAULT_WIDTH)
+            value = int(width or REPLY_CARD_DEFAULT_WIDTH)
         except (TypeError, ValueError):
-            value = SMART_BUBBLE_DEFAULT_WIDTH
-        return max(SMART_BUBBLE_MIN_WIDTH, min(SMART_BUBBLE_MAX_WIDTH, value))
+            value = REPLY_CARD_DEFAULT_WIDTH
+        return max(REPLY_CARD_MIN_WIDTH, min(REPLY_CARD_MAX_WIDTH, value))
 
     def _build_header(self, card):
         header = QHBoxLayout()
         header.setSpacing(10)
         self.avatar_label = QLabel(card)
-        self.avatar_label.setObjectName('SmartAvatar')
+        self.avatar_label.setObjectName('ReplyCardAvatar')
         self.avatar_label.setFixedSize(34, 34)
         self.avatar_label.setAlignment(Qt.AlignCenter)
-        icon = QPixmap(str(config.avatar_path('pet')))
+        avatar_kind = self.event_data.get('avatar_kind') or 'pet'
+        icon = QPixmap(str(config.avatar_path(avatar_kind)))
         if not icon.isNull():
             self.avatar_label.setPixmap(self._rounded_avatar(icon, 34))
         else:
-            self.avatar_label.setText('宠')
+            self.avatar_label.setText('你' if avatar_kind == 'user' else '宠')
         header.addWidget(self.avatar_label, 0, Qt.AlignTop)
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
         title_row.setSpacing(6)
         self.title_label = QLabel(config.current_pet or '宠物', card)
-        self.title_label.setObjectName('SmartTitle')
+        self.title_label.setObjectName('ReplyCardTitle')
         self.title_label.setWordWrap(True)
         self.title_label.setMaximumWidth(280)
         self.status_label = QLabel('', card)
-        self.status_label.setObjectName('SmartStatus')
+        self.status_label.setObjectName('ReplyCardStatus')
         title_row.addWidget(self.title_label, 0, Qt.AlignVCenter)
         title_row.addWidget(self.status_label, 0, Qt.AlignVCenter)
         title_row.addStretch(1)
@@ -224,11 +225,11 @@ class SmartBubble(NotificationBubbleWindow):
         self.adjustSize()
 
     def update_message(self, message, timeout=None):
-        """兼容普通气泡的文本更新入口。"""
+        """兼容纯文本回复的更新入口。"""
         self.update_card({'content': message, 'elements': []}, timeout=timeout)
 
     def _refresh_title_meta(self):
-        self.title_label.setText(config.current_pet or '宠物')
+        self.title_label.setText(str(self.event_data.get('title') or config.current_pet or '宠物'))
 
     def _status_value(self):
         if self.event_data.get('done'):
@@ -273,7 +274,7 @@ class SmartBubble(NotificationBubbleWindow):
             tag = element.get('tag') or element.get('type')
             if tag in ('hr', 'divider'):
                 line = QFrame(card)
-                line.setObjectName('SmartHr')
+                line.setObjectName('ReplyCardHr')
                 line.setFixedHeight(1)
                 layout.addWidget(line)
                 continue
@@ -284,7 +285,7 @@ class SmartBubble(NotificationBubbleWindow):
                 continue
             is_primary = bool(element.get('_primary'))
             label = QLabel('', card)
-            label.setObjectName('SmartElement')
+            label.setObjectName('ReplyCardElement')
             label.setTextFormat(Qt.RichText)
             label.setWordWrap(True)
             label.setFixedWidth(self._content_width)
@@ -308,14 +309,14 @@ class SmartBubble(NotificationBubbleWindow):
             if not cid:
                 continue
             box = QFrame(card)
-            box.setObjectName('SmartSectionBox')
+            box.setObjectName('ReplyCardSectionBox')
             box_layout = QVBoxLayout(box)
             box_layout.setContentsMargins(10, 8, 10, 8)
             box_layout.setSpacing(6)
             label_text = control.get('label') or control.get('title') or ''
             if label_text:
                 label = QLabel(label_text, box)
-                label.setObjectName('SmartControlLabel')
+                label.setObjectName('ReplyCardControlLabel')
                 box_layout.addWidget(label)
             if ctype in ('text', 'input'):
                 edit = QLineEdit(box)

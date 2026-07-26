@@ -1,11 +1,11 @@
-# miniPet 软件架构
+# MiniPet 软件架构
 
-本文档说明 miniPet 当前源码目录、模块职责和后续拆分原则。目标是避免所有代码堆在一个目录里，让功能边界清晰、依赖方向稳定、后续维护更容易。
+本文档说明 MiniPet 当前源码目录、模块职责和后续拆分原则。目标是避免所有代码堆在一个目录里，让功能边界清晰、依赖方向稳定、后续维护更容易。
 
 ## 总体分层
 
 ```text
-miniPet QApplication
+MiniPet QApplication
 ├─ app.py                      # 应用组装和跨模块流程编排
 ├─ settings_window.py          # 设置窗口入口，页面正在拆入 windows/settings/
 ├─ config.py                   # 路径、默认配置、.env/JSON 配置加载
@@ -127,7 +127,7 @@ pet/
 
 ```text
 protocols/
-  protocol_v1.py              # miniPet 通用智能体协议 V1
+  protocol_v1.py              # MiniPet 通用智能体协议
   doubao_call_protocol.py        # 豆包 豆包通话二进制协议封装
 ```
 

@@ -99,7 +99,7 @@ class AvatarPathSettingCard(LineEditSettingCard):
     """头像选择卡片。
 
     设置页只保存头像文件名；用户从任意路径选择图片时，先复制到
-    data/avatars，再把文件名写入配置。这样聊天窗口和通知气泡都能通过
+    data/avatars，再把文件名写入配置。这样聊天窗口和回复卡片都能通过
     config.avatar_path() 稳定加载头像。
     """
 

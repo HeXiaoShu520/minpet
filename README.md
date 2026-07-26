@@ -1,6 +1,6 @@
-# miniPet
+# MiniPet
 
-miniPet 是一个独立桌面 AI 宠物应用。它由 MINIPET 简化整合而来，把桌宠窗口、动画、右键菜单、系统设置、AI 对话、语音播报、语音聊天、豆包通话、通知气泡和外部事件接入统一收敛到 `miniPet/` 内，形成可以单独维护和发布的整体。
+MiniPet 是一个独立桌面 AI 宠物应用。它由 MINIPET 简化整合而来，把桌宠窗口、动画、右键菜单、系统设置、AI 对话、语音播报、语音聊天、豆包通话、回复卡片和外部事件接入统一收敛到 `minipet/` 内，形成可以单独维护和发布的整体。
 
 ## 参考
 基于呆啵宠物 DyberPet开发 https://github.com/ChaozhongLiu/DyberPet
@@ -11,11 +11,23 @@ miniPet 是一个独立桌面 AI 宠物应用。它由 MINIPET 简化整合而�
 
 第三方资源和许可证说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-> 当前目标：`miniPet/` 是独立应用目录。源码、资源、文档、依赖样例和启动入口都已收敛到这里；后续功能不要再依赖外层 MINIPET 结构。
+> 当前目标：`minipet/` 是独立应用目录。源码、资源、文档、依赖样例和启动入口都已收敛到这里；后续功能不要再依赖外层 MINIPET 结构。
 
-## OpenClaw 中转
+## 智能体模式
 
-miniPet 可以通过简化中转脚本接入 OpenClaw HTTP Responses API。这个脚本复用了 `OpenClaw Gui_new` 的调用方式：`POST http://127.0.0.1:18789/v1/responses`。
+MiniPet 提供三种智能体模式：
+
+| 模式 | 说明 |
+| --- | --- |
+| 使用内置大模型 | 使用“大模型”页配置的 OpenAI 兼容接口。只有这个模式会把对话内容写入 MiniPet 本地聊天记录。 |
+| 连接 OpenClaw 网关 | 直接请求 OpenClaw Gateway 的 HTTP Responses API，不经过额外中转端口。使用前需要开启 OpenClaw 的 Responses HTTP API。 |
+| 连接 MiniPet 协议后端 | 连接 miniClaw 或其他按 MiniPet 通用协议实现的 WebSocket 后端。快速接入教程见 [minipet交互协议设计.md](minipet交互协议设计.md)。 |
+
+使用 OpenClaw 网关或 MiniPet 协议后端时，MiniPet 只把当前输入转交给对应后端并显示返回内容，不记录本地对话历史。
+
+## 连接 OpenClaw
+
+MiniPet 可以直接接入 OpenClaw HTTP Responses API。调用方式复用 `OpenClaw Gui_new`：`POST http://127.0.0.1:18789/v1/responses`。
 
 1. 启动 OpenClaw Gateway，并启用 Responses API：
 
@@ -24,29 +36,57 @@ openclaw config set gateway.http.endpoints.responses.enabled true
 openclaw gateway run
 ```
 
-2. 启动 miniPet adapter：
-
-```bash
-python tools/minipet_adapter.py
-```
-
-3. 启动 miniPet。miniPet 默认连接 `ws://localhost:18888/ws/pet`，会连到 adapter。用户对宠物输入或拖拽投喂后，adapter 会转发给 OpenClaw，并把回复发回宠物显示。
+2. 启动 MiniPet，打开“设置 → 智能体设置”，选择“连接 OpenClaw 网关”。MiniPet 会直接请求 OpenClaw Gateway，并把回复显示回桌宠。
 
 可选环境变量：
 
 ```text
 OPENCLAW_API_URL=http://127.0.0.1:18789/v1/responses
 OPENCLAW_GATEWAY_TOKEN=<token>
-OPENCLAW_USER=minipet_adapter_user
-MINIPET_ADAPTER_HOST=127.0.0.1
-MINIPET_ADAPTER_PORT=18888
+OPENCLAW_USER=minipet_user
 ```
 
-如果未设置 `OPENCLAW_GATEWAY_TOKEN`，adapter 会自动读取 `~/.openclaw/openclaw.json` 中的 `gateway.auth.token`。
+如果未设置 `OPENCLAW_GATEWAY_TOKEN`，MiniPet 会自动读取 `~/.openclaw/openclaw.json` 中的 `gateway.auth.token`。
 
-## miniClaw 接入
+实际请求格式：
 
-miniPet 可以把桌宠输入交给相邻项目 miniClaw 处理。此模式下 miniPet 作为 WebSocket 客户端，miniClaw 作为本地 FastAPI/WebSocket 服务端。
+```http
+POST http://127.0.0.1:18789/v1/responses
+Authorization: Bearer <OPENCLAW_GATEWAY_TOKEN>
+Content-Type: application/json; charset=utf-8
+```
+
+```json
+{
+  "model": "openclaw:main",
+  "input": "你好",
+  "user": "minipet_user"
+}
+```
+
+OpenClaw 预期返回 Responses API 风格数据，MiniPet 会提取 `output[].content[].text`：
+
+```json
+{
+  "id": "...",
+  "object": "response",
+  "output": [
+    {
+      "type": "message",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "OpenClaw 的回复"
+        }
+      ]
+    }
+  ]
+}
+```
+
+## MiniPet 协议后端
+
+MiniPet 可以把桌宠输入交给相邻项目 miniClaw，或其他按 MiniPet 通用协议实现的智能体服务处理。此模式下 MiniPet 作为 WebSocket 客户端，后端服务可以直接返回卡片、流式回复和交互控件。
 
 1. 启动 miniClaw：
 
@@ -55,7 +95,7 @@ cd E:/源丶工程/miniClaw
 python main.py
 ```
 
-miniClaw 默认会同时启动 miniPet 网关：
+miniClaw 默认会同时启动 MiniPet 网关：
 
 ```text
 ws://127.0.0.1:18889/ws/minipet
@@ -73,27 +113,27 @@ curl http://127.0.0.1:18889/health
 {"ok": true}
 ```
 
-2. 启动 miniPet，打开“设置 → 智能体设置”：
+2. 启动 MiniPet，打开“设置 → 智能体设置”：
 
-- 智能体选项：`miniClaw / 通用 AI 后端`
-- miniClaw / 通用后端地址：`ws://127.0.0.1:18889/ws/minipet`
+- 智能体模式：`连接 MiniPet 协议后端`
+- MiniPet 协议后端地址：`ws://127.0.0.1:18889/ws/minipet`
 
-保存后，miniPet 会连接 miniClaw。连接成功时会显示“后端已就绪：miniClaw”。
+保存后，MiniPet 会连接 miniClaw。连接成功时会显示“后端已就绪：miniClaw”。
 
 3. 在桌宠输入框中发送内容。
 
 链路如下：
 
 ```text
-miniPet user.input 文本输入
+MiniPet user.input 文本输入
 → miniClaw /ws/minipet
 → miniClaw LLM/Agent
-→ surface.show 创建通用卡片
+→ surface.show 创建回复卡片
 → surface.update 流式更新同一张卡片
 → surface.update status=done 完成
 ```
 
-miniPet 使用 `surface_id` 追踪同一张卡片，因此 miniClaw 的流式回复会在同一张卡片里持续刷新，不会生成多条气泡。外置后端协议只接收 `user.input.text`，普通文字、按钮、富文本、选择和输入都通过通用卡片表达。
+MiniPet 使用 `surface_id` 追踪同一张卡片，因此 miniClaw 的流式回复会在同一张卡片里持续刷新，不会生成多条卡片。外置后端协议只接收 `user.input.text`，普通文字、按钮、富文本、选择和输入都通过回复卡片表达。
 miniClaw 侧可选环境变量：
 
 ```text
@@ -110,7 +150,7 @@ DESKTOP_API_PORT=18889
 - 宠物动画播放
 - 鼠标拖拽、掉落、找回宠物
 - 双击宠物弹出沉浸式快速输入浮层，Enter 发送，Esc 关闭
-- 输入文字后，宠物回复会以通知卡片式头顶气泡显示，并带淡入/上移动画
+- 输入文字后，宠物回复会以回复卡片显示，并带淡入/上移动画
 - 如果已配置并启用 TTS，回复会同时语音播报
 - 鼠标移到桌面宠物上自动弹出极简图标菜单，右键也可立即弹出
   - 设置
@@ -137,14 +177,14 @@ DESKTOP_API_PORT=18889
 
 ### 语音聊天（本地 AI 模式）
 
-这是 miniPet 的“自己的脑子”模式。
+这是 MiniPet 的“自己的脑子”模式。
 
 链路：
 
 ```text
 麦克风
 → 豆包流式 ASR WebSocket 识别
-→ miniPet 本地/自定义 LLM 思考
+→ MiniPet 本地/自定义 LLM 思考
 → 火山豆包 TTS 播放
 ```
 
@@ -153,7 +193,7 @@ DESKTOP_API_PORT=18889
 - 使用火山豆包纯 ASR 服务，只做语音转文字
 - 复用 `TTS_API_KEY` 鉴权
 - 使用当前 `LLM_API_BASE / LLM_MODEL` 配置生成回复
-- 能吃到 miniPet 的角色设定和本地聊天上下文
+- 能吃到 MiniPet 的角色设定和本地聊天上下文
 - 菜单语音入口会打开语音球；语音球存在时才启用语音功能
 - 可选离线唤醒词监听：打开语音球后，本地 Vosk 小模型识别“小月小月”，命中后再打开火山流式 ASR，避免云端 ASR 常驻计费
 - 如果未开启唤醒词，语音球会保持待机，等待用户操作
@@ -193,7 +233,7 @@ volc.seedasr.sauc.duration
 特点：
 
 - 低延迟，更接近豆包原生通话体验
-- 不走本地 LLM，因此不会使用 miniPet 配置的 OpenAI 兼容模型
+- 不走本地 LLM，因此不会使用 MiniPet 配置的 OpenAI 兼容模型
 - 适合快速闲聊或备用通话
 - 复用 `TTS_API_KEY` 鉴权
 - 默认固定使用 O2.0 通用对话模型 `1.2.1.1`
@@ -234,22 +274,22 @@ wss://openspeech.bytedance.com/api/v3/tts/unidirectional/stream
 
 ### 通知与外部事件
 
-miniPet 可以作为独立桌宠运行，也可以可选连接外部事件源。外置 AI 后端通信使用 miniPet v1 WebSocket 协议，显示层统一为通用卡片。
+MiniPet 可以作为独立桌宠运行，也可以可选连接外部事件源。外置 AI 后端通信使用 MiniPet 通用协议，显示层统一为回复卡片。
 
 默认事件 WebSocket 地址：
 
 ```text
-ws://localhost:18888/ws/pet
+ws://127.0.0.1:18889/ws/minipet
 ```
 
 推荐事件类型：
 
-- `user.input`：miniPet 发给后端的唯一用户输入，文字命令、拖拽投喂、卡片操作都整理成 `text`
-- `surface.show`：创建通用卡片
+- `user.input`：MiniPet 发给后端的唯一用户输入，文字命令、拖拽投喂、卡片操作都整理成 `text`
+- `surface.show`：创建回复卡片
 - `surface.update`：按 `surface_id` 更新同一张卡片，用于流式输出
 - `surface.close`：关闭指定卡片
 
-通用卡片结构：
+回复卡片结构：
 
 ```text
 Card
@@ -261,17 +301,17 @@ Card
 卡片按需渲染：不存在的 `elements` / `controls` / `actions` 不占空间。用户点击按钮时会整理成 `user.input.text` 发送给外部服务；WebSocket 不在线时 fallback 到：
 
 ```text
-POST http://localhost:18888/actions/execute
+POST http://127.0.0.1:18889/actions/execute
 ```
 
-如果外部服务不在线，miniPet 仍可独立运行。
+如果外部服务不在线，MiniPet 仍可独立运行。
 
 ## 系统架构
 
 当前源码已经按功能目录解耦，不再把所有模块堆在 `src/` 根目录。详细说明见 [软件架构文档](ARCHITECTURE.md)。
 
 ```text
-miniPet QApplication
+MiniPet QApplication
 ├─ app.py                         应用组装和跨模块流程编排
 ├─ pet/desktop_pet.py             桌宠主窗口和事件转发入口
 ├─ pet/desktop_actions.py         动画线程、帧应用、尺寸重算和动作播放
@@ -286,7 +326,7 @@ miniPet QApplication
 ├─ windows/                       文本聊天、豆包通话、设置页等顶层窗口
 ├─ widgets/                       快速输入、语音球、菜单、通知、彩蛋等 UI 组件
 ├─ pet/                           动画线程和角色资源加载
-└─ protocols/                     miniPet V1 协议和豆包 豆包通话二进制协议
+└─ protocols/                     MiniPet 通用协议和豆包 豆包通话二进制协议
 ```
 
 核心数据流：
@@ -295,7 +335,7 @@ miniPet QApplication
 文本聊天：
 windows.chat_window.ChatWindow / widgets.pet_input_popup.PetInputPopup
 → clients.llm_client.ChatWorker → LLM API → storage.chat_store.ChatStore
-→ ChatWindow/气泡 → 可选 clients.tts_client.TtsWorker
+→ ChatWindow/回复卡片 → 可选 clients.tts_client.TtsWorker
 
 语音聊天：
 widgets.pet_voice_popup.PetVoicePopup
@@ -313,7 +353,7 @@ windows.doubao_call_window.DoubaoCallWindow
 
 外部事件：
 clients.event_client.EventClient → protocols.protocol_v1
-→ NotificationCenter → 通用卡片/动作/聊天入口
+→ ReplyCardCenter → 回复卡片/动作/聊天入口
 ```
 
 ## 运行
@@ -329,23 +369,23 @@ pip install -r requirements.txt
 启动：
 
 ```bash
-python run_miniPet.py
+python run_minipet.py
 ```
 
 如果你在外层仓库目录运行，也可以直接指定内部入口：
 
 ```bash
-python miniPet/run_miniPet.py
+python minipet/run_minipet.py
 ```
 
 ## 配置
 
 ### 应用设置
 
-基础设置保存到 miniPet 内部数据目录：
+基础设置保存到 MiniPet 内部数据目录：
 
 ```text
-miniPet/data/minipet_settings.json
+minipet/data/minipet_settings.json
 ```
 
 ### 大模型配置
@@ -426,8 +466,8 @@ DOUBAO_CALL_SPEAKER=zh_female_vv_jupiter_bigtts
 ## 目录职责
 
 ```text
-miniPet/
-  run_miniPet.py          # 启动入口
+minipet/
+  run_minipet.py          # 启动入口
   requirements.txt        # Python 依赖
   README.md               # 项目说明
   ARCHITECTURE.md        # 软件架构、模块边界和重构原则
@@ -474,10 +514,9 @@ miniPet/
         daily_tip.py
         notice.py
       notifications/
-        center.py
+        reply_card_center.py
         toast.py
-        bubble.py
-        smart_bubble.py
+        reply_card.py
         constants.py
     pet/                # 桌宠主窗口、动画与资源
       desktop_pet.py
@@ -498,10 +537,10 @@ miniPet/
 
 ## 资源目录
 
-运行资源已内置到 `miniPet/`：
+运行资源已内置到 `minipet/`：
 
 ```text
-miniPet/
+minipet/
   res/
     icons/
     role/
@@ -511,7 +550,7 @@ miniPet/
   data/
 ```
 
-`config.py` 位于 `src/`，但应用根目录仍是外层 `miniPet/`：
+`config.py` 位于 `src/`，但应用根目录仍是外层 `minipet/`：
 
 ```python
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -520,9 +559,9 @@ DATA_DIR = ROOT_DIR / 'data'
 ENV_FILE = ROOT_DIR / '.env'
 ```
 
-因此删除外层 `res/` 后，miniPet 仍会读取内部资源。
+因此删除外层 `res/` 后，MiniPet 仍会读取内部资源。
 
-## 外部通用卡片示例
+## 外部回复卡片示例
 
 普通文字和流式状态：
 
@@ -580,7 +619,7 @@ ENV_FILE = ROOT_DIR / '.env'
 }
 ```
 
-用户点击按钮后，miniPet 会整理成文本输入发送：
+用户点击按钮后，MiniPet 会整理成文本输入发送：
 
 ```json
 {
@@ -601,7 +640,7 @@ ENV_FILE = ROOT_DIR / '.env'
 - 不再依赖外层 `MINIPET/` 的 Python 模块。
 - 复用原 MINIPET 的资源格式，但资源最终要迁移到 `res/`。
 - 设置页、菜单、聊天窗口和语音窗口要保持完整视觉体验，不使用裸表单堆控件。
-- 外部事件源是可选插件，不是 miniPet 的运行依赖。
+- 外部事件源是可选插件，不是 MiniPet 的运行依赖。
 
 ## License
 

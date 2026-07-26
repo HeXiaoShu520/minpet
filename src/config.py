@@ -1,6 +1,6 @@
 # coding:utf-8
 """
-miniPet 全局配置模块。
+MiniPet 全局配置模块。
 
 职责：
 - 维护项目路径常量，例如资源目录、数据目录和 .env 文件位置。
@@ -25,6 +25,13 @@ SETTINGS_FILE = DATA_DIR / 'minipet_settings.json'
 ENV_FILE = ROOT_DIR / '.env'
 DEFAULT_THEME_COLOR = '#009faa'
 SCREEN_SHARE_ENABLED = False
+APP_DISPLAY_NAME = 'MiniPet'
+APP_ID = 'minipet'
+OPENCLAW_API_URL_DEFAULT = 'http://127.0.0.1:18789/v1/responses'
+OPENCLAW_MODEL_DEFAULT = 'openclaw:main'
+OPENCLAW_USER_DEFAULT = 'minipet_user'
+OPENCLAW_TIMEOUT_DEFAULT = 120
+CUSTOM_AGENT_WS_DEFAULT = 'ws://127.0.0.1:18889/ws/minipet'
 
 TRUE_VALUES = {'1', 'true', 'yes', 'on'}
 FALSE_VALUES = {'0', 'false', 'no', 'off'}
@@ -41,10 +48,12 @@ DEFAULT_APP_CONFIG = {
     'pet_avatar': '',
     'user_avatar': 'user_avatar_5.png',  # 默认使用 3x3 头像切片的中心图
     'agent_backend': 'builtin',
-    'openclaw_ws_url': 'ws://127.0.0.1:18888/ws/pet',
-    'custom_agent_ws_url': 'ws://127.0.0.1:18889/ws/minipet',
-    'bubble_style': 'soft',
-    'smart_bubble_style': 'aurora',
+    'openclaw_api_url': OPENCLAW_API_URL_DEFAULT,
+    'openclaw_model': OPENCLAW_MODEL_DEFAULT,
+    'openclaw_user': OPENCLAW_USER_DEFAULT,
+    'openclaw_timeout': OPENCLAW_TIMEOUT_DEFAULT,
+    'custom_agent_ws_url': CUSTOM_AGENT_WS_DEFAULT,
+    'reply_card_style': 'aurora',
     'voice_orb_style': 'jade',
     'voice_follow_effect': 'spring',
     'voice_follow_level': 'normal',
@@ -97,6 +106,13 @@ WAKE_WORD_ENV_KEYS = {
 APP_BASIC_ENV_KEYS = {
     'volume': 'APP_VOLUME',
     'scale': 'APP_SCALE',
+}
+
+OPENCLAW_ENV_KEYS = {
+    'openclaw_api_url': 'OPENCLAW_API_URL',
+    'openclaw_model': 'OPENCLAW_MODEL',
+    'openclaw_user': 'OPENCLAW_USER',
+    'openclaw_timeout': 'OPENCLAW_TIMEOUT',
 }
 
 DEFAULT_TYPEWRITER_CONFIG = {
@@ -305,7 +321,7 @@ def _save_env_config(config_data, env_keys, defaults, section_title, extra_manag
     将一组配置写回 .env，同时保留其他未知配置项。
 
     设置页保存时只替换当前 section 管理的键，避免覆盖用户手写的其他配置、
-    注释和暂未被 miniPet 管理的服务密钥。
+    注释和暂未被 MiniPet 管理的服务密钥。
     """
     existing = []
     if ENV_FILE.is_file():
@@ -357,6 +373,10 @@ def load():
         value = os.environ.get(env_key, env_data.get(env_key))
         if value is not None:
             app_config[field] = _coerce_env_value(value, DEFAULT_APP_CONFIG[field])
+    for field, env_key in OPENCLAW_ENV_KEYS.items():
+        value = os.environ.get(env_key, env_data.get(env_key))
+        if value is not None:
+            app_config[field] = _coerce_env_value(value, DEFAULT_APP_CONFIG[field])
 
     if not app_config.get('default_pet') and pets:
         app_config['default_pet'] = pets[0]
@@ -383,39 +403,39 @@ def save_llm_config(config):
     """保存大模型配置到 .env。"""
     global llm_config
     llm_config = dict(config)
-    _save_env_config(llm_config, LLM_ENV_KEYS, DEFAULT_LLM_CONFIG, '# MINIPET LLM settings', LLM_LEGACY_ENV_KEYS)
+    _save_env_config(llm_config, LLM_ENV_KEYS, DEFAULT_LLM_CONFIG, '# MiniPet LLM settings', LLM_LEGACY_ENV_KEYS)
 
 
 def save_tts_config(config):
     """保存 TTS 配置到 .env。"""
     global tts_config
     tts_config = dict(config)
-    _save_env_config(tts_config, TTS_ENV_KEYS, DEFAULT_TTS_CONFIG, '# MINIPET TTS settings')
+    _save_env_config(tts_config, TTS_ENV_KEYS, DEFAULT_TTS_CONFIG, '# MiniPet TTS settings')
 
 
 def save_typewriter_config(config):
     """保存回复逐字显示配置到 .env。"""
     global typewriter_config
     typewriter_config = dict(config)
-    _save_env_config(typewriter_config, TYPEWRITER_ENV_KEYS, DEFAULT_TYPEWRITER_CONFIG, '# MINIPET Typewriter settings')
+    _save_env_config(typewriter_config, TYPEWRITER_ENV_KEYS, DEFAULT_TYPEWRITER_CONFIG, '# MiniPet Typewriter settings')
 
 
 def save_doubao_call_config(config):
     """保存豆包通话音色配置到 .env。"""
     global doubao_call_config
     doubao_call_config = dict(config)
-    _save_env_config(doubao_call_config, DOUBAO_CALL_ENV_KEYS, DEFAULT_DOUBAO_CALL_CONFIG, '# MINIPET DoubaoCall settings', DOUBAO_CALL_LEGACY_ENV_KEYS)
+    _save_env_config(doubao_call_config, DOUBAO_CALL_ENV_KEYS, DEFAULT_DOUBAO_CALL_CONFIG, '# MiniPet DoubaoCall settings', DOUBAO_CALL_LEGACY_ENV_KEYS)
 
 
 def save_voice_chat_config(config):
     """保存本地 AI 语音聊天配置到 .env。"""
     global voice_chat_config
     voice_chat_config = dict(config)
-    _save_env_config(voice_chat_config, VOICE_CHAT_ENV_KEYS, DEFAULT_VOICE_CHAT_CONFIG, '# MINIPET VoiceChat settings')
+    _save_env_config(voice_chat_config, VOICE_CHAT_ENV_KEYS, DEFAULT_VOICE_CHAT_CONFIG, '# MiniPet VoiceChat settings')
 
 
 def save_wake_word_config(config):
     """保存离线唤醒词配置到 .env。"""
     global wake_word_config
     wake_word_config = dict(config)
-    _save_env_config(wake_word_config, WAKE_WORD_ENV_KEYS, DEFAULT_WAKE_WORD_CONFIG, '# MINIPET WakeWord settings')
+    _save_env_config(wake_word_config, WAKE_WORD_ENV_KEYS, DEFAULT_WAKE_WORD_CONFIG, '# MiniPet WakeWord settings')

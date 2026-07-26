@@ -2,7 +2,7 @@
 """
 外部智能体事件客户端。
 
-miniPet 可选连接 OpenClaw 或通用后端 WebSocket。这个模块负责维持连接、发送
+MiniPet 可选连接通用协议后端 WebSocket。这个模块负责维持连接、发送
 session hello、接收事件并规范化为协议 V1 的内部事件字典。
 """
 
@@ -23,7 +23,7 @@ class EventClient(QThread):
     event_received = Signal(dict)
     connection_changed = Signal(bool)
 
-    def __init__(self, url='ws://localhost:18888/ws/pet', action_url='http://localhost:18888/actions/execute', parent=None):
+    def __init__(self, url='ws://127.0.0.1:18889/ws/minipet', action_url='http://127.0.0.1:18889/actions/execute', parent=None):
         super().__init__(parent)
         self.default_url = url
         self.url = os.environ.get('MINIPET_EVENT_WS', os.environ.get('DYBERPET_EVENT_WS', url))

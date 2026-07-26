@@ -318,7 +318,7 @@ class PetVoicePopup(QFrame):
         self.anim_timer.start(120)
 
     def _pos_from_anchor(self, x, y):
-        side_gap = 10
+        side_gap = 3
         parent = self.parent()
         bounds = parent._current_visible_bounds() if hasattr(parent, '_current_visible_bounds') else None
         if bounds is not None:
@@ -330,7 +330,7 @@ class PetVoicePopup(QFrame):
             area = screen.availableGeometry() if screen else None
             prefer_right = area is None or pet_right + side_gap + self.width() <= area.right()
             px = int(pet_right + side_gap) if prefer_right else int(pet_left - self.width() - side_gap)
-            py = int(pet_top + pet_height * 0.22)
+            py = int(pet_top + pet_height * 0.12)
             return clamp_popup_pos(QPoint(px, py), self.size(), QPoint(int(x), int(y)))
         px = int(x + side_gap)
         return clamp_popup_pos(QPoint(px, int(y - self.height() / 2)), self.size(), QPoint(int(x), int(y)))

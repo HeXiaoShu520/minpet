@@ -1,5 +1,5 @@
 # coding:utf-8
-"""miniPet surface 卡片事件的纯数据辅助函数。"""
+"""MiniPet surface 卡片事件的纯数据辅助函数。"""
 
 
 SILENT_SURFACE_TEXTS = {'我在处理...', '我在处理…', '正在处理...', '正在处理…', '处理中...', '处理中…'}

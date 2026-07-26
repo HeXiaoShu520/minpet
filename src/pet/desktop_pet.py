@@ -47,9 +47,7 @@ class DesktopPet(QWidget):
     """
 
     show_settings = Signal()
-    bubble_requested = Signal(str, int, int, int)
-    notification_requested = Signal(str, str)
-    smart_bubble_requested = Signal(dict, int, int)
+    reply_card_text_requested = Signal(str, int, int, int)
     chat_prompt_submitted = Signal(object)
     drop_intent_submitted = Signal(dict, str)
     chat_requested = Signal()
@@ -133,7 +131,7 @@ class DesktopPet(QWidget):
         config.current_pet = pet_name
         config.app_config['default_pet'] = pet_name
         config.save_app_config()
-        self.setWindowTitle('miniPet - ' + pet_name)
+        self.setWindowTitle(f'{config.APP_DISPLAY_NAME} - {pet_name}')
         self._set_image(self.profile.default.images[0], self.profile.default.anchor)
         self._reset_size(keep_position=False)
         self._start_animation()
@@ -213,7 +211,7 @@ class DesktopPet(QWidget):
     def _show_drop_popup(self, payload):
         if self.drop_popup is not None:
             self.drop_popup.close()
-        x, y = self.bubble_anchor()
+        x, y = self.reply_card_anchor()
         self.drop_popup = PetDropIntentPopup(payload, x, y, self)
         self.drop_popup.intent_selected.connect(self.drop_intent_submitted.emit)
         self.drop_popup.destroyed.connect(lambda: setattr(self, 'drop_popup', None))
@@ -299,7 +297,7 @@ class DesktopPet(QWidget):
             self.input_popup.raise_()
             self.input_popup.activateWindow()
             return
-        x, y = self.bubble_anchor()
+        x, y = self.reply_card_anchor()
         self.input_popup = PetInputPopup(x, y, self)
         self.input_popup.submitted.connect(self.chat_prompt_submitted.emit)
         self.input_popup.destroyed.connect(lambda: setattr(self, 'input_popup', None))
@@ -308,7 +306,7 @@ class DesktopPet(QWidget):
         if self.voice_popup is not None and self.voice_popup.isVisible():
             self.voice_popup.raise_()
             return self.voice_popup
-        x, y = self.bubble_anchor()
+        x, y = self.reply_card_anchor()
         self.voice_popup = PetVoicePopup(x, y, self)
         self.voice_popup.pause_requested.connect(self.voice_pause_requested.emit)
         self.voice_popup.destroyed.connect(lambda: setattr(self, 'voice_popup', None))
@@ -316,7 +314,7 @@ class DesktopPet(QWidget):
 
     def update_voice_popup(self, state, text=''):
         popup = self.show_voice_popup()
-        x, y = self.bubble_anchor()
+        x, y = self.reply_card_anchor()
         popup.move_to_anchor(x, y, smooth=False)
         popup.update_state(state, text)
 
@@ -333,7 +331,7 @@ class DesktopPet(QWidget):
 
     def _sync_voice_popup_position(self):
         if self.voice_popup is not None and self.voice_popup.isVisible():
-            x, y = self.bubble_anchor()
+            x, y = self.reply_card_anchor()
             self.voice_popup.move_to_anchor(x, y, floaty=self.fall_timer.isActive())
 
     def _move_by(self, dx, dy):
@@ -360,7 +358,7 @@ class DesktopPet(QWidget):
     def _current_visible_bounds(self):
         return self.visible_bounds if not self.visible_bounds.isNull() else QRect(0, 0, self.width(), self.height())
 
-    def bubble_anchor(self):
+    def reply_card_anchor(self):
         bounds = self._current_visible_bounds()
         center_x = self.x() + self.label.x() + bounds.left() + bounds.width() // 2
         top_y = self.y() + self.label.y() + bounds.top()

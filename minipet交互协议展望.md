@@ -1,4 +1,4 @@
-# miniPet 交互协议展望
+# MiniPet 交互协议展望
 
 本文承接 `minipet交互协议设计.md` 中未进入 V1 核心协议的能力。
 
@@ -29,7 +29,7 @@ bubble | card | confirm | input | choice
 
 - 优先扩展 `surface.kind`，不要轻易新增顶层消息族。
 - `surface.show`、`surface.update`、`surface.close` 仍然是生命周期入口。
-- 复杂 UI schema 应该保持轻量，避免 miniPet 变成完整 IM 或浏览器容器。
+- 复杂 UI schema 应该保持轻量，避免 MiniPet 变成完整 IM 或浏览器容器。
 
 ## 2. Timeline
 
@@ -145,7 +145,7 @@ bubble | card | confirm | input | choice
 
 ## 6. 飞书 / OpenClaw 场景
 
-miniPet 不做完整飞书客户端，不转发普通飞书通知。
+MiniPet 不做完整飞书客户端，不转发普通飞书通知。
 
 适合接入的场景：
 
@@ -191,13 +191,13 @@ V1 的 `agent.state` 只表达当前状态。未来可以扩展任务图：
 
 方向：
 
-- `context.request`：后端请求 miniPet 提供用户主动授权的上下文。
-- `context.response`：miniPet 返回授权后的上下文。
+- `context.request`：后端请求 MiniPet 提供用户主动授权的上下文。
+- `context.response`：MiniPet 返回授权后的上下文。
 
 原则：
 
 - 不自动采集敏感上下文。
-- 用户必须知道 miniPet 传了什么。
+- 用户必须知道 MiniPet 传了什么。
 - 可撤销、可审计。
 
 ## 9. 能力协商增强
@@ -256,4 +256,3 @@ V1 暂不强制这些字段，只在消息信封中预留空间。
 1. 当前阶段：旧 type + V1 metadata。
 2. 中间阶段：支持 `MINIPET_PROTOCOL_MODE=legacy|v1|dual`。
 3. 稳定阶段：新后端默认使用 V1 type，旧事件名作为 compatibility layer。
-

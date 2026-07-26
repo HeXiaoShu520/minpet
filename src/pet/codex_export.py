@@ -1,8 +1,8 @@
 # coding:utf-8
 """Codex v2 宠物包导出。
 
-把 miniPet 现有角色按 Codex v2 的 8x11 spritesheet 运行时格式导出到
-~/.codex/pets/<pet>/，用于让 Codex/ChatGPT 的宠物前端加载 miniPet 角色。
+把 MiniPet 现有角色按 Codex v2 的 8x11 spritesheet 运行时格式导出到
+~/.codex/pets/<pet>/，用于让 Codex/ChatGPT 的宠物前端加载 MiniPet 角色。
 """
 
 import json
@@ -23,12 +23,12 @@ ROWS = 11
 
 ROW_ACTIONS = [
     ('idle', ['idle', 'default', 'stand']),
-    # Codex 的 running-right / running-left 在按住拖拽时使用；miniPet 语义下按住统一用 drag。
+    # Codex 的 running-right / running-left 在按住拖拽时使用；MiniPet 语义下按住统一用 drag。
     ('running-right', ['drag', 'running-right', 'right_walk', 'rightwalk', 'right', 'default']),
     ('running-left', ['drag', 'running-left', 'left_walk', 'leftwalk', 'left', 'default']),
     ('waving', ['waving', 'wavehand', 'wavehand2', 'happy', 'patpat', 'pat', 'default']),
     ('jumping', ['jumping', 'playball', 'play', 'dance', 'happy', 'default']),
-    # miniPet 的 fall 是桌面物理下落，不等于任务失败；这里只用真正失败/情绪类动作。
+    # MiniPet 的 fall 是桌面物理下落，不等于任务失败；这里只用真正失败/情绪类动作。
     ('failed', ['failed', 'faint', 'giveup', 'cry', 'aggrieved', 'disturbed', 'angry', 'dislike', 'redangry', 'default']),
     ('waiting', ['waiting', 'sleep', 'sleepy', 'fall_asleep', 'sit', 'default']),
     ('running', ['running', 'work', 'focus', 'loop', 'default']),
@@ -42,7 +42,7 @@ LOOK_DIRECTIONS = [
 
 
 def _pet_id(name):
-    return str(name or '').strip() or 'miniPet'
+    return str(name or '').strip() or config.APP_ID
 
 
 def _first_existing_act(profile, candidates):
@@ -73,7 +73,7 @@ def _write_json(path, data):
 
 
 def export_pet_to_codex(pet_name, output_root=None):
-    """导出当前 miniPet 角色为 Codex v2 资源目录，返回导出目录 Path。"""
+    """导出当前 MiniPet 角色为 Codex v2 资源目录，返回导出目录 Path。"""
     profile = load_pet_profile(pet_name)
     output_root = Path(output_root) if output_root else CODEX_PET_DIR
     output_dir = output_root / _pet_id(pet_name)
@@ -92,7 +92,7 @@ def export_pet_to_codex(pet_name, output_root=None):
             _draw_frame(painter, _frame_at(act, column), column, row_index)
 
     # Codex 在鼠标附近但未按住时使用 look-direction 行。
-    # miniPet 没有 16 向视线资源；为了避免 hover 触发走路/跳舞感，这里统一用默认动作。
+    # MiniPet 没有 16 向视线资源；为了避免 hover 触发走路/跳舞感，这里统一用默认动作。
     look_act = _first_existing_act(profile, ['idle', 'default', 'stand'])
     for direction_index in range(16):
         act = look_act
@@ -126,13 +126,13 @@ def export_pet_to_codex(pet_name, output_root=None):
         'patpat': 'waving',
         'codex_row_actions': used_actions,
         'lookDirections': LOOK_DIRECTIONS,
-        'exportedBy': 'miniPet',
-        'exportNote': 'miniPet 原生角色导出的 Codex v2 显示包；标准动作按现有动作映射，look directions 暂用 idle/default 填充。',
+        'exportedBy': config.APP_DISPLAY_NAME,
+        'exportNote': 'MiniPet 原生角色导出的 Codex v2 显示包；标准动作按现有动作映射，look directions 暂用 idle/default 填充。',
     }
     codex_manifest = {
         'id': _pet_id(pet_name),
         'displayName': pet_name,
-        'description': 'A miniPet character exported for Codex.',
+        'description': 'A MiniPet character exported for Codex.',
         'spriteVersionNumber': 2,
         'spritesheetPath': spritesheet_name,
     }
@@ -152,7 +152,7 @@ def export_pet_to_codex(pet_name, output_root=None):
 
 
 def export_all_pets_to_codex(output_root=None, progress_callback=None):
-    """批量导出所有 miniPet 角色，返回成功目录和失败信息。"""
+    """批量导出所有 MiniPet 角色，返回成功目录和失败信息。"""
     exported = []
     failed = []
     pets = config.get_pet_list()

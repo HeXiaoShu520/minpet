@@ -23,7 +23,7 @@ class SettingsWindow(FluentWindow):
 
     def __init__(self, chat_store=None):
         super().__init__()
-        self.setWindowTitle('miniPet System')
+        self.setWindowTitle(f'{config.APP_DISPLAY_NAME} System')
         self.setWindowIcon(QIcon(str(config.avatar_path('pet'))))
         self.resize(1020, 760)
         self._drag_pos = None

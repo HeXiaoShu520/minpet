@@ -1,6 +1,6 @@
-# Third Party Notices
+﻿# Third Party Notices
 
-本文列出 miniPet 当前打包或参考的第三方项目、资源来源和许可状态。
+本文列出 MiniPet 当前打包或参考的第三方项目、资源来源和许可状态。
 
 ## DyberPet
 
@@ -8,8 +8,8 @@
 - Source: https://github.com/ChaozhongLiu/DyberPet
 - License: GPL-3.0
 - License copy: [third_party/dyberpet/LICENSE.GPL-3.0.txt](third_party/dyberpet/LICENSE.GPL-3.0.txt)
-- Used for: miniPet 桌宠基础结构、资源格式和桌面宠物交互参考
-- Notice: miniPet 由 MINIPET 简化整合而来，MINIPET 基于 DyberPet 开发。由于 DyberPet 使用 GNU General Public License v3.0，发布 miniPet 时应保留 DyberPet 来源、版权和 GPL-3.0 许可说明，并按 GPL-3.0 兼容方式分发。
+- Used for: MiniPet 桌宠基础结构、资源格式和桌面宠物交互参考
+- Notice: MiniPet 由 MINIPET 简化整合而来，MINIPET 基于 DyberPet 开发。由于 DyberPet 使用 GNU General Public License v3.0，发布 MiniPet 时应保留 DyberPet 来源、版权和 GPL-3.0 许可说明，并按 GPL-3.0 兼容方式分发。
 
 ## CyberZen（赛博木鱼）
 

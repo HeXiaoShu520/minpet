@@ -1,6 +1,6 @@
 # 素材开发文档
 
-本文档说明 miniPet 当前支持的角色素材格式。旧版 DyberPet / MINIPET 中的商店、物品、好感度、通知音效、对话物品、迷你宠物等系统当前没有在 miniPet 中接入，本文件不再保留这些配置说明。
+本文档说明 MiniPet 当前支持的角色素材格式。旧版 DyberPet / MINIPET 中的商店、物品、好感度、通知音效、对话物品、迷你宠物等系统当前没有在 MiniPet 中接入，本文件不再保留这些配置说明。
 
 ## 目录
 
@@ -18,7 +18,7 @@
 角色放在：
 
 ```text
-miniPet/res/role/<角色名>/
+minipet/res/role/<角色名>/
 ```
 
 一个最小可用角色目录：
@@ -152,7 +152,7 @@ action/stand.png
 }
 ```
 
-当前 miniPet 不维护旧版饱食度系统，但代码仍兼容这种写法；通常写一个字符串即可。
+当前 MiniPet 不维护旧版饱食度系统，但代码仍兼容这种写法；通常写一个字符串即可。
 
 ### random_act 写法
 
@@ -178,7 +178,7 @@ action/stand.png
 - `act_list` 中的动作名必须存在于 `act_conf.json`。
 - `act_prob` 是相对权重，不要求总和为 1。
 - `name` 会用于动作菜单显示。
-- 旧版 `act_type` 当前不会参与 miniPet 的随机概率计算，可不写。
+- 旧版 `act_type` 当前不会参与 MiniPet 的随机概率计算，可不写。
 
 ### accessory_act 写法
 
@@ -202,7 +202,7 @@ action/stand.png
 - `act_list` 是主角色动作。
 - `acc_list` 是附加组件动作。
 - `anchor` 是附加组件相对位置，会乘以 `scale`。
-- 当前 miniPet 只读取 `name`、`act_list`、`acc_list`、`anchor`。
+- 当前 MiniPet 只读取 `name`、`act_list`、`acc_list`、`anchor`。
 
 ## act_conf.json
 
@@ -263,7 +263,7 @@ action/stand.png
 
 ## 动作播放规则
 
-miniPet 的动画播放逻辑很简单：
+MiniPet 的动画播放逻辑很简单：
 
 1. 启动时读取当前角色的 `pet_conf.json` 和 `act_conf.json`。
 2. 根据 `act_conf.json` 加载 `action/` 里的 PNG 帧。
@@ -281,7 +281,7 @@ miniPet 的动画播放逻辑很简单：
 res/role/<角色名>/info/pfp.png
 ```
 
-当前 miniPet 的聊天、语音聊天和豆包通话头像主要由“基础设置”里的头像路径控制。你可以在设置中选择角色头像文件，设置页会立即显示图片预览。
+当前 MiniPet 的聊天、语音聊天和豆包通话头像主要由“基础设置”里的头像路径控制。你可以在设置中选择角色头像文件，设置页会立即显示图片预览。
 
 推荐头像：
 
@@ -291,11 +291,11 @@ res/role/<角色名>/info/pfp.png
 
 ## 开发流程
 
-1. 在 `miniPet/res/role/` 下新建英文目录名，例如 `ChrisKitty`。
+1. 在 `minipet/res/role/` 下新建英文目录名，例如 `ChrisKitty`。
 2. 创建 `action/` 目录，放入透明 PNG 动画帧。
 3. 编写 `act_conf.json`，定义每个动作读取哪些图片、播放速度和移动参数。
 4. 编写 `pet_conf.json`，指定默认动作、拖拽动作、掉落动作和随机动作。
-5. 启动 miniPet，在设置中切换默认宠物进行测试。
+5. 启动 MiniPet，在设置中切换默认宠物进行测试。
 6. 检查拖拽、点击、掉落、随机动作和缩放是否自然。
 
 ## 常见问题
@@ -304,7 +304,7 @@ res/role/<角色名>/info/pfp.png
 
 检查：
 
-- 目录是否在 `miniPet/res/role/` 下。
+- 目录是否在 `minipet/res/role/` 下。
 - 是否有 `pet_conf.json`。
 - 目录是否误命名为 `sys`。
 

@@ -1,9 +1,9 @@
 # coding:utf-8
 """
-miniPet 应用组装入口。
+MiniPet 应用组装入口。
 
 MiniPetApp 是整个桌宠程序的协调层，负责把桌宠窗口、设置窗口、聊天记录、
-通知气泡、外部智能体事件、语音识别和 TTS 串在一起。具体 UI 和协议实现
+回复卡片、外部智能体事件、语音识别和 TTS 串在一起。具体 UI 和协议实现
 分散在各自模块中，这里只保留跨模块流程编排。
 """
 
@@ -23,7 +23,8 @@ from storage.chat_store import ChatStore
 from pet.desktop_pet import DesktopPet
 from clients.event_client import EventClient
 from clients.llm_client import ChatWorker
-from widgets.notifications.center import NotificationCenter
+from clients.openclaw_client import OpenClawWorker
+from widgets.notifications.reply_card_center import ReplyCardCenter
 from protocols.protocol_v1 import SESSION_PING, SESSION_PONG, SESSION_READY, SURFACE_CLOSE, SURFACE_SHOW, SURFACE_UPDATE, USER_INPUT, V1_CAPABILITIES, normalize_inbound_event
 from protocols.surface_utils import is_silent_surface_text, is_terminal_surface_status, normalize_display_event, surface_text, surface_timeout
 from settings_window import SettingsWindow
@@ -37,10 +38,10 @@ WAKE_ACK_KEYS = ('wake_ack_1', 'wake_ack_2', 'wake_ack_3', 'wake_ack_4')
 
 
 class MiniPetApp(QApplication):
-    """miniPet 主应用对象。
+    """MiniPet 主应用对象。
 
     这个类是跨模块的“胶水层”：它不直接绘制桌宠或聊天窗口，而是负责创建
-    DesktopPet、SettingsWindow、NotificationCenter 等对象，并通过 Qt 信号把
+    DesktopPet、SettingsWindow、ReplyCardCenter 等对象，并通过 Qt 信号把
     用户操作、LLM 回复、TTS 播放和外部事件连接起来。
 
     运行时聊天上下文只保存在 self.chat_history 中。
@@ -65,20 +66,21 @@ class MiniPetApp(QApplication):
         self.pet = DesktopPet(screens)
         self.chat_store = ChatStore(config.DATA_DIR / 'chat')
         self.settings = SettingsWindow(self.chat_store)
-        self.note = NotificationCenter()
+        self.note = ReplyCardCenter()
         self.events = EventClient() if start_event_client else None
-        if self.events:
+        if self.events and self._agent_backend() == 'custom':
             self.events.set_url(self._agent_ws_url())
         # 当前运行中的短期上下文；可选从磁盘恢复最近消息。
         self.chat_history = []
         self._restore_chat_history()
-        # quick_chat_* 管理桌宠头顶快速输入：LLM 请求、回复气泡和可选 TTS 播报。
+        # quick_chat_* 管理桌宠头顶快速输入：LLM 请求、回复卡片和可选 TTS 播报。
         self.quick_chat_worker = None
+        self.openclaw_worker = None
         self.event_tts_worker = None
         self.quick_chat_source = 'quick_chat'
-        self.quick_reply_bubble_id = None
+        self.quick_reply_card_id = None
         self._quick_stream_text = ''
-        self._surface_bubbles = {}
+        self._surface_cards = {}
         # 内置模型和外置 surface 都是“完整文本不断增长”的流式形态，
         # 统一交给 StreamTtsQueue 按小句切分并串行播放。
         self.quick_stream_tts = StreamTtsQueue(self, label='TTS', on_started=self._on_quick_stream_tts_started, on_idle=self._finish_quick_voice_if_tts_idle)
@@ -98,6 +100,7 @@ class MiniPetApp(QApplication):
         self.is_quitting = False
 
         self.pet.show_settings.connect(self.settings.show_window)
+        self.pet.reply_card_text_requested.connect(lambda text, x, y, timeout: self.note.setup_reply_card_text(text, x, y, timeout, title=config.current_pet or '宠物'))
         self.pet.chat_prompt_submitted.connect(self._on_quick_chat_prompt)
         self.pet.drop_intent_submitted.connect(self._on_drop_intent)
         self.pet.chat_requested.connect(self._show_chat_window)
@@ -110,11 +113,11 @@ class MiniPetApp(QApplication):
         self.settings.settings_changed.connect(self._apply_agent_settings)
         self.settings.settings_changed.connect(self._apply_wake_word_settings)
         self.settings.pet_changed.connect(self.pet.load_pet)
-        self.note.smart_action_clicked.connect(self._on_smart_action)
+        self.note.reply_card_action_clicked.connect(self._on_reply_card_action)
         if self.events:
             self.events.event_received.connect(self._on_event)
             self.events.connection_changed.connect(self._on_event_connection_changed)
-            if self._agent_backend() != 'builtin':
+            if self._agent_backend() == 'custom':
                 self.events.start()
         self._apply_wake_word_settings()
         QTimer.singleShot(0, self._show_startup_greeting)
@@ -134,18 +137,15 @@ class MiniPetApp(QApplication):
         return config.app_config.get('agent_backend', 'builtin') or 'builtin'
 
     def _agent_ws_url(self):
-        backend = self._agent_backend()
-        if backend == 'custom':
-            return config.app_config.get('custom_agent_ws_url') or 'ws://127.0.0.1:18889/ws/minipet'
-        return config.app_config.get('openclaw_ws_url') or 'ws://127.0.0.1:18888/ws/pet'
+        return config.app_config.get('custom_agent_ws_url') or config.CUSTOM_AGENT_WS_DEFAULT
 
     def _apply_agent_settings(self):
         if not self.events:
             return
-        self.events.set_url(self._agent_ws_url())
-        if self._agent_backend() == 'builtin':
+        if self._agent_backend() != 'custom':
             self.events.stop()
             return
+        self.events.set_url(self._agent_ws_url())
         if self.events.isRunning():
             self.events.reconnect()
         else:
@@ -266,9 +266,9 @@ class MiniPetApp(QApplication):
             self.pet.quit_now()
 
     def _show_startup_greeting(self):
-        x, y = self.pet.bubble_anchor()
+        x, y = self.pet.reply_card_anchor()
         name = config.current_pet or '宠物'
-        self.note.setup_bubble('好久不见，想我了吗？', x, y, 6000, title=name)
+        self.note.setup_reply_card_text('好久不见，想我了吗？', x, y, 6000, title=name)
         self._play_event_tts('startup')
 
     def _show_chat_window(self):
@@ -293,8 +293,8 @@ class MiniPetApp(QApplication):
         popup.stop_requested.connect(self._stop_pet_voice_chat)
         if not config.tts_config.get('api_key'):
             self.pet.update_voice_popup('error', '缺少语音配置')
-            x, y = self.pet.bubble_anchor()
-            self.note.setup_bubble('请先在设置 > 语音中填写 TTS API Key', x, y, 4000, title=config.current_pet or '宠物')
+            x, y = self.pet.reply_card_anchor()
+            self.note.setup_reply_card_text('请先在设置 > 语音中填写 TTS API Key', x, y, 4000, title=config.current_pet or '宠物')
             QTimer.singleShot(1800, self.pet.close_voice_popup)
             return
         self.pet_voice_active = True
@@ -321,8 +321,8 @@ class MiniPetApp(QApplication):
         popup.stop_requested.connect(self._stop_pet_voice_chat)
         if not config.tts_config.get('api_key'):
             self.pet.update_voice_popup('error', '缺少语音配置')
-            x, y = self.pet.bubble_anchor()
-            self.note.setup_bubble('请先在设置 > 语音中填写 TTS API Key', x, y, 4000, title=config.current_pet or '宠物')
+            x, y = self.pet.reply_card_anchor()
+            self.note.setup_reply_card_text('请先在设置 > 语音中填写 TTS API Key', x, y, 4000, title=config.current_pet or '宠物')
             QTimer.singleShot(1800, self.pet.close_voice_popup)
             return
         self.pet_voice_active = True
@@ -458,8 +458,8 @@ class MiniPetApp(QApplication):
     def _on_pet_voice_error(self, text):
         if self.pet_voice_active:
             self.pet.update_voice_popup('error', str(text)[:60])
-            x, y = self.pet.bubble_anchor()
-            self.note.setup_bubble('语音识别出错：' + str(text), x, y, 5000, title=config.current_pet or '宠物')
+            x, y = self.pet.reply_card_anchor()
+            self.note.setup_reply_card_text('语音识别出错：' + str(text), x, y, 5000, title=config.current_pet or '宠物')
         self._stop_pet_voice_chat()
 
     def _on_pet_voice_finished(self):
@@ -477,8 +477,8 @@ class MiniPetApp(QApplication):
         if self.pet_voice_active or self.pet_voice_asr_worker is not None:
             self._stop_pet_voice_chat()
         self._stop_wake_word_listener()
-        x, y = self.pet.bubble_anchor()
-        self.note.setup_bubble('我会想你的，再见~', x, y, 3000, title=config.current_pet or '宠物')
+        x, y = self.pet.reply_card_anchor()
+        self.note.setup_reply_card_text('我会想你的，再见~', x, y, 3000, title=config.current_pet or '宠物')
         if not self._play_event_tts('exit'):
             self.pet.quit_now()
 
@@ -515,8 +515,10 @@ class MiniPetApp(QApplication):
         return (text + '\n' if text else '') + ('[图片] × %d' % image_count if image_count else '')
 
     def _send_external_command(self, content, mode='text', surface='pet_popup', screenshot=''):
-        x, y = self.pet.bubble_anchor()
-        self.note.setup_bubble(self._content_preview(content), x, y, 2000, title='你')
+        if self._agent_backend() == 'openclaw':
+            return self._send_openclaw_prompt(content, mode)
+        x, y = self.pet.reply_card_anchor()
+        self.note.setup_reply_card_text(self._content_preview(content), x, y, 2000, title='你')
         if mode in ('text', 'voice'):
             self._reset_external_stream_tts()
             self._show_reply_card('正在思考...', status='streaming', timeout_ms=60000)
@@ -526,8 +528,41 @@ class MiniPetApp(QApplication):
         sent = self.events.send_event(USER_INPUT, payload) if self.events else False
         if not sent:
             self._close_reply_card()
-            self.note.setup_bubble('外置智能体还没连接，先检查“智能体”设置。', x, y, 4500, title=config.current_pet or '宠物')
+            self.note.setup_reply_card_text('外置智能体还没连接，先检查“智能体”设置。', x, y, 4500, title=config.current_pet or '宠物')
         return sent
+
+    def _send_openclaw_prompt(self, content, mode='text'):
+        if self.openclaw_worker is not None:
+            x, y = self.pet.reply_card_anchor()
+            self.note.setup_reply_card_text('OpenClaw 还在处理上一句话，稍等一下。', x, y, 3000, title=config.current_pet or '宠物')
+            return False
+        prompt = self._content_preview(content).strip()
+        if not prompt:
+            return False
+        x, y = self.pet.reply_card_anchor()
+        self.quick_chat_source = 'voice_chat' if mode == 'voice' else 'quick_chat'
+        self.note.setup_reply_card_text(prompt, x, y, 2000, title='你')
+        self._reset_external_stream_tts()
+        self._show_reply_card('正在问 OpenClaw...', status='streaming', timeout_ms=60000)
+        self.openclaw_worker = OpenClawWorker(prompt, parent=self)
+        self.openclaw_worker.result_ready.connect(self._on_openclaw_reply)
+        self.openclaw_worker.start()
+        return True
+
+    def _on_openclaw_reply(self, success, text):
+        self.openclaw_worker = None
+        reply = (text or '').strip()
+        if success:
+            reply = reply or 'OpenClaw 没有返回文本。'
+            self._show_reply_card(reply, status='done', timeout_ms=max(5000, min(25000, len(reply) * 180)))
+            self.external_stream_tts.queue_text('openclaw-reply', reply, terminal=True)
+            if self.quick_chat_source == 'voice_chat':
+                self._finish_voice_turn(delay_ms=500)
+            return
+        self._reset_external_stream_tts()
+        self._show_reply_card(reply or '调用 OpenClaw 失败。', status='failed', timeout_ms=8000)
+        if self.quick_chat_source == 'voice_chat' and self.pet_voice_active:
+            self._finish_voice_turn(delay_ms=800)
 
     def _show_reply_card(self, content, status='streaming', timeout_ms=60000):
         event = {
@@ -536,15 +571,15 @@ class MiniPetApp(QApplication):
             'status': status,
             'timeout_ms': timeout_ms,
         }
-        x, y = self.pet.bubble_anchor()
-        if self.quick_reply_bubble_id and self.note.update_bubble(self.quick_reply_bubble_id, event, timeout=timeout_ms):
+        x, y = self.pet.reply_card_anchor()
+        if self.quick_reply_card_id and self.note.update_reply_card(self.quick_reply_card_id, event, timeout=timeout_ms):
             return
-        self.quick_reply_bubble_id = self.note.setup_smart_bubble(event, x, y, play_sound=False)
+        self.quick_reply_card_id = self.note.setup_reply_card(event, x, y, play_sound=False)
 
     def _close_reply_card(self):
-        if self.quick_reply_bubble_id:
-            self.note.close_bubble(self.quick_reply_bubble_id)
-            self.quick_reply_bubble_id = None
+        if self.quick_reply_card_id:
+            self.note.close_reply_card(self.quick_reply_card_id)
+            self.quick_reply_card_id = None
 
     def _on_quick_chat_prompt(self, text):
         if self._agent_backend() == 'builtin':
@@ -565,7 +600,7 @@ class MiniPetApp(QApplication):
         payload['intent'] = intent
         payload['surface'] = 'desktop_pet'
         payload['context'] = {'surface': 'desktop_pet'}
-        x, y = self.pet.bubble_anchor()
+        x, y = self.pet.reply_card_anchor()
         intent_labels = {
             'summarize': '总结',
             'create_task': '生成待办',
@@ -577,11 +612,14 @@ class MiniPetApp(QApplication):
             prompt = self._drop_prompt_for_builtin(payload, intent_labels.get(intent, intent))
             self._submit_quick_chat(prompt, 'drop')
             return
+        if self._agent_backend() == 'openclaw':
+            self._send_openclaw_prompt(self._drop_prompt_for_builtin(payload, intent_labels.get(intent, intent)), 'text')
+            return
         sent = self.events.send_event(USER_INPUT, {'text': self._drop_prompt_for_builtin(payload, intent_labels.get(intent, intent))}) if self.events else False
         if sent:
-            self.note.setup_bubble('收到，我交给外置智能体处理：' + intent_labels.get(intent, intent), x, y, 3500, title=config.current_pet or '宠物')
+            self.note.setup_reply_card_text('收到，我交给外置智能体处理：' + intent_labels.get(intent, intent), x, y, 3500, title=config.current_pet or '宠物')
         else:
-            self.note.setup_bubble('外置智能体还没连接，先检查“智能体”设置。', x, y, 4500, title=config.current_pet or '宠物')
+            self.note.setup_reply_card_text('外置智能体还没连接，先检查“智能体”设置。', x, y, 4500, title=config.current_pet or '宠物')
 
     def _drop_prompt_for_builtin(self, payload, intent_label):
         lines = ['用户投喂了内容，希望你处理：%s。' % intent_label]
@@ -601,8 +639,8 @@ class MiniPetApp(QApplication):
             if source == 'quick_chat' and self.pet.input_popup is not None:
                 self.pet.input_popup.close()
                 self.pet.input_popup = None
-            x, y = self.pet.bubble_anchor()
-            self.note.setup_bubble('我还在想上一句话，稍等一下。', x, y, 3000, title=config.current_pet or '宠物')
+            x, y = self.pet.reply_card_anchor()
+            self.note.setup_reply_card_text('我还在想上一句话，稍等一下。', x, y, 3000, title=config.current_pet or '宠物')
             return False
         self.quick_chat_source = source
         self._append_chat_message('user', text, source)
@@ -651,12 +689,11 @@ class MiniPetApp(QApplication):
             self.quick_stream_tts.queue_text('quick-reply', shown, terminal=False)
 
     def _on_quick_chat_reply(self, success, text):
-        """处理快速聊天回复：保存历史、展示气泡，并按配置触发 TTS。"""
+        """处理快速聊天回复：保存历史、展示回复卡片，并按配置触发 TTS。"""
         self.quick_chat_worker = None
         if self.quick_chat_source == 'quick_chat' and self.pet.input_popup is not None:
             self.pet.input_popup.close()
             self.pet.input_popup = None
-        x, y = self.pet.bubble_anchor()
         if success:
             reply = (text or self._quick_stream_text).strip() or '嗯。'
             self._append_chat_message('assistant', reply, self.quick_chat_source or 'quick_chat')
@@ -708,10 +745,10 @@ class MiniPetApp(QApplication):
         event = normalize_inbound_event(event)
         event_type = event.get('type', '')
         payload = event.get('payload') if isinstance(event.get('payload'), dict) else event
-        x, y = self.pet.bubble_anchor()
+        x, y = self.pet.reply_card_anchor()
         if event_type == SESSION_READY:
             server = payload.get('server') if isinstance(payload.get('server'), dict) else {}
-            self.note.setup_bubble('后端已就绪：' + str(server.get('name') or payload.get('name') or '智能体'), x, y, 3000, title=config.current_pet or '宠物')
+            self.note.setup_reply_card_text('后端已就绪：' + str(server.get('name') or payload.get('name') or '智能体'), x, y, 3000, title=config.current_pet or '宠物')
         elif event_type == SURFACE_SHOW:
             self._handle_surface_show(payload)
         elif event_type == SURFACE_UPDATE:
@@ -722,7 +759,7 @@ class MiniPetApp(QApplication):
             if self.events:
                 self.events.send_event(SESSION_PONG, {'ts': payload.get('ts')})
         else:
-            self.note.setup_notification(payload.get('title', '外部事件'), payload.get('summary') or payload.get('content') or '')
+            self.note.setup_toast(payload.get('title', '外部事件'), payload.get('summary') or payload.get('content') or '')
 
     def _handle_surface_show(self, payload):
         card_event = normalize_display_event(SURFACE_SHOW, payload)
@@ -731,14 +768,14 @@ class MiniPetApp(QApplication):
         self._queue_external_reply_tts(card_event, text)
         if is_silent_surface_text(text) and not card_event.get('elements') and not card_event.get('actions') and not card_event.get('controls'):
             return
-        x, y = self.pet.bubble_anchor()
-        bubble_id = self.note.setup_smart_bubble(card_event, x, y, play_sound=False)
+        x, y = self.pet.reply_card_anchor()
+        card_id = self.note.setup_reply_card(card_event, x, y, play_sound=False)
         surface_id = card_event.get('surface_id')
         if surface_id:
-            self._surface_bubbles[surface_id] = bubble_id
+            self._surface_cards[surface_id] = card_id
         self._handle_external_voice_surface(card_event)
         if surface_id and is_terminal_surface_status(card_event):
-            self._surface_bubbles.pop(surface_id, None)
+            self._surface_cards.pop(surface_id, None)
 
     def _handle_surface_update(self, payload):
         surface_id = payload.get('surface_id')
@@ -751,18 +788,18 @@ class MiniPetApp(QApplication):
         if is_silent_surface_text(text) and not card_event.get('elements') and not card_event.get('actions') and not card_event.get('controls'):
             return
         timeout = surface_timeout(card_event)
-        bubble_id = self._surface_bubbles.get(surface_id)
-        if bubble_id and self.note.update_bubble(bubble_id, card_event, timeout=timeout):
+        card_id = self._surface_cards.get(surface_id)
+        if card_id and self.note.update_reply_card(card_id, card_event, timeout=timeout):
             self._handle_external_voice_surface(card_event)
             if is_terminal_surface_status(card_event):
-                self._surface_bubbles.pop(surface_id, None)
+                self._surface_cards.pop(surface_id, None)
             return
-        x, y = self.pet.bubble_anchor()
-        bubble_id = self.note.setup_smart_bubble(card_event, x, y, play_sound=False)
-        self._surface_bubbles[surface_id] = bubble_id
+        x, y = self.pet.reply_card_anchor()
+        card_id = self.note.setup_reply_card(card_event, x, y, play_sound=False)
+        self._surface_cards[surface_id] = card_id
         self._handle_external_voice_surface(card_event)
         if is_terminal_surface_status(card_event):
-            self._surface_bubbles.pop(surface_id, None)
+            self._surface_cards.pop(surface_id, None)
 
     def _queue_external_reply_tts(self, card_event, text):
         if self._agent_backend() == 'builtin' or not text:
@@ -793,26 +830,26 @@ class MiniPetApp(QApplication):
         surface_id = payload.get('surface_id')
         if not surface_id:
             return
-        bubble_id = self._surface_bubbles.pop(surface_id, None)
-        if bubble_id:
-            self.note.close_bubble(bubble_id)
+        card_id = self._surface_cards.pop(surface_id, None)
+        if card_id:
+            self.note.close_reply_card(card_id)
         self.external_stream_tts.reset(surface_id)
 
-    def _on_smart_action(self, event, action):
+    def _on_reply_card_action(self, event, action):
         action_id = action.get('id') or action.get('type')
         text = action.get('text') or event.get('suggestion') or event.get('summary') or event.get('content') or ''
-        x, y = self.pet.bubble_anchor()
+        x, y = self.pet.reply_card_anchor()
         if action_id == 'ignore':
             return
         if action_id == 'copy':
             QGuiApplication.clipboard().setText(text)
-            self.note.setup_bubble('已复制到剪贴板', x, y, 3000)
+            self.note.setup_reply_card_text('已复制到剪贴板', x, y, 3000)
             return
         if action_id == 'open_chat':
             self._show_chat_window()
             return
         if action_id == 'later':
-            self.note.setup_bubble('稍后提醒功能会在 miniPet 本地提醒模块中接入', x, y, 4000)
+            self.note.setup_reply_card_text(f'稍后提醒功能会在 {config.APP_DISPLAY_NAME} 本地提醒模块中接入', x, y, 4000)
             return
         if self.events:
             self.events.execute_action(event, action)
@@ -831,7 +868,7 @@ class MiniPetApp(QApplication):
             self.pet_voice_asr_worker.finish()
             self.pet_voice_asr_worker.wait(1500)
             self.pet_voice_asr_worker = None
-        for worker_name in ('quick_chat_worker', 'event_tts_worker', 'wake_ack_worker'):
+        for worker_name in ('quick_chat_worker', 'openclaw_worker', 'event_tts_worker', 'wake_ack_worker'):
             worker = getattr(self, worker_name, None)
             if worker is not None and worker.isRunning():
                 worker.requestInterruption()

@@ -6,6 +6,8 @@ from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QVBoxLa
 from qfluentwidgets import CaptionLabel, StrongBodyLabel, TransparentToolButton
 from qfluentwidgets import FluentIcon as FIF
 
+import config
+
 class Toast(QWidget):
     """右下角普通系统提示窗口。"""
 
@@ -32,7 +34,7 @@ class Toast(QWidget):
             icon_label.setPixmap(pm)
             layout.addWidget(icon_label)
         text_box = QVBoxLayout()
-        title_label = StrongBodyLabel(title or 'miniPet')
+        title_label = StrongBodyLabel(title or config.APP_DISPLAY_NAME)
         msg_label = CaptionLabel(message or '')
         msg_label.setWordWrap(True)
         msg_label.setMaximumWidth(260)
