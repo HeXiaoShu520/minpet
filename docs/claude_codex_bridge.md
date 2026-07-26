@@ -1,0 +1,216 @@
+# Claude Code / Codex 调用桥接说明
+
+本文记录 MiniPet 当前对 Claude Code 和 Codex 的本地调用方式、消息流、会话管理、退出清理和已知限制。它是 [README.md](../README.md) 中“连接 Claude Code / 连接 Codex”的详细补充。
+
+## 总体目标
+
+MiniPet 的桌宠输入不是一次性任务，而是连续聊天式输入。因此 Claude Code 和 Codex 都被封装成“本地子进程会话桥接”：
+
+- 每次用户发送消息时，MiniPet 把输入转成 CLI 可理解的机器输入
+- CLI 在子进程里生成回复
+- MiniPet 把增量文本显示到回复卡片
+- 收到最终结果后，把卡片状态切为 `done`
+- 如果开启 TTS，再在最终结果阶段完成播报收尾
+
+这两类后端的共同目标都是：
+
+1. 避免 UI 直接依赖复杂的终端交互
+2. 避免长期占用交互式 TUI
+3. 让桌宠侧的状态机可以明确知道“开始 / 流式输出 / 结束 / 失败”
+4. 在退出程序、切换后端或中断回复时能释放子进程
+
+---
+
+## Claude Code 调用方式
+
+### 启动命令
+
+MiniPet 只保留 Claude Code 的 `stream-json` 子进程方式：
+
+```bash
+claude --print \
+  --verbose \
+  --input-format stream-json \
+  --output-format stream-json \
+  --include-partial-messages \
+  --replay-user-messages \
+  --permission-mode auto \
+  --session-id <由项目路径生成的固定 UUID>
+```
+
+### 关键参数含义
+
+- `--print`
+  - 让 Claude Code 以非交互方式向 stdout 输出结果
+- `--verbose`
+  - 当前版本使用 `--output-format stream-json` 时必须加
+- `--input-format stream-json`
+  - MiniPet 通过 JSONL 事件把用户消息写入 stdin
+- `--output-format stream-json`
+  - 让 Claude Code 以机器可解析事件流输出
+- `--include-partial-messages`
+  - 允许流式增量输出
+- `--replay-user-messages`
+  - 让会话保持对历史消息的回放能力
+- `--permission-mode auto`
+  - 让 CLI 以自动权限模式运行
+- `--session-id ...`
+  - 用于把同一个项目目录映射到同一个 Claude Code 会话
+
+### 会话 ID 生成
+
+MiniPet 不单独保存 Claude Code 的 session id，而是由项目目录和重置 token 稳定生成：
+
+```text
+session_id = UUID(sha256(project_dir + reset_token).前 16 字节)
+```
+
+规则：
+
+- 项目目录相同、reset token 相同 → session id 相同
+- 用户点击“重置会话” → reset token 加 1 → session id 改变
+- 同一项目目录重启 MiniPet → 仍会复用相同会话上下文
+
+### 输入格式
+
+MiniPet 发给 Claude Code 的最小用户事件为一行 JSON：
+
+```json
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"你好"}]}}
+```
+
+### 输出解析
+
+MiniPet 读取 stdout 的每一行，并处理以下情况：
+
+- 顶层 `stream_event` 包裹：
+  - 实际事件在 `event` 字段里
+- `content_block_delta`
+  - 取 `delta.text` / `delta.thinking` 作为增量文本
+- `content_block_start`
+  - 取文本块的初始内容
+- `message_delta`
+  - 取 `delta.text`
+- `result`
+  - 视为最终结果，切换回复卡片为 `done`
+
+### 卡片与 TTS 行为
+
+- 流式阶段：
+  - 回复卡片状态为 `streaming`
+  - 语音播报以 `terminal=False` 持续入队
+- 最终结果阶段：
+  - 回复卡片状态为 `done`
+  - 语音播报以 `terminal=True` 收尾
+- 失败阶段：
+  - 回复卡片状态为 `failed`
+
+### 清理策略
+
+为了避免 `Session ID ... is already in use`：
+
+- MiniPet 退出时会停止当前 Claude Code 子进程
+- 切换后端时会停止当前 Claude Code 子进程
+- Claude Code 启动前，会先清理当前 MiniPet 自己拉起的同 session 残留进程
+- 只清理当前 MiniPet 父进程下的 `claude.exe`
+- 不会去杀用户手动启动的别的 Claude Code 进程
+
+### 现状限制
+
+Claude Code 这条桥接仍是“单会话单进程”模型：
+
+- 如果外部还有别的 Claude Code 进程占着同一个 session id，MiniPet 仍可能启动失败
+- 这时需要先结束那个外部进程，或点击“重置会话”换一个新 session id
+
+---
+
+## Codex 调用方式
+
+### 启动命令
+
+Codex 这边不再走交互式 TUI / winpty，而是使用非交互 `exec`：
+
+```bash
+codex exec \
+  --json \
+  --ephemeral \
+  --cd <项目目录> \
+  -
+```
+
+### 参数含义
+
+- `exec`
+  - 非交互执行一次任务
+- `--json`
+  - stdout 输出 JSONL 事件，方便 MiniPet 解析
+- `--ephemeral`
+  - 不持久化会话文件，避免占用和恢复混乱
+- `--cd <项目目录>`
+  - 指定 Codex 运行目录
+- `-`
+  - 从 stdin 读取 prompt
+
+### 输入方式
+
+MiniPet 把用户输入直接写入 Codex 子进程 stdin：
+
+```text
+用户输入
+→ codex exec stdin
+```
+
+### 输出解析
+
+Codex 侧会尽量解析 JSONL 事件：
+
+- 普通文本行 → 当作流式输出
+- JSON 事件里的文本字段 → 当作流式或最终输出
+- `result / final / done / completed` 类事件 → 当作最终结果
+
+### 卡片与 TTS 行为
+
+和 Claude Code 保持一致：
+
+- 新输入先开启新轮次
+- 流式阶段卡片为 `streaming`
+- 最终阶段卡片为 `done`
+- TTS 在最终阶段收尾
+
+### 现状限制
+
+- Codex CLI 的 JSON 事件格式可能随版本变化
+- 如果某个版本输出不是标准 JSONL，MiniPet 会回退成普通文本追加
+- 当前实现优先保证“能稳定跑起来”，不是把所有 Codex 版本差异都吃满
+
+---
+
+## 两者的共同 UI 约定
+
+MiniPet 对 Claude Code 和 Codex 都遵循同一套桌宠侧状态机：
+
+1. 发送前先开启新轮次
+2. 显示“正在启动”或“等待输出”卡片
+3. 流式输出时不断更新同一张卡片
+4. 最终结果到达后切为 `done`
+5. 出错时切为 `failed`
+6. 如果开启语音播报，最终结果阶段负责收尾
+
+这套约定的目的，是让它们和内置大模型、OpenClaw、MiniPet 协议后端的体验尽量统一。
+
+---
+
+## 当前代码位置
+
+- Claude Code 桥接：`src/clients/claude_code_client.py`
+- Codex 桥接：`src/clients/codex_client.py`
+- 桌宠流程编排：`src/app.py`
+- 设置页入口：`src/windows/settings/basic_pages.py`
+
+---
+
+## 推荐使用方式
+
+- 如果你要的是“当前项目内连续聊天开发助手”，优先用 Claude Code
+- 如果你要的是“只跑一次、输出一次”的本地命令式助手，可以用 Codex
+- 如果你希望两者都稳定，建议始终从 MiniPet 的设置页进入，不要在外部手工同时占用同一个后端进程
