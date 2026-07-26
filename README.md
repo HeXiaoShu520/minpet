@@ -42,7 +42,7 @@ claude --help
 - 智能体模式：`连接 Claude Code`
 - 项目目录：选择 Claude Code 需要操作的项目目录
 
-MiniPet 会在该目录下启动 Claude Code 子进程。连接方式固定使用 Claude Code 的机器流接口：
+MiniPet 会在该目录下启动 Claude Code 子进程。首次发送前会先尝试清理当前 MiniPet 自己启动的同 session 残留进程，避免新会话被旧会话占用。连接方式固定使用 Claude Code 的机器流接口：
 
 ```bash
 claude --print \
