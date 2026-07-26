@@ -3,7 +3,7 @@
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QPainter, QPainterPath, QPixmap
-from PySide6.QtWidgets import QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton, QVBoxLayout
+from PySide6.QtWidgets import QApplication, QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton, QVBoxLayout
 from qfluentwidgets import TransparentToolButton
 from qfluentwidgets import FluentIcon as FIF
 
@@ -13,9 +13,10 @@ from widgets.notifications.constants import REPLY_CARD_TIMEOUT_MS
 from widgets.notifications.text_format import markdown_to_html
 from widgets.notifications.card_window import ReplyCardWindow
 
-REPLY_CARD_DEFAULT_WIDTH = 390
-REPLY_CARD_MIN_WIDTH = 360
-REPLY_CARD_MAX_WIDTH = 460
+REPLY_CARD_DEFAULT_WIDTH = 320
+REPLY_CARD_MIN_WIDTH = 280
+REPLY_CARD_MAX_WIDTH = 420
+REPLY_CARD_AVATAR_SIZE = 40
 
 def _reply_card_style_qss(style):
     card = {
@@ -36,7 +37,7 @@ def _reply_card_style_qss(style):
             QFrame#ReplyCardHr {{ border: none; border-top: 1px solid rgba(180,190,215,130); background: transparent; max-height: 1px; }}
             QLabel {{ border: none; background: transparent; font-family: "Microsoft YaHei UI", "Microsoft YaHei"; }}
             QLabel#ReplyCardTitle {{ color: {title}; font-size: 16px; font-weight: 700; }}
-            QLabel#ReplyCardAvatar {{ border-radius: 17px; background: #e8f2ff; }}
+            QLabel#ReplyCardAvatar {{ border-radius: 20px; background: #e8f2ff; }}
             QLabel#ReplyCardStatus {{ color: {meta}; font-size: 12px; font-weight: 700; }}
             QLabel#ReplyCardMeta, QLabel#ReplyCardControlLabel, QLabel#ReplyCardOptionDescription {{ color: {meta}; font-size: 12px; }}
             QLabel#ReplyCardSummary, QLabel#ReplyCardElement {{ color: {body}; font-size: 13px; line-height: 1.45; }}
@@ -73,7 +74,7 @@ class ReplyCard(ReplyCardWindow):
         # 卡片本身已有边框和半透明背景，这里不再给顶层窗口加 Qt 阴影。
 
         self._card_width = self._normalized_card_width(self.event_data.get('width'))
-        self._content_width = max(300, self._card_width - 80)
+        self._content_width = max(220, self._card_width - 86)
         self.setFixedWidth(self._card_width)
         card = QFrame(self)
         card.setObjectName('ReplyCard')
@@ -113,12 +114,12 @@ class ReplyCard(ReplyCardWindow):
         header.setSpacing(10)
         self.avatar_label = QLabel(card)
         self.avatar_label.setObjectName('ReplyCardAvatar')
-        self.avatar_label.setFixedSize(34, 34)
+        self.avatar_label.setFixedSize(REPLY_CARD_AVATAR_SIZE, REPLY_CARD_AVATAR_SIZE)
         self.avatar_label.setAlignment(Qt.AlignCenter)
         avatar_kind = self.event_data.get('avatar_kind') or 'pet'
         icon = QPixmap(str(config.avatar_path(avatar_kind)))
         if not icon.isNull():
-            self.avatar_label.setPixmap(self._rounded_avatar(icon, 34))
+            self.avatar_label.setPixmap(self._rounded_avatar(icon, REPLY_CARD_AVATAR_SIZE))
         else:
             self.avatar_label.setText('你' if avatar_kind == 'user' else '宠')
         header.addWidget(self.avatar_label, 0, Qt.AlignTop)
@@ -143,20 +144,24 @@ class ReplyCard(ReplyCardWindow):
         self._refresh_title_meta()
 
     def _rounded_avatar(self, pixmap, size):
-        scaled = pixmap.scaled(size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-        if scaled.width() != size or scaled.height() != size:
-            x = max(0, (scaled.width() - size) // 2)
-            y = max(0, (scaled.height() - size) // 2)
-            scaled = scaled.copy(x, y, size, size)
-        result = QPixmap(size, size)
+        screen = QApplication.primaryScreen()
+        dpr = screen.devicePixelRatio() if screen else 1.0
+        target = max(1, int(size * dpr))
+        scaled = pixmap.scaled(target, target, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+        if scaled.width() != target or scaled.height() != target:
+            x = max(0, (scaled.width() - target) // 2)
+            y = max(0, (scaled.height() - target) // 2)
+            scaled = scaled.copy(x, y, target, target)
+        result = QPixmap(target, target)
         result.fill(Qt.transparent)
         painter = QPainter(result)
         painter.setRenderHint(QPainter.Antialiasing, True)
         path = QPainterPath()
-        path.addEllipse(0, 0, size, size)
+        path.addEllipse(0, 0, target, target)
         painter.setClipPath(path)
         painter.drawPixmap(0, 0, scaled)
         painter.end()
+        result.setDevicePixelRatio(dpr)
         return result
 
     def _clear_layout(self, layout):
