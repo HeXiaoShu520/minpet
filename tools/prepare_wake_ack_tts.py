@@ -13,9 +13,9 @@ SRC_DIR = ROOT_DIR / 'src'
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from miniPet import config
-from miniPet.clients.tts_client import synthesize_to_file
-from miniPet.windows.settings.voice_pages import VOICE_OPTIONS
+import config
+from clients.tts_client import synthesize_to_file
+from windows.settings.voice_pages import VOICE_OPTIONS
 
 WAKE_ACK_ITEMS = (
     ('wake_ack_1', '我在呢。'),

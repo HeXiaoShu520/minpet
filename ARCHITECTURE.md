@@ -187,7 +187,7 @@ clients.event_client.EventClient
 
 ## 重构原则
 
-1. **按功能目录归类**：新增模块必须进入合适目录，不能继续堆到 `src/miniPet/` 根目录。
+1. **按功能目录归类**：新增模块必须进入合适目录，不能继续堆到 `src/` 根目录。
 2. **入口保留薄层**：`app.py`、`desktop_pet.py`、`settings_window.py` 只负责组装，具体控件/客户端/存储逻辑下沉到子目录。
 3. **UI 与服务解耦**：窗口和控件通过 Signal/回调使用客户端，不直接嵌入协议细节。
 4. **存储与网络解耦**：`storage/` 不调用网络，`clients/` 不直接写 UI。

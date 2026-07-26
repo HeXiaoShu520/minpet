@@ -12,7 +12,7 @@ os.chdir(APP_DIR)
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
-from miniPet.app import main
+from app import main
 
 
 if __name__ == '__main__':

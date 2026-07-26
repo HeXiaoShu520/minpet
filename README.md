@@ -268,7 +268,7 @@ POST http://localhost:18888/actions/execute
 
 ## 系统架构
 
-当前源码已经按功能目录解耦，不再把所有模块堆在 `src/miniPet/` 根目录。详细说明见 [软件架构文档](ARCHITECTURE.md)。
+当前源码已经按功能目录解耦，不再把所有模块堆在 `src/` 根目录。详细说明见 [软件架构文档](ARCHITECTURE.md)。
 
 ```text
 miniPet QApplication
@@ -434,65 +434,64 @@ miniPet/
   docs/
     art_dev.md            # 角色资源制作文档
   src/
-    miniPet/
-      app.py              # QApplication 组装入口
-      config.py           # 配置、路径和环境变量
-      settings_window.py  # 设置窗口入口，页面逐步拆入 windows/settings/
-      base_page.py        # 设置页滚动基类
-      typewriter.py       # 打字机文字显示效果
-      clients/            # 外部 API、WebSocket、音频设备客户端
-        llm_client.py
-        tts_client.py
-        asr_client.py
-        doubao_call_client.py
-        event_client.py
-      storage/            # 本地持久化
-        chat_store.py
-            windows/            # 独立顶层窗口
-        chat_window.py
-        doubao_call_window.py
-        settings/
-          basic_pages.py
-          llm_page.py
-          role_page.py
-          voice_pages.py
-          resource_page.py
-      widgets/            # 可复用 UI 组件和弹窗
-        pet_input_popup.py
-        pet_voice_popup.py
-        setting_cards.py
-        ui_utils.py
-        menus/
-          pet_menus.py
-        easter/
-          base.py
-          magic_conch.py
-          gacha.py
-          dice.py
-          coin.py
-          fortune_stick.py
-          wooden_fish.py
-          daily_tip.py
-          notice.py
-        notifications/
-          center.py
-          toast.py
-          bubble.py
-          smart_bubble.py
-          constants.py
-      pet/                # 桌宠主窗口、动画与资源
-        desktop_pet.py
-        desktop_actions.py
-        desktop_tray.py
-        desktop_easter.py
-        desktop_hover.py
-        desktop_interactions.py
-        desktop_windows.py
-        animation.py
-        pet_assets.py
-      protocols/          # 协议常量和编解码
-        protocol_v1.py
-        doubao_call_protocol.py
+    app.py              # QApplication 组装入口
+    config.py           # 配置、路径和环境变量
+    settings_window.py  # 设置窗口入口，页面逐步拆入 windows/settings/
+    base_page.py        # 设置页滚动基类
+    typewriter.py       # 打字机文字显示效果
+    clients/            # 外部 API、WebSocket、音频设备客户端
+      llm_client.py
+      tts_client.py
+      asr_client.py
+      doubao_call_client.py
+      event_client.py
+    storage/            # 本地持久化
+      chat_store.py
+    windows/            # 独立顶层窗口
+      chat_window.py
+      doubao_call_window.py
+      settings/
+        basic_pages.py
+        llm_page.py
+        role_page.py
+        voice_pages.py
+        resource_page.py
+    widgets/            # 可复用 UI 组件和弹窗
+      pet_input_popup.py
+      pet_voice_popup.py
+      setting_cards.py
+      ui_utils.py
+      menus/
+        pet_menus.py
+      easter/
+        base.py
+        magic_conch.py
+        gacha.py
+        dice.py
+        coin.py
+        fortune_stick.py
+        wooden_fish.py
+        daily_tip.py
+        notice.py
+      notifications/
+        center.py
+        toast.py
+        bubble.py
+        smart_bubble.py
+        constants.py
+    pet/                # 桌宠主窗口、动画与资源
+      desktop_pet.py
+      desktop_actions.py
+      desktop_tray.py
+      desktop_easter.py
+      desktop_hover.py
+      desktop_interactions.py
+      desktop_windows.py
+      animation.py
+      pet_assets.py
+    protocols/          # 协议常量和编解码
+      protocol_v1.py
+      doubao_call_protocol.py
   res/                    # 图标、角色、宠物、道具资源
   data/                   # 本地运行配置、音频预览缓存
 ```
@@ -512,10 +511,10 @@ miniPet/
   data/
 ```
 
-`config.py` 位于 `src/miniPet/`，但应用根目录仍是外层 `miniPet/`：
+`config.py` 位于 `src/`，但应用根目录仍是外层 `miniPet/`：
 
 ```python
-ROOT_DIR = Path(__file__).resolve().parents[2]
+ROOT_DIR = Path(__file__).resolve().parents[1]
 RES_DIR = ROOT_DIR / 'res'
 DATA_DIR = ROOT_DIR / 'data'
 ENV_FILE = ROOT_DIR / '.env'
@@ -594,11 +593,11 @@ ENV_FILE = ROOT_DIR / '.env'
 
 ## 开发原则
 
-- 新功能代码必须按职责进入功能目录，不能继续把所有 `.py` 堆在 `src/miniPet/` 根目录。
+- 新功能代码必须按职责进入功能目录，不能继续把所有 `.py` 堆在 `src/` 根目录。
 - 入口层保持薄：`app.py`、`desktop_pet.py`、`settings_window.py` 负责组装，具体窗口、控件、客户端、存储逻辑下沉到子目录。
 - UI 与服务解耦：窗口/控件通过 Signal、回调或 Worker 使用 `clients/`，不要把协议细节写进 UI。
 - 存储与网络解耦：`storage/` 不调用网络，`clients/` 不直接操作 UI。
-- 新功能代码进入 `src/miniPet/` 下合适目录，资源进入 `res/`，文档进入 `docs/`。
+- 新功能代码进入 `src/` 下合适目录，资源进入 `res/`，文档进入 `docs/`。
 - 不再依赖外层 `MINIPET/` 的 Python 模块。
 - 复用原 MINIPET 的资源格式，但资源最终要迁移到 `res/`。
 - 设置页、菜单、聊天窗口和语音窗口要保持完整视觉体验，不使用裸表单堆控件。

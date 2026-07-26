@@ -1,0 +1,210 @@
+# coding:utf-8
+import math
+import random
+import time
+
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QFont, QKeyEvent, QPainter, QPen, QPixmap, QRadialGradient
+from PySide6.QtWidgets import QLineEdit, QPushButton
+
+import config
+from clients.llm_client import ChatWorker
+from widgets.easter.base import EasterGamePopup
+
+
+class MagicConchPopup(EasterGamePopup):
+    title = '魔法海螺'
+    life_ms = 0
+    ANSWERS = [
+        '可以。', '不可以。', '也许吧。', '再问一次。', '现在还不是时候。', '海螺不知道。',
+        '当然。', '别想了，去做。', '先保存再说。', '答案已经很明显了。'
+    ]
+
+    def __init__(self, x, y, parent=None):
+        self.answer = ''
+        self.question = ''
+        self.ask_started_at = 0.0
+        self.worker = None
+        self.waiting_llm = False
+        super().__init__(x, y, parent)
+        self.setFixedSize(360, 360)
+        self.input = QLineEdit(self)
+        self.input.setAttribute(Qt.WA_MacShowFocusRect, False)
+        self.input.setPlaceholderText('问海螺一个问题...')
+        self.input.setGeometry(42, 274, 206, 34)
+        self.input.setStyleSheet('QLineEdit{border:1px solid rgba(112,153,210,180);border-radius:14px;padding:6px 10px;background:rgba(255,255,255,230);color:#28486c;font-size:12px;} QLineEdit:focus{border:1px solid #5b91dc;}')
+        self.input.returnPressed.connect(self.ask)
+        self.button = QPushButton('问', self)
+        self.button.setGeometry(256, 274, 58, 34)
+        self.button.setCursor(Qt.PointingHandCursor)
+        self.button.setStyleSheet('QPushButton{border:none;border-radius:14px;background:#5f92dc;color:white;font-weight:700;} QPushButton:hover{background:#4d82ce;}')
+        self.button.clicked.connect(self.ask)
+        self.input.show()
+        self.button.show()
+        self.input.setFocus(Qt.OtherFocusReason)
+        self.activateWindow()
+
+    def ask(self):
+        question = self.input.text().strip()
+        if not question:
+            return
+        self._play_sound('mystic')
+        self.question = question
+        self.answer = ''
+        self.ask_started_at = time.monotonic()
+        self.waiting_llm = True
+        self.input.hide()
+        self.button.hide()
+        messages = [
+            {'role': 'system', 'content': '你就是神奇海螺本身。用户问你问题，你必须用"海螺说："开头，接一句神秘、笃定、可爱的中文短答案，总长度不超过20个字。不要解释，不要换行，不要出现"海螺低语"等其他前缀，只用"海螺说："。'},
+            {'role': 'user', 'content': question},
+        ]
+        self.worker = ChatWorker(messages, parent=self)
+        self.worker.result_ready.connect(self._answer_ready)
+        self.worker.start()
+        self.update()
+
+    def _answer_ready(self, ok, text):
+        if ok and text.strip():
+            self.answer = text.strip().replace('\n', ' ')[:36]
+        else:
+            self.answer = random.choice(self.ANSWERS)
+        self.waiting_llm = False
+        self.update()
+
+    def keyPressEvent(self, event: QKeyEvent):
+        if event.key() == Qt.Key_Escape:
+            self.close()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        self._draw_card(painter, QColor(238, 247, 255, 250), QColor(128, 178, 238, 230))
+        elapsed = self._elapsed()
+        asked = self.ask_started_at > 0.0
+        ask_elapsed = time.monotonic() - self.ask_started_at if asked else 0.0
+        listening = asked and (self.waiting_llm or ask_elapsed < 1.45)
+        reveal = self._ease_out((ask_elapsed - 1.45) / 0.55) if asked and self.answer else 0.0
+        pulse = (math.sin(elapsed * 7) + 1) / 2
+        wobble_amp = 7 if listening else 2.2
+        wobble = math.sin(elapsed * 10) * wobble_amp
+        cx, cy = self.width() / 2, 176 + wobble
+
+        # 外层光晕圆圈
+        painter.setPen(Qt.NoPen)
+        for i in range(4):
+            alpha = int((70 - i * 12) * (0.35 + pulse * 0.65))
+            painter.setBrush(QColor(170, 140, 220, alpha))
+            r = 62 + i * 16 + pulse * 10
+            painter.drawEllipse(QPoint(int(cx), int(cy)), int(r), int(r * 0.56))
+        self._draw_magic_sparkles(painter, cx, cy, elapsed, listening)
+        self._draw_shell(painter, cx, cy, elapsed, listening)
+
+        if not asked:
+            return
+
+        if listening:
+            dots = '.' * (1 + int(ask_elapsed * 4) % 3)
+            painter.setFont(QFont('Microsoft YaHei UI', 10, QFont.Bold))
+            painter.setPen(QColor(67, 95, 142, 205))
+            painter.drawText(0, 258, self.width(), 26, Qt.AlignCenter, f'海螺正在聆听宇宙的回响{dots}')
+            return
+
+        painter.setOpacity(reveal)
+        painter.setPen(QPen(QColor(102, 146, 205, 150), 1))
+        painter.setBrush(QColor(255, 255, 255, 226))
+        box = QRectF(30, 232, self.width() - 60, 92)
+        painter.drawRoundedRect(box, 15, 15)
+        painter.setFont(QFont('Microsoft YaHei UI', 8))
+        painter.setPen(QColor(77, 105, 145, 190))
+        painter.drawText(46, 240, self.width() - 92, 18, Qt.AlignCenter, '你问：' + self.question[:24])
+        font = QFont('Microsoft YaHei UI', 11, QFont.Bold)
+        painter.setFont(font)
+        painter.setPen(QColor(42, 69, 108))
+        metrics = painter.fontMetrics()
+        answer = self.answer
+        answer_rect = QRectF(42, 262, self.width() - 84, 48)
+        if metrics.boundingRect(answer_rect.toRect(), Qt.AlignCenter | Qt.TextWordWrap, answer).height() > answer_rect.height():
+            font.setPointSize(10)
+            painter.setFont(font)
+        painter.drawText(answer_rect, Qt.AlignCenter | Qt.TextWordWrap, answer)
+        painter.setOpacity(1)
+
+    def _draw_magic_sparkles(self, painter, cx, cy, elapsed, listening):
+        """简约星光粒子：只画细十字星，克制分布"""
+        painter.save()
+        # 6个星光点，偏移更分散
+        pts = [(-78, -44), (68, -52), (104, 8), (82, 58), (-48, 62), (-96, 18)]
+        for i, (dx, dy) in enumerate(pts):
+            twinkle = (math.sin(elapsed * (2.8 + i * 0.45) + i * 1.3) + 1) / 2
+            base_alpha = 160 if listening else 90
+            alpha = int(base_alpha * (0.3 + 0.7 * twinkle))
+            alpha = max(0, min(240, alpha))
+            x = cx + dx + math.sin(elapsed * 1.2 + i) * 4
+            y = cy + dy + math.cos(elapsed * 1.1 + i) * 3
+            r = 1.4 + twinkle * 2.0
+            # 十字星：两条线
+            color = QColor(170, 210, 255, alpha)
+            pen = QPen(color, max(1.0, r * 0.7))
+            pen.setCapStyle(Qt.RoundCap)
+            painter.setPen(pen)
+            arm = r * 2.8
+            painter.drawLine(QPointF(x - arm, y), QPointF(x + arm, y))
+            painter.drawLine(QPointF(x, y - arm), QPointF(x, y + arm))
+            # 斜45°短臂
+            arm2 = arm * 0.55
+            painter.drawLine(QPointF(x - arm2, y - arm2), QPointF(x + arm2, y + arm2))
+            painter.drawLine(QPointF(x + arm2, y - arm2), QPointF(x - arm2, y + arm2))
+            # 中心亮点
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(240, 248, 255, alpha))
+            painter.drawEllipse(QPointF(x, y), r * 0.6, r * 0.6)
+        painter.restore()
+
+    def _draw_shell(self, painter, cx, cy, elapsed, listening):
+        """直接渲染神奇海螺图片，带摇摆和辉光动画"""
+        painter.save()
+
+        # ── 底部投影 ──
+        painter.setPen(Qt.NoPen)
+        sh = QRadialGradient(cx, cy + 68, 85)
+        sh.setColorAt(0, QColor(160, 120, 200, 40))
+        sh.setColorAt(1, QColor(160, 120, 200, 0))
+        painter.setBrush(sh)
+        painter.drawEllipse(QRectF(cx - 85, cy + 48, 170, 40))
+
+        # ── 图片大小和摆动 ──
+        img_size = 172  # 渲染尺寸
+        sway = math.sin(elapsed * (3.2 if listening else 1.8)) * (3.0 if listening else 1.0)
+
+        # 加载（缓存到类属性）
+        if not hasattr(MagicConchPopup, '_shell_pixmap'):
+            _p = config.RES_DIR / 'items' / 'easter' / 'magic_conch.png'
+            MagicConchPopup._shell_pixmap = QPixmap(str(_p))
+
+        px = MagicConchPopup._shell_pixmap
+        if not px.isNull():
+            scaled = px.scaled(img_size, img_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            sw, sh2 = scaled.width(), scaled.height()
+            painter.save()
+            painter.translate(cx, cy)
+            painter.rotate(-10 + sway)  # 固定逆时针10度 + 摇摆
+            painter.drawPixmap(-sw // 2, -sh2 // 2, scaled)
+            painter.restore()
+
+        # ── 聆听时外层辉光环 ──
+        if listening:
+            pulse = (math.sin(elapsed * 8) + 1) / 2
+            for i in range(3):
+                r = img_size // 2 + 8 + i * 10 + pulse * 6
+                alpha = int((80 - i * 22) * (0.5 + pulse * 0.5))
+                glow = QRadialGradient(cx, cy, r)
+                glow.setColorAt(0.7, QColor(200, 160, 240, alpha))
+                glow.setColorAt(1.0, QColor(200, 160, 240, 0))
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(glow)
+                painter.drawEllipse(QRectF(cx - r, cy - r, r * 2, r * 2))
+
+        painter.restore()
