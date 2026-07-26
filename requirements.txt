@@ -5,6 +5,7 @@ websockets
 requests
 openai
 anthropic
+pywinpty
 httpx
 sounddevice
 vosk

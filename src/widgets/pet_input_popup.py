@@ -6,6 +6,7 @@
 提交后的思考动画。业务提交结果通过 submitted 信号交给 DesktopPet/MiniPetApp。
 """
 
+import time
 from tempfile import NamedTemporaryFile
 
 from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QEasingCurve, QEvent, QParallelAnimationGroup, QPropertyAnimation, QPoint, Qt, QUrl, Signal
@@ -69,6 +70,7 @@ class PetInputPopup(QFrame):
     def __init__(self, x, y, parent=None):
         super().__init__(parent)
         self.anim_group = None
+        self._owner = parent
         self.anchor_x = x
         self.anchor_y = y
         self.pending_images = []
@@ -215,6 +217,10 @@ class PetInputPopup(QFrame):
             self.close()
 
     def eventFilter(self, obj, event):
+        if obj is self.input and event.type() == QEvent.MouseButtonPress and event.button() == Qt.RightButton:
+            # 快捷输入可见时，右键只负责关闭；重开抑制统一由 closeEvent 处理。
+            self.close()
+            return True
         if obj is self.input and event.type() == QEvent.KeyPress and event.key() == Qt.Key_V and event.modifiers() & Qt.ControlModifier:
             image = QApplication.clipboard().image()
             if not image.isNull():
@@ -242,10 +248,24 @@ class PetInputPopup(QFrame):
                 return
         super().dropEvent(event)
 
+    def mousePressEvent(self, event):
+        if event.button() == Qt.RightButton:
+            # 快捷输入可见时，右键只负责关闭；重开抑制统一由 closeEvent 处理。
+            self.close()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
     def changeEvent(self, event):
         if event.type() == QEvent.ActivationChange and not self.isActiveWindow():
             self.close()
         super().changeEvent(event)
+
+    def closeEvent(self, event):
+        if self._owner is not None:
+            # 任意浮层关闭后，短时间内不允许快捷菜单重新打开，避免同一次点击关闭后又弹出。
+            self._owner.block_quick_menu_until = time.monotonic() + 0.4
+        super().closeEvent(event)
 
     def keyPressEvent(self, event: QKeyEvent):
         if event.key() == Qt.Key_Escape:

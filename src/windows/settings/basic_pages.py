@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 
 from PySide6.QtCore import Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFileDialog, QLabel, QVBoxLayout, QWidget
 from qfluentwidgets import InfoBar, InfoBarPosition, PrimaryPushButton, PushSettingCard, SettingCard, SettingCardGroup, SwitchSettingCard
 from qfluentwidgets import FluentIcon as FIF
 
@@ -187,6 +187,8 @@ class AgentPage(MiniPetScrollPage):
         ('builtin', '使用内置大模型'),
         ('openclaw', '连接 OpenClaw 网关'),
         ('custom', '连接 MiniPet 协议后端'),
+        ('claude_code', '连接 Claude Code'),
+        ('codex', '连接 Codex'),
     ]
 
     def __init__(self, parent=None):
@@ -233,6 +235,32 @@ class AgentPage(MiniPetScrollPage):
         self.protocolDocCard = PushSettingCard('打开', FIF.MESSAGE, 'MiniPet 协议文档', '通用后端接入见 minipet交互协议设计.md', self.customGroup)
         self.protocolDocCard.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(config.ROOT_DIR / 'minipet交互协议设计.md'))))
 
+        self.claudeCodeGroup = SettingCardGroup('Claude Code 设置', self.scrollWidget)
+        self.claudeCodeDirCard = LineEditSettingCard(FIF.LINK, '项目目录', '第一次输入时会在这个目录下启动 Claude Code 会话', placeholder=str(config.ROOT_DIR), parent=self.claudeCodeGroup)
+        self.claudeCodeDirCard.setText(cfg.get('claude_code_project_dir', str(config.ROOT_DIR)))
+        self.claudeCodeBrowseCard = SettingCard(FIF.LINK, '选择目录', '选择 Claude Code 执行开发任务的工作目录', self.claudeCodeGroup)
+        self.claudeCodeBrowseBtn = PrimaryPushButton('选择', self.claudeCodeBrowseCard)
+        self.claudeCodeBrowseCard.hBoxLayout.addStretch(1)
+        self.claudeCodeBrowseCard.hBoxLayout.addWidget(self.claudeCodeBrowseBtn, 0, Qt.AlignRight)
+        self.claudeCodeBrowseCard.hBoxLayout.addSpacing(16)
+        self.claudeCodeBrowseBtn.clicked.connect(self._choose_claude_code_dir)
+        self.claudeCodeResetCard = SettingCard(FIF.DELETE, '重置会话', '结束当前 Claude Code 会话，下次会使用新的会话 ID', self.claudeCodeGroup)
+        self.claudeCodeResetBtn = PrimaryPushButton('重置', self.claudeCodeResetCard)
+        self.claudeCodeResetCard.hBoxLayout.addStretch(1)
+        self.claudeCodeResetCard.hBoxLayout.addWidget(self.claudeCodeResetBtn, 0, Qt.AlignRight)
+        self.claudeCodeResetCard.hBoxLayout.addSpacing(16)
+        self.claudeCodeResetBtn.clicked.connect(self._reset_claude_code_session)
+
+        self.codexGroup = SettingCardGroup('Codex 设置', self.scrollWidget)
+        self.codexDirCard = LineEditSettingCard(FIF.LINK, '项目目录', '第一次输入时会在这个目录下启动 Codex 会话', placeholder=str(config.ROOT_DIR), parent=self.codexGroup)
+        self.codexDirCard.setText(cfg.get('codex_project_dir', str(config.ROOT_DIR)))
+        self.codexBrowseCard = SettingCard(FIF.LINK, '选择目录', '选择 Codex 执行开发任务的工作目录', self.codexGroup)
+        self.codexBrowseBtn = PrimaryPushButton('选择', self.codexBrowseCard)
+        self.codexBrowseCard.hBoxLayout.addStretch(1)
+        self.codexBrowseCard.hBoxLayout.addWidget(self.codexBrowseBtn, 0, Qt.AlignRight)
+        self.codexBrowseCard.hBoxLayout.addSpacing(16)
+        self.codexBrowseBtn.clicked.connect(self._choose_codex_dir)
+
         self.builtinGroup = SettingCardGroup('内置大模型设置', self.scrollWidget)
         self.apiBaseCard = LineEditSettingCard(FIF.GLOBE, 'API 地址', 'OpenAI 兼容接口地址，例如 https://api.openai.com/v1', placeholder='https://api.openai.com/v1', parent=self.builtinGroup)
         self.apiBaseCard.setText(llm_cfg.get('api_base', ''))
@@ -254,11 +282,17 @@ class AgentPage(MiniPetScrollPage):
             self.openclawGroup.addSettingCard(card)
         for card in [self.customWsCard, self.protocolDocCard, self.customProbeCard]:
             self.customGroup.addSettingCard(card)
+        for card in [self.claudeCodeDirCard, self.claudeCodeBrowseCard, self.claudeCodeResetCard]:
+            self.claudeCodeGroup.addSettingCard(card)
+        for card in [self.codexDirCard, self.codexBrowseCard]:
+            self.codexGroup.addSettingCard(card)
         for card in [self.apiBaseCard, self.apiKeyCard, self.modelCard, self.memoryTurnsCard, self.actionCard]:
             self.builtinGroup.addSettingCard(card)
         self.expandLayout.addWidget(self.modeBox)
         self.expandLayout.addWidget(self.openclawGroup)
         self.expandLayout.addWidget(self.customGroup)
+        self.expandLayout.addWidget(self.claudeCodeGroup)
+        self.expandLayout.addWidget(self.codexGroup)
         self.expandLayout.addWidget(self.builtinGroup)
         self.backendCard.comboBox.currentIndexChanged.connect(lambda _index: self._sync_backend_groups())
         self._sync_backend_groups()
@@ -267,10 +301,28 @@ class AgentPage(MiniPetScrollPage):
         backend = self.backendCard.currentValue() or 'builtin'
         self.openclawGroup.setVisible(backend == 'openclaw')
         self.customGroup.setVisible(backend == 'custom')
+        self.claudeCodeGroup.setVisible(backend == 'claude_code')
+        self.codexGroup.setVisible(backend == 'codex')
         self.builtinGroup.setVisible(backend == 'builtin')
-        for widget in (self.modeBox, self.openclawGroup, self.customGroup, self.builtinGroup, self.scrollWidget):
+        for widget in (self.modeBox, self.openclawGroup, self.customGroup, self.claudeCodeGroup, self.codexGroup, self.builtinGroup, self.scrollWidget):
             widget.adjustSize()
             widget.updateGeometry()
+
+    def _choose_claude_code_dir(self):
+        path = QFileDialog.getExistingDirectory(self, '选择 Claude Code 项目目录', self.claudeCodeDirCard.text() or str(config.ROOT_DIR))
+        if path:
+            self.claudeCodeDirCard.setText(path)
+
+    def _choose_codex_dir(self):
+        path = QFileDialog.getExistingDirectory(self, '选择 Codex 项目目录', self.codexDirCard.text() or str(config.ROOT_DIR))
+        if path:
+            self.codexDirCard.setText(path)
+
+    def _reset_claude_code_session(self):
+        config.app_config['claude_code_reset_token'] = int(config.app_config.get('claude_code_reset_token') or 0) + 1
+        config.save_app_config()
+        InfoBar.success('已重置', '下次发送消息会启动新的 Claude Code 会话', duration=2500, position=InfoBarPosition.BOTTOM, parent=self.window())
+        self.settings_changed.emit()
 
     def _openclaw_session_key(self):
         model = config.app_config.get('openclaw_model') or config.OPENCLAW_MODEL_DEFAULT
@@ -366,6 +418,8 @@ class AgentPage(MiniPetScrollPage):
             'agent_backend': self.backendCard.currentValue() or 'builtin',
             'openclaw_api_url': self.openclawApiCard.text() or config.OPENCLAW_API_URL_DEFAULT,
             'custom_agent_ws_url': self.customWsCard.text() or config.CUSTOM_AGENT_WS_DEFAULT,
+            'claude_code_project_dir': self.claudeCodeDirCard.text().strip() or str(config.ROOT_DIR),
+            'codex_project_dir': self.codexDirCard.text().strip() or str(config.ROOT_DIR),
         })
         config.save_app_config()
         config.save_llm_config(self._collect_llm())

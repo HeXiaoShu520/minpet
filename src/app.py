@@ -27,6 +27,8 @@ from pet.desktop_pet import DesktopPet
 from clients.event_client import EventClient
 from clients.llm_client import ChatWorker
 from clients.openclaw_client import OpenClawWorker
+from clients.claude_code_client import ClaudeCodeSession
+from clients.codex_client import CodexSession
 from widgets.notifications.reply_card_center import ReplyCardCenter
 from protocols.protocol_v1 import SESSION_PING, SESSION_PONG, SESSION_READY, SURFACE_CLOSE, SURFACE_SHOW, SURFACE_UPDATE, USER_INPUT, V1_CAPABILITIES, normalize_inbound_event
 from protocols.surface_utils import is_silent_surface_text, is_terminal_surface_status, normalize_display_event, surface_text, surface_timeout
@@ -81,6 +83,15 @@ class MiniPetApp(QApplication):
         # quick_chat_* 管理桌宠头顶快速输入：LLM 请求、回复卡片和可选 TTS 播报。
         self.quick_chat_worker = None
         self.openclaw_worker = None
+        self.claude_code_session = None
+        self.claude_code_starting = False
+        self.claude_code_received_output = False
+        self.claude_code_reset_token = config.app_config.get('claude_code_reset_token', 0)
+        self._pending_claude_code_text = ''
+        self.codex_session = None
+        self.codex_starting = False
+        self.codex_received_output = False
+        self._pending_codex_text = ''
         self._abandoned_reply_workers = []
         self.event_tts_worker = None
         self.quick_chat_source = 'quick_chat'
@@ -151,6 +162,15 @@ class MiniPetApp(QApplication):
         return config.app_config.get('custom_agent_ws_url') or config.CUSTOM_AGENT_WS_DEFAULT
 
     def _apply_agent_settings(self):
+        backend = self._agent_backend()
+        current_reset_token = config.app_config.get('claude_code_reset_token', 0)
+        if backend != 'claude_code' or current_reset_token != self.claude_code_reset_token:
+            self._stop_claude_code_session()
+            self.claude_code_reset_token = current_reset_token
+        if backend != 'codex':
+            self._stop_codex_session()
+        if backend != 'openclaw' and self.openclaw_worker is not None:
+            self._cancel_current_reply_workers()
         if not self.events:
             return
         if self._agent_backend() != 'custom':
@@ -663,11 +683,192 @@ class MiniPetApp(QApplication):
             })
         return [{'role': 'user', 'content': parts}]
 
+    def _claude_code_project_dir(self):
+        return Path(config.app_config.get('claude_code_project_dir') or config.ROOT_DIR)
+
+    def _ensure_claude_code_session(self):
+        if self.claude_code_session is not None and self.claude_code_session.isRunning():
+            return True
+        project_dir = self._claude_code_project_dir()
+        if not project_dir.is_dir():
+            self._show_reply_card('Claude Code 项目目录不存在：%s' % project_dir, status='failed', timeout_ms=8000)
+            return False
+        self.claude_code_starting = True
+        self.claude_code_received_output = False
+        reset_token = config.app_config.get('claude_code_reset_token', 0)
+        self.claude_code_session = ClaudeCodeSession(str(project_dir), reset_token=reset_token, parent=self)
+        self.claude_code_session.output_ready.connect(self._on_claude_code_output)
+        self.claude_code_session.result_ready.connect(self._on_claude_code_result)
+        self.claude_code_session.error_ready.connect(self._on_claude_code_error)
+        self.claude_code_session.stopped.connect(self._on_claude_code_stopped)
+        self.claude_code_session.start()
+        self._show_reply_card('正在启动 Claude Code：%s' % project_dir, status='streaming', timeout_ms=60000)
+        return True
+
+    def _send_claude_code_prompt(self, content, mode='text'):
+        prompt = self._content_preview(content).strip()
+        if not prompt:
+            return False
+        self.quick_chat_source = 'voice_chat' if mode == 'voice' else 'quick_chat'
+        self._begin_reply_card_turn()
+        self._reset_quick_stream_tts()
+        if not self._ensure_claude_code_session():
+            return False
+        if self.claude_code_starting:
+            self._pending_claude_code_text = prompt
+            QTimer.singleShot(250, self._flush_pending_claude_code_text)
+            return True
+        sent = self.claude_code_session.send(prompt)
+        if sent:
+            QTimer.singleShot(6000, self._warn_if_claude_code_silent)
+        return sent
+
+    def _flush_pending_claude_code_text(self):
+        text = self._pending_claude_code_text
+        if not text or self.claude_code_session is None:
+            return
+        if not self.claude_code_session.send(text):
+            QTimer.singleShot(500, self._flush_pending_claude_code_text)
+            return
+        self._pending_claude_code_text = ''
+        self.claude_code_starting = False
+        self._show_reply_card('已发送给 Claude Code，等待输出...', status='streaming', timeout_ms=60000)
+        QTimer.singleShot(6000, self._warn_if_claude_code_silent)
+
+    def _warn_if_claude_code_silent(self):
+        if self._agent_backend() == 'claude_code' and self.claude_code_session is not None and not self.claude_code_received_output:
+            self._show_reply_card('Claude Code 已启动并收到输入，但暂时没有输出。可能是 CLI 在等待终端交互或 PATH/权限环境不完整。', status='streaming', timeout_ms=10000)
+
+    def _on_claude_code_output(self, text):
+        self.claude_code_starting = False
+        self.claude_code_received_output = True
+        if self._pending_claude_code_text:
+            QTimer.singleShot(0, self._flush_pending_claude_code_text)
+        shown = (text or 'Claude Code 正在处理...').strip()
+        self._quick_stream_text = shown
+        self._show_reply_card(shown, status='streaming', timeout_ms=60000)
+        self.quick_stream_tts.queue_text('claude-code-reply', shown, terminal=False)
+
+    def _on_claude_code_result(self, text):
+        self.claude_code_starting = False
+        self.claude_code_received_output = True
+        reply = (text or self._quick_stream_text or 'Claude Code 没有返回文本。').strip()
+        self._quick_stream_text = reply
+        self._show_reply_card(reply, status='done', timeout_ms=max(5000, min(25000, len(reply) * 180)))
+        self.quick_stream_tts.queue_text('claude-code-reply', reply, terminal=True)
+        self._finish_quick_voice_if_tts_idle()
+
+    def _on_claude_code_error(self, text):
+        self.claude_code_starting = False
+        self._show_reply_card(text or 'Claude Code 调用失败。', status='failed', timeout_ms=8000)
+
+    def _on_claude_code_stopped(self):
+        self.claude_code_starting = False
+        self._pending_claude_code_text = ''
+        self.claude_code_session = None
+
+    def _stop_claude_code_session(self):
+        session = self.claude_code_session
+        self.claude_code_session = None
+        self.claude_code_starting = False
+        self._pending_claude_code_text = ''
+        if session is not None:
+            session.stop()
+            session.wait(2500)
+
+    def _codex_project_dir(self):
+        return Path(config.app_config.get('codex_project_dir') or config.ROOT_DIR)
+
+    def _ensure_codex_session(self):
+        if self.codex_session is not None and self.codex_session.isRunning():
+            return True
+        project_dir = self._codex_project_dir()
+        if not project_dir.is_dir():
+            self._show_reply_card('Codex 项目目录不存在：%s' % project_dir, status='failed', timeout_ms=8000)
+            return False
+        self.codex_starting = True
+        self.codex_received_output = False
+        self.codex_session = CodexSession(str(project_dir), parent=self)
+        self.codex_session.output_ready.connect(self._on_codex_output)
+        self.codex_session.result_ready.connect(self._on_codex_result)
+        self.codex_session.error_ready.connect(self._on_codex_error)
+        self.codex_session.stopped.connect(self._on_codex_stopped)
+        self.codex_session.start()
+        self._show_reply_card('正在启动 Codex：%s' % project_dir, status='streaming', timeout_ms=60000)
+        return True
+
+    def _send_codex_prompt(self, content, mode='text'):
+        prompt = self._content_preview(content).strip()
+        if not prompt:
+            return False
+        self.quick_chat_source = 'voice_chat' if mode == 'voice' else 'quick_chat'
+        self._begin_reply_card_turn()
+        self._reset_quick_stream_tts()
+        if not self._ensure_codex_session():
+            return False
+        if self.codex_starting:
+            self._pending_codex_text = prompt
+            QTimer.singleShot(500, self._flush_pending_codex_text)
+            return True
+        return self.codex_session.send(prompt)
+
+    def _flush_pending_codex_text(self):
+        text = self._pending_codex_text
+        if not text or self.codex_session is None:
+            return
+        if not self.codex_session.send(text):
+            QTimer.singleShot(500, self._flush_pending_codex_text)
+            return
+        self._pending_codex_text = ''
+        self.codex_starting = False
+        self._show_reply_card('已发送给 Codex，等待输出...', status='streaming', timeout_ms=60000)
+        QTimer.singleShot(6000, self._warn_if_codex_silent)
+
+    def _warn_if_codex_silent(self):
+        if self._agent_backend() == 'codex' and self.codex_session is not None and not self.codex_received_output:
+            self._show_reply_card('Codex 已启动并收到输入，但暂时没有输出。可能是 CLI 在等待终端交互或 PATH/权限环境不完整。', status='streaming', timeout_ms=10000)
+
+    def _on_codex_output(self, text):
+        self.codex_starting = False
+        self.codex_received_output = True
+        if self._pending_codex_text:
+            QTimer.singleShot(0, self._flush_pending_codex_text)
+        self._show_reply_card(text or 'Codex 正在处理...', status='streaming', timeout_ms=60000)
+
+    def _on_codex_result(self, text):
+        self.codex_starting = False
+        self.codex_received_output = True
+        reply = (text or self._quick_stream_text or 'Codex 没有返回文本。').strip()
+        self._quick_stream_text = reply
+        self._show_reply_card(reply, status='done', timeout_ms=max(5000, min(25000, len(reply) * 180)))
+        self.quick_stream_tts.queue_text('codex-reply', reply, terminal=True)
+        self._finish_quick_voice_if_tts_idle()
+
+    def _on_codex_error(self, text):
+        self.codex_starting = False
+        self._show_reply_card(text or 'Codex 调用失败。', status='failed', timeout_ms=8000)
+
+    def _on_codex_stopped(self):
+        self.codex_starting = False
+        self._pending_codex_text = ''
+        self.codex_session = None
+
+    def _stop_codex_session(self):
+        session = self.codex_session
+        self.codex_session = None
+        self.codex_starting = False
+        self._pending_codex_text = ''
+        if session is not None:
+            session.stop()
+
     def _send_external_command(self, content, mode='text', surface='pet_popup', screenshot=''):
         if self._agent_backend() == 'openclaw':
             return self._send_openclaw_prompt(content, mode, screenshot=screenshot)
+        if self._agent_backend() == 'claude_code':
+            return self._send_claude_code_prompt(content, mode)
+        if self._agent_backend() == 'codex':
+            return self._send_codex_prompt(content, mode)
         x, y = self.pet.reply_card_anchor()
-        self.note.setup_reply_card_text(self._content_preview(content), x, y, 2000, title='你')
         if mode in ('text', 'voice'):
             self._begin_reply_card_turn()
             self._reset_external_stream_tts()
@@ -689,9 +890,7 @@ class MiniPetApp(QApplication):
         has_input = bool(prompt) or (isinstance(openclaw_input, list) and bool(openclaw_input[0].get('content')))
         if not has_input:
             return False
-        x, y = self.pet.reply_card_anchor()
         self.quick_chat_source = 'voice_chat' if mode == 'voice' else 'quick_chat'
-        self.note.setup_reply_card_text(prompt, x, y, 2000, title='你')
         self._begin_reply_card_turn()
         self._reset_external_stream_tts()
         self._show_reply_card('正在问 OpenClaw...', status='streaming', timeout_ms=60000)
@@ -784,6 +983,12 @@ class MiniPetApp(QApplication):
                 'text',
                 attachments=self._drop_attachments(payload),
             )
+            return
+        if self._agent_backend() == 'claude_code':
+            self._send_claude_code_prompt(self._drop_prompt_for_builtin(payload, intent_labels.get(intent, intent)), 'text')
+            return
+        if self._agent_backend() == 'codex':
+            self._send_codex_prompt(self._drop_prompt_for_builtin(payload, intent_labels.get(intent, intent)), 'text')
             return
         prompt = self._drop_prompt_for_builtin(payload, intent_labels.get(intent, intent))
         event_payload = self._user_input_payload(
@@ -1047,6 +1252,10 @@ class MiniPetApp(QApplication):
             self.events.execute_action(event, action)
 
     def _on_reply_card_interrupted(self, _card_id):
+        if self.claude_code_session is not None:
+            self.claude_code_session.interrupt()
+        if self.codex_session is not None:
+            self.codex_session.interrupt()
         self._cancel_current_reply_workers()
         self.quick_stream_tts.reset()
         self.external_stream_tts.reset()
@@ -1089,6 +1298,8 @@ class MiniPetApp(QApplication):
         self.pet.close_voice_popup()
         self.quick_stream_tts.reset()
         self.external_stream_tts.reset()
+        self._stop_claude_code_session()
+        self._stop_codex_session()
         if self.pet_voice_asr_worker is not None:
             self.pet_voice_asr_worker.finish()
             self.pet_voice_asr_worker.wait(1500)

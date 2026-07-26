@@ -84,12 +84,13 @@ def handle_mouse_press(owner, event):
     if event.button() == Qt.RightButton:
         owner.hover_inside_visible = True
         disarm_hover_menu(owner)
-        if owner.right_click_menu_timer.isActive():
+        # 右键逻辑只放在 press：有菜单就关闭，没有菜单才延时弹出。
+        # 菜单关闭后的 400ms 重开抑制由菜单 closeEvent 和 show_quick_menu 统一处理。
+        if _has_visible_menu(owner):
             owner.right_click_menu_timer.stop()
-            owner.suppress_next_right_release_menu = True
-        elif _has_visible_menu(owner):
             _close_visible_menus(owner)
-            owner.suppress_next_right_release_menu = True
+        else:
+            owner.right_click_menu_timer.start(min(QApplication.doubleClickInterval() + 40, 220))
         event.accept()
         return True
     return False
@@ -121,12 +122,6 @@ def handle_mouse_move(owner, event):
 
 def handle_mouse_release(owner, event):
     if event.button() == Qt.RightButton:
-        if owner.suppress_next_right_release_menu:
-            owner.suppress_next_right_release_menu = False
-            owner.right_click_menu_timer.stop()
-            event.accept()
-            return True
-        owner.right_click_menu_timer.start(min(QApplication.doubleClickInterval() + 40, 220))
         event.accept()
         return True
     if event.button() != Qt.LeftButton:

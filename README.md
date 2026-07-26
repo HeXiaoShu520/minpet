@@ -15,15 +15,74 @@ MiniPet 是一个独立桌面 AI 宠物应用。它由 MINIPET 简化整合而�
 
 ## 智能体模式
 
-MiniPet 提供三种智能体模式：
+MiniPet 提供多种智能体模式：
 
 | 模式 | 说明 |
 | --- | --- |
 | 使用内置大模型 | 使用“大模型”页配置的 OpenAI 兼容接口。只有这个模式会把对话内容写入 MiniPet 本地聊天记录。 |
 | 连接 OpenClaw 网关 | 直接请求 OpenClaw Gateway 的 HTTP Responses API，不经过额外中转端口。使用前需要开启 OpenClaw 的 Responses HTTP API。 |
 | 连接 MiniPet 协议后端 | 连接 miniClaw 或其他按 MiniPet 通用协议实现的 WebSocket 后端。快速接入教程见 [minipet交互协议设计.md](minipet交互协议设计.md)。 |
+| 连接 Claude Code | 启动本地 Claude Code CLI 的 `stream-json` 子进程，把桌宠输入作为同一项目会话的连续聊天发送给 Claude Code。 |
+| 连接 Codex | 启动本地 Codex CLI 会话，把桌宠输入转交给 Codex。 |
 
-使用 OpenClaw 网关或 MiniPet 协议后端时，MiniPet 只把当前输入转交给对应后端并显示返回内容，不记录本地对话历史。
+使用 OpenClaw 网关、MiniPet 协议后端、Claude Code 或 Codex 时，MiniPet 只把当前输入转交给对应后端并显示返回内容，不记录本地对话历史。
+
+## 连接 Claude Code
+
+MiniPet 可以把桌宠聊天接到本地 Claude Code。此模式适合把桌宠作为当前项目的聊天式开发助手使用。
+
+1. 安装并登录 Claude Code，确保终端中可以直接执行：
+
+```bash
+claude --help
+```
+
+2. 启动 MiniPet，打开“设置 → 智能体设置”：
+
+- 智能体模式：`连接 Claude Code`
+- 项目目录：选择 Claude Code 需要操作的项目目录
+
+MiniPet 会在该目录下启动 Claude Code 子进程。连接方式固定使用 Claude Code 的机器流接口：
+
+```bash
+claude --print \
+  --verbose \
+  --input-format stream-json \
+  --output-format stream-json \
+  --include-partial-messages \
+  --replay-user-messages \
+  --permission-mode auto \
+  --session-id <由项目路径生成的固定 UUID>
+```
+
+同一个会话 ID 同一时间只能被一个 Claude Code 进程占用。MiniPet 在切换后端或退出程序时会停止当前 Claude Code 子进程并等待释放；如果外部还有其他 Claude Code 进程占用同一个 ID，需要先关闭那个进程再重新发送。
+
+会话 ID 不单独保存，而是由项目路径稳定生成：
+
+```text
+session_id = UUID(sha256(project_dir + reset_token).前 16 字节)
+```
+
+因此同一个项目目录重启 MiniPet 后仍会复用同一个 Claude Code 会话上下文。设置页提供“重置会话”按钮；点击后会增加 `claude_code_reset_token`，下次发送消息时使用新的会话 ID。
+
+数据流：
+
+```text
+MiniPet 用户输入
+→ Claude Code stdin JSONL user event
+→ Claude Code stream-json stdout
+→ MiniPet 解析 text_delta / result
+→ 回复卡片流式更新
+→ result 事件到达后 status=done，并按 TTS 设置触发语音播报
+```
+
+MiniPet 发给 Claude Code 的最小输入事件为一行 JSON：
+
+```json
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"你好"}]}}
+```
+
+Claude Code 输出中的 `stream_event.content_block_delta` 用于流式更新回复卡片，最终 `result` 事件用于结束卡片状态并触发 TTS 收尾。
 
 ## 连接 OpenClaw
 
@@ -154,7 +213,6 @@ MiniPet user.input 文本输入
 → miniClaw LLM/Agent
 → surface.show 创建回复卡片
 → surface.update 流式更新同一张卡片
-→ surface.update status=done 完成
 ```
 
 MiniPet 使用 `surface_id` 追踪同一张卡片，因此 miniClaw 的流式回复会在同一张卡片里持续刷新，不会生成多条卡片。外置后端协议只接收 `user.input.text`，普通文字、按钮、富文本、选择和输入都通过回复卡片表达。

@@ -1,6 +1,7 @@
 # coding:utf-8
 """桌宠相关弹出菜单。"""
 
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QEasingCurve, QEvent, QParallelAnimationGroup, QPropertyAnimation, QPoint, QRectF, QSize, Qt, QTimer, Signal
@@ -254,6 +255,7 @@ class PetEasterMenu(QFrame):
     def __init__(self, x, y, actions, parent=None):
         super().__init__(parent)
         self.anim_group = None
+        self._owner = parent
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.NoDropShadowWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setWindowOpacity(0.0)
@@ -338,9 +340,26 @@ class PetEasterMenu(QFrame):
     def leaveEvent(self, event):
         super().leaveEvent(event)
 
+    def _cancel_by_right_click(self):
+        # 彩蛋小铺可见时，右键只负责关闭；重开抑制统一由 closeEvent 处理。
+        if self._owner is not None:
+            self._owner.right_click_menu_timer.stop()
+        self.close()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.RightButton:
+            self._cancel_by_right_click()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
     def eventFilter(self, obj, event):
         if event.type() == QEvent.MouseButtonPress:
             pos = QCursor.pos()
+            if event.button() == Qt.RightButton:
+                # 右键点在小铺外面也只是取消显示，不继续传给桌宠。
+                self._cancel_by_right_click()
+                return True
             if not self.geometry().contains(pos):
                 self.close()
         return super().eventFilter(obj, event)
@@ -351,6 +370,9 @@ class PetEasterMenu(QFrame):
         super().changeEvent(event)
 
     def closeEvent(self, event):
+        if self._owner is not None:
+            # 任意菜单关闭后，短时间内不允许快捷菜单重新打开，避免同一次点击关闭后又弹出。
+            self._owner.block_quick_menu_until = time.monotonic() + 0.4
         app = QApplication.instance()
         if app is not None:
             app.removeEventFilter(self)
@@ -363,6 +385,7 @@ class PetQuickMenu(QFrame):
     def __init__(self, x, top_y, bottom_y, on_settings, on_chat, on_voice_chat, on_quit, on_share_screen, share_screen_active=False, voice_chat_active=False, parent=None):
         super().__init__(parent)
         self.anim_group = None
+        self._owner = parent
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.NoDropShadowWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setWindowOpacity(0.0)
@@ -439,10 +462,19 @@ class PetQuickMenu(QFrame):
         self.close()
         callback()
 
-    def changeEvent(self, event):
-        if event.type() == QEvent.ActivationChange and not self.isActiveWindow():
+    def mousePressEvent(self, event):
+        if event.button() == Qt.RightButton:
+            # 快捷菜单可见时，右键只负责关闭。
             self.close()
-        super().changeEvent(event)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def closeEvent(self, event):
+        if self._owner is not None:
+            # 任意菜单关闭后，短时间内不允许快捷菜单重新打开，避免同一次点击关闭后又弹出。
+            self._owner.block_quick_menu_until = time.monotonic() + 0.4
+        super().closeEvent(event)
 
     def _animate_in(self, end_pos):
         self.show()

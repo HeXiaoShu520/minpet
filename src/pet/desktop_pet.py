@@ -10,6 +10,8 @@
 后续如果继续拆文件，优先把输入弹窗和语音球组件拆到独立模块。
 """
 
+import time
+
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
@@ -87,7 +89,7 @@ class DesktopPet(QWidget):
         self.right_click_menu_timer = QTimer(self)
         self.right_click_menu_timer.setSingleShot(True)
         self.right_click_menu_timer.timeout.connect(self.show_quick_menu)
-        self.suppress_next_right_release_menu = False
+        self.block_quick_menu_until = 0.0
         self.current_frame_size = QSize(0, 0)
         self.visible_bounds = QRect()
         self.is_dragging = False
@@ -252,6 +254,9 @@ class DesktopPet(QWidget):
         toggle_wooden_fish_popup(self)
 
     def show_quick_menu(self):
+        # 菜单刚关闭后的短时间内拒绝重开，避免同一次点击先关菜单又触发新菜单。
+        if time.monotonic() < self.block_quick_menu_until:
+            return
         if self.easter_menu is not None:
             self.easter_menu.close()
         if self.quick_menu is not None and self.quick_menu.isVisible():
@@ -282,7 +287,6 @@ class DesktopPet(QWidget):
             return
         if event.button() == Qt.RightButton:
             disarm_hover_menu(self)
-            self.suppress_next_right_release_menu = True
             self.right_click_menu_timer.stop()
             if self.quick_menu is not None:
                 self.quick_menu.close()

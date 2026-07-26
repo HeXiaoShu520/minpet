@@ -44,7 +44,7 @@ class WoodenFishPopup(QFrame):
                 self.audio_players.append(effect)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.NoDropShadowWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.setFixedSize(230, 190)
+        self.setFixedSize(250, 190)
         self.anim_timer = QTimer(self)
         self.anim_timer.timeout.connect(self._tick)
         self.anim_timer.start(16)
@@ -252,11 +252,11 @@ class WoodenFishPopup(QFrame):
         if not self.hammer.isNull():
             hammer_w = 118
             hammer = self.hammer.scaledToWidth(hammer_w, Qt.SmoothTransformation)
-            strike_point = QPointF(self.width() * 0.56, self.height() * 0.49) + self._hammer_offset()
+            pivot_point = QPointF(self.width() * 1.01, self.height() * 0.49) + self._hammer_offset()
             transform = QTransform()
-            transform.translate(strike_point.x(), strike_point.y())
+            transform.translate(pivot_point.x(), pivot_point.y())
             transform.rotate(self._hammer_angle())
-            transform.translate(-hammer_w * 0.18, -hammer.height() * 0.52)
+            transform.translate(-hammer_w * 1.08, -hammer.height() * 0.52)
             painter.setTransform(transform)
             painter.drawPixmap(0, 0, hammer)
             painter.resetTransform()
