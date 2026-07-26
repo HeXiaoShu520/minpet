@@ -162,6 +162,10 @@ class DoubaoCallSession:
         return payload
 
     def _build_start_session_payload(self):
+        pet_name = config.pet_display_name()
+        system_role = (config.llm_config.get('system_prompt', '') or '').strip()
+        if pet_name:
+            system_role = '你的名字是：%s。\n%s' % (pet_name, system_role)
         dialog_extra = {
             'input_mod': 'keep_alive',
             'strict_audit': True,
@@ -184,8 +188,8 @@ class DoubaoCallSession:
                 },
             },
             'dialog': {
-                'bot_name': config.current_pet or config.APP_DISPLAY_NAME,
-                'system_role': (config.llm_config.get('system_prompt', '') or '').strip(),
+                'bot_name': pet_name,
+                'system_role': system_role,
                 'speaking_style': DOUBAO_CALL_SPEAKING_STYLE,
                 'dialog_id': self.dialog_id,
                 'extra': dialog_extra,

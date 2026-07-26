@@ -15,9 +15,10 @@ class Typewriter:
     append_chunk(chunk) — 流式追加新 token
     """
 
-    def __init__(self, widget, speed_ms=None):
+    def __init__(self, widget, speed_ms=None, on_update=None):
         self._w = widget
         self._speed_override = speed_ms  # 若传入则覆盖 config
+        self._on_update = on_update
         self._target = ''
         self._shown = 0
         self._timer = QTimer()
@@ -46,6 +47,8 @@ class Typewriter:
             self._w.setText(text)
         else:
             self._w.setHtml('<p style="margin:0">%s</p>' % text.replace('\n', '<br>'))
+        if self._on_update is not None:
+            self._on_update()
 
     def _calc_interval(self):
         remaining = len(self._target) - self._shown

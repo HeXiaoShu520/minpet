@@ -3,7 +3,7 @@
 
 from PySide6.QtCore import QEasingCurve, Property, QElapsedTimer, QPropertyAnimation, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap, QTextDocument
-from PySide6.QtWidgets import QApplication, QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QRadioButton, QVBoxLayout
+from PySide6.QtWidgets import QApplication, QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton, QVBoxLayout
 
 import config
 from typewriter import Typewriter
@@ -41,12 +41,12 @@ class CountdownAvatarLabel(QLabel):
         progress = 1.0 if self._permanent else self._progress
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
-        width = 3.0
+        width = 2.0
         rect = QRectF(width / 2, width / 2, self.width() - width, self.height() - width)
-        painter.setPen(QPen(QColor(255, 255, 255, 150), width, Qt.SolidLine, Qt.RoundCap))
+        painter.setPen(QPen(QColor(135, 224, 224, 120), width, Qt.SolidLine, Qt.RoundCap))
         painter.drawArc(rect, 0, 360 * 16)
         if progress > 0:
-            painter.setPen(QPen(QColor(0, 168, 180, 235), width, Qt.SolidLine, Qt.RoundCap))
+            painter.setPen(QPen(QColor(0, 194, 203, 235), width, Qt.SolidLine, Qt.RoundCap))
             painter.drawArc(rect, 90 * 16, -int(360 * 16 * progress))
         painter.end()
 
@@ -54,18 +54,39 @@ class CountdownAvatarLabel(QLabel):
 class CopyableLabel(QLabel):
     def __init__(self, text='', parent=None):
         super().__init__(text, parent)
+        self._copy_button = None
+        self._copy_text_cache = ''
         self.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
         self.setCursor(Qt.IBeamCursor)
 
+    def setText(self, text):
+        self._copy_text_cache = ''
+        self._hide_copy_button()
+        super().setText(text)
+
+    def mousePressEvent(self, event):
+        self._hide_copy_button()
+        if event.button() == Qt.RightButton:
+            event.accept()
+            return
+        super().mousePressEvent(event)
+        if event.button() == Qt.LeftButton:
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.RightButton:
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+        if event.button() == Qt.LeftButton:
+            self._show_copy_button_if_selected(event.globalPos())
+            event.accept()
+
     def contextMenuEvent(self, event):
-        text = self.selectedText().replace('\u2029', '\n') or self._visible_plain_text()
-        menu = QMenu(self)
-        copy_action = menu.addAction('复制')
-        copy_action.setEnabled(bool(text))
-        action = menu.exec(event.globalPos())
-        if action == copy_action and text:
-            QApplication.clipboard().setText(text)
         event.accept()
+
+    def _selected_plain_text(self):
+        return self.selectedText().replace('\u2029', '\n').strip()
 
     def _visible_plain_text(self):
         text = self.text()
@@ -76,6 +97,46 @@ class CopyableLabel(QLabel):
             doc.setHtml(text)
             return doc.toPlainText()
         return text
+
+    def _copy_text(self):
+        text = self._copy_text_cache or self._selected_plain_text()
+        if text:
+            QApplication.clipboard().setText(text)
+        self._copy_text_cache = ''
+        self._hide_copy_button()
+
+    def _hide_copy_button(self):
+        if self._copy_button is not None:
+            self._copy_button.hide()
+
+    def _show_copy_button_if_selected(self, global_pos):
+        selected_text = self._selected_plain_text()
+        if not selected_text:
+            self._copy_text_cache = ''
+            self._hide_copy_button()
+            return
+        self._copy_text_cache = selected_text
+        root = self.window()
+        if root is None:
+            return
+        if self._copy_button is None:
+            self._copy_button = QPushButton('复制', root)
+            self._copy_button.setCursor(Qt.PointingHandCursor)
+            self._copy_button.setObjectName('FloatingCopyButton')
+            self._copy_button.setFixedSize(58, 30)
+            self._copy_button.setStyleSheet(
+                'QPushButton#FloatingCopyButton{background:#00a8b4;color:white;'
+                'border:1px solid rgba(255,255,255,180);border-radius:15px;'
+                'font:13px "Microsoft YaHei UI";font-weight:700;padding:0;}'
+                'QPushButton#FloatingCopyButton:hover{background:#14bbc6;}'
+            )
+            self._copy_button.clicked.connect(self._copy_text)
+        pos = root.mapFromGlobal(global_pos)
+        x = max(6, min(pos.x() + 8, root.width() - self._copy_button.width() - 6))
+        y = max(6, min(pos.y() + 8, root.height() - self._copy_button.height() - 6))
+        self._copy_button.move(x, y)
+        self._copy_button.raise_()
+        self._copy_button.show()
 
 
 def _reply_card_style_qss(style):
@@ -134,6 +195,7 @@ class ReplyCard(ReplyCardWindow):
         self._resize_anim = None
         self._resize_anchor_center_x = None
         self._resize_anchor_bottom_y = None
+        self._content_resize_pending = False
         self._timeout_ms = 0
         self._countdown_elapsed = QElapsedTimer()
         self.setStyleSheet(_reply_card_style_qss(config.app_config.get('reply_card_style', 'aurora')))
@@ -195,6 +257,29 @@ class ReplyCard(ReplyCardWindow):
     def _sync_content_widths(self):
         for label in self.findChildren(QLabel, 'ReplyCardElement'):
             label.setFixedWidth(self._content_width)
+
+    def _schedule_content_resize(self):
+        if self.closing or self._content_resize_pending:
+            return
+        self._content_resize_pending = True
+        QTimer.singleShot(0, self._resize_to_current_content)
+
+    def _resize_to_current_content(self):
+        self._content_resize_pending = False
+        if self.closing:
+            return
+        anchor_center_x, anchor_bottom_y = self._resize_anchor()
+        old_size = self.size()
+        for label in self.findChildren(QLabel, 'ReplyCardElement'):
+            label.updateGeometry()
+        layout = self.layout()
+        if layout is not None:
+            layout.activate()
+        self.adjustSize()
+        if self.size() != old_size:
+            self._move_to_resize_anchor(anchor_center_x, anchor_bottom_y)
+            self.layout_changed.emit()
+            self._refresh_topmost_soon()
 
     def _start_auto_close(self, timeout):
         self.timer.stop()
@@ -448,6 +533,7 @@ class ReplyCard(ReplyCardWindow):
             self._primary_structured = new_structured
         else:
             self._render_body()
+            self._schedule_content_resize()
         self._refresh_status()
         if timeout is not None:
             self._start_auto_close(timeout)
@@ -539,7 +625,7 @@ class ReplyCard(ReplyCardWindow):
             html_text = markdown_to_html(content_text)
             label.setText(html_text)
             layout.addWidget(label)
-            tw = Typewriter(label)
+            tw = Typewriter(label, on_update=self._schedule_content_resize)
             self._typewriters.append(tw)
             if is_primary:
                 self._primary_text = content_text

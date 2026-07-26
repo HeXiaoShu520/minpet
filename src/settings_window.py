@@ -120,9 +120,10 @@ class SettingsWindow(FluentWindow):
         super().closeEvent(event)
 
     def show_window(self):
-        if self.isVisible():
-            self.hide()
-        else:
+        if self.isMinimized():
+            self.showNormal()
+        elif not self.isVisible():
             self.show()
-            self._keep_navigation_expanded()
-            self.activateWindow()
+        self._keep_navigation_expanded()
+        self.raise_()
+        self.activateWindow()

@@ -84,7 +84,12 @@ def handle_mouse_press(owner, event):
     if event.button() == Qt.RightButton:
         owner.hover_inside_visible = True
         disarm_hover_menu(owner)
-        owner.right_click_menu_timer.stop()
+        if owner.right_click_menu_timer.isActive():
+            owner.right_click_menu_timer.stop()
+            owner.suppress_next_right_release_menu = True
+        elif _has_visible_menu(owner):
+            _close_visible_menus(owner)
+            owner.suppress_next_right_release_menu = True
         event.accept()
         return True
     return False
@@ -121,7 +126,7 @@ def handle_mouse_release(owner, event):
             owner.right_click_menu_timer.stop()
             event.accept()
             return True
-        owner.right_click_menu_timer.start(QApplication.doubleClickInterval() + 40)
+        owner.right_click_menu_timer.start(min(QApplication.doubleClickInterval() + 40, 220))
         event.accept()
         return True
     if event.button() != Qt.LeftButton:
@@ -152,6 +157,21 @@ def close_interaction_popups(owner):
         owner.easter_menu.close()
     if owner.input_popup is not None:
         owner.input_popup.close()
+
+
+def _is_visible(widget):
+    return widget is not None and widget.isVisible()
+
+
+def _has_visible_menu(owner):
+    return _is_visible(owner.quick_menu) or _is_visible(owner.easter_menu)
+
+
+def _close_visible_menus(owner):
+    if _is_visible(owner.quick_menu):
+        owner.quick_menu.close()
+    if _is_visible(owner.easter_menu):
+        owner.easter_menu.close()
 
 
 def update_drag_speed(owner):

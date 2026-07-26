@@ -534,7 +534,11 @@ class MiniPetApp(QApplication):
 
     def _build_system_prompt(self):
         """组合角色设定，作为 LLM system prompt。"""
-        return (config.llm_config.get('system_prompt', '') or '').strip()
+        name = config.pet_display_name()
+        prompt = (config.llm_config.get('system_prompt', '') or '').strip()
+        if name:
+            return '你的名字是：%s。\n%s' % (name, prompt)
+        return prompt
 
     def _content_text_for_preview(self, content):
         if isinstance(content, str):

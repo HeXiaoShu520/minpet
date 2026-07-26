@@ -107,12 +107,16 @@ class TTSPage(MiniPetScrollPage):
         self.experienceBtn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl('https://console.volcengine.com/speech/new/experience/tts?projectName=default')))
         self.apiDocBtn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl('https://www.volcengine.com/docs/6561/2528925?lang=zh')))
 
-        self.actionCard = SettingCard(FIF.VOLUME, '测试语音', '播放一段测试语音', self.apiGroup)
+        self.actionCard = SettingCard(FIF.VOLUME, '测试语音', '播放一段测试语音，文件保存在 data/tts_preview', self.apiGroup)
         self.testBtn = PrimaryPushButton('测试语音', self.actionCard)
+        self.openPreviewDirBtn = PrimaryPushButton('打开文件夹', self.actionCard)
         self.actionCard.hBoxLayout.addStretch(1)
+        self.actionCard.hBoxLayout.addWidget(self.openPreviewDirBtn, 0, Qt.AlignRight)
+        self.actionCard.hBoxLayout.addSpacing(8)
         self.actionCard.hBoxLayout.addWidget(self.testBtn, 0, Qt.AlignRight)
         self.actionCard.hBoxLayout.addSpacing(16)
         self.testBtn.clicked.connect(self._test)
+        self.openPreviewDirBtn.clicked.connect(self._open_preview_dir)
 
         for card in [self.enabledCard, self.apiKeyCard, self.voiceCard, self.maxCharsCard, self.testTextCard, self.actionCard]:
             self.apiGroup.addSettingCard(card)
@@ -149,6 +153,11 @@ class TTSPage(MiniPetScrollPage):
         voice_label = VOICE_VALUE_TO_LABEL.get(voice_value, voice_value)
         preview_name = voice_label.replace(' 2.0', '').replace('2.0', '').strip()
         return '你好呀，我是%s，有什么需要帮助的吗' % preview_name
+
+    def _open_preview_dir(self):
+        path = config.DATA_DIR / 'tts_preview'
+        path.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
     def _preview_voice(self):
         if self._initializing:
@@ -231,7 +240,7 @@ class TTSPage(MiniPetScrollPage):
         self.testBtn.setEnabled(True)
         self.testBtn.setText('测试语音')
         if success:
-            InfoBar.success('测试成功', '语音已播放完成', duration=2000, position=InfoBarPosition.BOTTOM, parent=self.window())
+            InfoBar.success('测试成功', '语音已播放完成，文件保存在 data/tts_preview', duration=3000, position=InfoBarPosition.BOTTOM, parent=self.window())
         else:
             InfoBar.error('测试失败', text[:120], duration=5000, position=InfoBarPosition.BOTTOM, parent=self.window())
 
