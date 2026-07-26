@@ -8,9 +8,10 @@ import wave
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QPoint, QRectF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtMultimedia import QSoundEffect
-from PySide6.QtWidgets import QApplication, QFrame
+from PySide6.QtWidgets import QFrame
 
 import config
+from widgets.easter.base import easter_popup_pos
 
 
 class FortuneStickPopup(QFrame):
@@ -61,13 +62,7 @@ class FortuneStickPopup(QFrame):
         self._play_shake_sound()
 
     def move_to_anchor(self, x, y):
-        screen = QApplication.screenAt(QPoint(int(x), int(y))) or QApplication.primaryScreen()
-        pos = QPoint(int(x - self.width() / 2), int(y - self.height() - 18))
-        if screen is not None:
-            area = screen.availableGeometry()
-            pos.setX(max(area.left() + 4, min(pos.x(), area.right() - self.width() - 4)))
-            pos.setY(max(area.top() + 4, min(pos.y(), area.bottom() - self.height() - 4)))
-        self.move(pos)
+        self.move(easter_popup_pos(x, y, self.size()))
 
     def mousePressEvent(self, event):
         if event.button() == Qt.RightButton:

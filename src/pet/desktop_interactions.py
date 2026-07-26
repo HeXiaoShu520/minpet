@@ -1,12 +1,20 @@
 # coding:utf-8
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPoint, Qt
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import QApplication
 
 import config
 from pet.desktop_hover import arm_hover_menu_from_cursor, disarm_hover_menu
+
+
+def _image_to_data_url(image):
+    data = QByteArray()
+    buffer = QBuffer(data)
+    buffer.open(QIODevice.WriteOnly)
+    image.save(buffer, 'PNG')
+    return 'data:image/png;base64,' + bytes(data.toBase64()).decode('ascii')
 
 
 def drop_payload_from_mime(owner, mime):
@@ -24,9 +32,10 @@ def drop_payload_from_mime(owner, mime):
             kind = 'file' if has_file else 'url'
             return {'kind': kind, 'items': items, 'preview': drop_preview(items)}
     if mime.hasImage():
+        image = mime.imageData()
         return {
             'kind': 'image',
-            'items': [{'kind': 'image', 'name': '拖入的图片'}],
+            'items': [{'kind': 'image', 'name': '拖入的图片', 'data_url': _image_to_data_url(image)}],
             'preview': '一张图片，可以识别文字、总结或发到飞书。',
         }
     if mime.hasText():

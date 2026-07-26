@@ -47,13 +47,16 @@ class ComboSettingCard(SettingCard):
         self.valueToText = {}
         self.textToValue = {}
         for item in items:
-            if isinstance(item, tuple):
+            icon = None
+            if isinstance(item, tuple) and len(item) >= 3:
+                value, text, icon = item[:3]
+            elif isinstance(item, tuple):
                 value, text = item
             else:
                 value, text = item, item
             self.valueToText[value] = text
             self.textToValue[text] = value
-            self.comboBox.addItem(text, userData=value)
+            self.comboBox.addItem(text, icon=icon, userData=value)
         self.hBoxLayout.addStretch(1)
         self.hBoxLayout.addWidget(self.comboBox, 0, Qt.AlignRight)
         self.hBoxLayout.addSpacing(16)

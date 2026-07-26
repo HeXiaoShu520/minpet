@@ -8,7 +8,7 @@
 """
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QIcon, QMouseEvent, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QFont, QIcon, QMouseEvent, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QMenu, QPushButton, QScrollArea, QVBoxLayout, QWidget
 from qfluentwidgets import InfoBar, InfoBarPosition
 from qfluentwidgets import FluentIcon as FIF
@@ -164,7 +164,7 @@ class DoubaoCallWindow(QWidget):
             QScrollArea#CaptionScroll QScrollBar::handle:vertical{background:#d5d9e0;border-radius:3px;min-height:28px;}
             QScrollArea#CaptionScroll QScrollBar::handle:vertical:hover{background:#b9c0ca;}
             QScrollArea#CaptionScroll QScrollBar::add-line:vertical,QScrollArea#CaptionScroll QScrollBar::sub-line:vertical{height:0;background:transparent;}
-            QLabel#CaptionView{background:transparent;border:none;font-family:"Microsoft YaHei UI", "Microsoft YaHei", sans-serif;font-size:16px;font-weight:400;line-height:1.65;color:#24292f;padding:0 10px;}
+            QLabel#CaptionView{background:transparent;border:none;font-family:"Microsoft YaHei UI", "Microsoft YaHei", sans-serif;font-size:15px;font-weight:400;line-height:1.75;color:#3f4852;padding:0 10px;}
             QPushButton#ToolButton{border:none;border-radius:22px;background:transparent;color:#8a8a8a;}
             QPushButton#ToolButton:hover{background:#f4f5f7;color:#303133;}
             QPushButton#ToolButton:checked{color:#1f6fff;background:#eef5ff;}
@@ -210,6 +210,10 @@ class DoubaoCallWindow(QWidget):
         self.caption_view.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.caption_view.setWordWrap(True)
         self.caption_view.setMinimumHeight(176)
+        caption_font = self.caption_view.font()
+        caption_font.setHintingPreference(QFont.PreferNoHinting)
+        caption_font.setStyleStrategy(QFont.PreferAntialias)
+        self.caption_view.setFont(caption_font)
         self.caption_scroll.setWidget(self.caption_view)
         root.addWidget(self.caption_scroll)
         self._tw = Typewriter(self.caption_view, speed_ms=22)
@@ -305,6 +309,33 @@ class DoubaoCallWindow(QWidget):
     def _append_assistant(self, text):
         self.current_reply = str(text or '').strip()
 
+    def _reset_reply_caption(self):
+        self.current_reply = ''
+        self._tw.set_text('')
+        self.interrupt_btn.setVisible(False)
+
+    def _chat_delta(self, text):
+        incoming = str(text or '')
+        if not incoming:
+            return ''
+        if not self.current_reply:
+            self.current_reply = incoming
+            return incoming
+        if incoming.startswith(self.current_reply):
+            delta = incoming[len(self.current_reply):]
+            self.current_reply = incoming
+            return delta
+        if self.current_reply.endswith(incoming):
+            return ''
+        max_overlap = min(len(self.current_reply), len(incoming))
+        for size in range(max_overlap, 0, -1):
+            if self.current_reply.endswith(incoming[:size]):
+                delta = incoming[size:]
+                self.current_reply += delta
+                return delta
+        self.current_reply += incoming
+        return incoming
+
     def _collect_config(self):
         return dict(config.doubao_call_config)
 
@@ -335,7 +366,7 @@ class DoubaoCallWindow(QWidget):
         if not self._ensure_session():
             return
         self.current_asr = ''
-        self.current_reply = ''
+        self._reset_reply_caption()
         self._set_state('listening', '正在听...')
         self.worker.start_recording()
 
@@ -347,7 +378,8 @@ class DoubaoCallWindow(QWidget):
     def _interrupt_speech(self):
         if self.worker is not None:
             self.worker.interrupt()
-        self.interrupt_btn.setVisible(False)
+        self.current_asr = ''
+        self._reset_reply_caption()
         self._set_state('listening' if not self.mic_muted else 'idle', '正在听...' if not self.mic_muted else '已静音')
 
     def _toggle_mute(self):
@@ -400,22 +432,18 @@ class DoubaoCallWindow(QWidget):
         self._set_caption(text)
         if interim:
             return
-        # AI 正在回复时忽略 final ASR，避免字幕被清空重来
-        if self.current_reply:
-            return
-        self.current_reply = ''
-        self._tw.set_text('')
-        self.call_state = 'thinking'
+        self._reset_reply_caption()
+        self._set_state('thinking', '正在思考...')
         if self.append_message:
             self.append_message('user', text, 'doubao_call')
 
     def _on_chat(self, text):
-        if not text:
+        delta = self._chat_delta(text)
+        if not delta:
             return
-        if not self.current_reply:
-            self.interrupt_btn.setVisible(True)
-        self.current_reply += text
-        self._tw.append_chunk(text)
+        self._set_state('speaking', '正在回答...')
+        self.interrupt_btn.setVisible(True)
+        self._tw.append_chunk(delta)
         QTimer.singleShot(0, self._scroll_caption_to_bottom)
 
     def _scroll_caption_to_bottom(self):

@@ -206,12 +206,14 @@ def _parse_ws_packet(data):
     return 'json', {}, session_id
 
 
-async def _request_audio_chunks_async(text, cfg):
+async def _request_audio_chunks_async(text, cfg, cancel_event=None):
     if websockets is None:
         raise TtsPlaybackError('缺少 websockets，请执行：pip install websockets')
     api_key = cfg.get('api_key') or ''
     if not api_key:
         raise TtsPlaybackError('请先填写 TTS API Key')
+    if cancel_event is not None and cancel_event.is_set():
+        return
     headers = {
         'X-Api-Key': api_key,
         'X-Api-Resource-Id': TTS_RESOURCE_ID,
@@ -221,7 +223,14 @@ async def _request_audio_chunks_async(text, cfg):
     async with websockets.connect(TTS_WS_URL, **{header_arg: headers}, ping_interval=20, ping_timeout=20) as ws:
         await ws.send(_build_ws_packet(_build_ws_payload(text, cfg)))
         while True:
-            message = await asyncio.wait_for(ws.recv(), timeout=60)
+            if cancel_event is not None and cancel_event.is_set():
+                return
+            try:
+                message = await asyncio.wait_for(ws.recv(), timeout=0.25 if cancel_event is not None else 60)
+            except asyncio.TimeoutError:
+                if cancel_event is not None:
+                    continue
+                raise TtsPlaybackError('TTS WS response timeout')
             if not isinstance(message, bytes):
                 continue
             kind, payload, _session_id = _parse_ws_packet(message)
@@ -234,13 +243,35 @@ async def _request_audio_chunks_async(text, cfg):
                     return
 
 
-def _request_audio_chunks(text, cfg):
+def _request_audio_chunks(text, cfg, cancel_event=None):
     async def collect():
         chunks = []
-        async for chunk in _request_audio_chunks_async(text, cfg):
+        async for chunk in _request_audio_chunks_async(text, cfg, cancel_event=cancel_event):
             chunks.append(chunk)
         return chunks
     return asyncio.run(collect())
+
+
+def request_audio_chunks(text, cfg=None, cancel_event=None):
+    cfg = dict(cfg or config.tts_config)
+    max_chars = max(1, int(cfg.get('max_chars') or config.DEFAULT_TTS_CONFIG['max_chars']))
+    text = (text or '').strip()[:max_chars]
+    if not text:
+        return []
+    return _request_audio_chunks(text, cfg, cancel_event=cancel_event)
+
+
+def set_active_player(player):
+    global _active_player
+    with _active_lock:
+        _active_player = player
+
+
+def clear_active_player(player):
+    global _active_player
+    with _active_lock:
+        if _active_player is player:
+            _active_player = None
 
 
 def _speak(text, cfg):
@@ -334,7 +365,7 @@ class TtsPreviewWorker(QThread):
     def run(self):
         try:
             stop_tts()
-            if not self.file_path.is_file():
+            if not self.file_path.is_file() or self.file_path.stat().st_size <= 0:
                 raise TtsPlaybackError('缺少本地预览音频：%s' % self.file_path.name)
             play_pcm_file(self.file_path)
             self.result_ready.emit(True, str(self.file_path))

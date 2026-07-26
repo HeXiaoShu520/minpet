@@ -4,7 +4,7 @@
 from pathlib import Path
 
 from PySide6.QtCore import QEasingCurve, QEvent, QParallelAnimationGroup, QPropertyAnimation, QPoint, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QCursor, QFont, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtGui import QAction, QColor, QCursor, QFont, QFontMetrics, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QFrame, QGridLayout, QHBoxLayout, QLabel, QMenu, QPushButton, QVBoxLayout
 from qfluentwidgets import FluentIcon as FIF
 
@@ -17,7 +17,7 @@ def build_pet_context_menu(owner, include_actions=False):
     icon_dir = config.RES_DIR / 'icons'
     system_icon_dir = icon_dir / 'system'
     if config.current_pet:
-        title = QAction(QIcon(str(system_icon_dir / 'minipet.svg')), config.current_pet, menu)
+        title = QAction(QIcon(str(system_icon_dir / 'minipet.svg')), config.pet_display_name(), menu)
         title.setEnabled(False)
         menu.addAction(title)
         menu.addSeparator()

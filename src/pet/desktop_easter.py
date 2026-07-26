@@ -10,7 +10,7 @@ def show_easter_menu(owner):
     if owner.easter_menu is not None and owner.easter_menu.isVisible():
         owner.easter_menu.raise_()
         return
-    x, y = owner.reply_card_anchor()
+    x, y = owner.easter_popup_anchor()
     actions = [
         ('🐚', '魔法海螺', '问一个是/否问题', owner.show_magic_conch),
         ('🎋', '今日求签', '摇一支今日运势', owner.show_fortune),
@@ -29,7 +29,7 @@ def show_game_popup(owner, attr_name, popup_class):
     if current is not None and current.isVisible():
         current.raise_()
         return
-    x, y = owner.reply_card_anchor()
+    x, y = owner.easter_popup_anchor()
     popup = popup_class(x, y, owner)
     popup.destroyed.connect(lambda: setattr(owner, attr_name, None))
     setattr(owner, attr_name, popup)
@@ -56,16 +56,10 @@ def show_fortune(owner):
     if owner.fortune_stick_popup is not None and owner.fortune_stick_popup.isVisible():
         owner.fortune_stick_popup.raise_()
         return
-    x, y = owner.reply_card_anchor()
+    x, y = owner.easter_popup_anchor()
     owner.fortune_stick_popup = FortuneStickPopup(x, y, owner)
-    owner.fortune_stick_popup.finished.connect(owner._show_fortune_result)
     owner.fortune_stick_popup.destroyed.connect(lambda: setattr(owner, 'fortune_stick_popup', None))
     owner.pat()
-
-
-def show_fortune_result(owner, level, text):
-    x, y = owner.reply_card_anchor()
-    owner.reply_card_text_requested.emit(f'【{level}】{text}', x, y, 7000)
 
 
 def toggle_wooden_fish(owner):
@@ -73,6 +67,6 @@ def toggle_wooden_fish(owner):
         owner.wooden_fish_popup.close()
         owner.wooden_fish_popup = None
         return
-    x, y = owner.reply_card_anchor()
+    x, y = owner.easter_popup_anchor()
     owner.wooden_fish_popup = WoodenFishPopup(x, y, owner)
     owner.wooden_fish_popup.destroyed.connect(lambda: setattr(owner, 'wooden_fish_popup', None))

@@ -44,6 +44,7 @@ DEFAULT_APP_CONFIG = {
     'language_code': QLocale().name(),
     'theme_color': None,
     'default_pet': '',
+    'pet_name': '',
     'scale': 1.0,        # 高级参数：通过 APP_SCALE 配置，不在设置页展示
     'pet_avatar': '',
     'user_avatar': 'user_avatar_5.png',  # 默认使用 3x3 头像切片的中心图
@@ -56,7 +57,6 @@ DEFAULT_APP_CONFIG = {
     'reply_card_style': 'aurora',
     'voice_orb_style': 'jade',
     'voice_follow_effect': 'spring',
-    'voice_follow_level': 'normal',
 }
 
 DEFAULT_LLM_CONFIG = {
@@ -220,10 +220,110 @@ def avatar_path(kind):
         if path.is_file():
             return path
     if kind == 'pet' and current_pet:
-        profile_path = RES_DIR / 'role' / current_pet / 'info' / 'pfp.png'
+        profile_path = pet_model_image_path(current_pet)
         if profile_path.is_file():
             return profile_path
-    return RES_DIR / 'icons' / ('character.svg' if kind == 'user' else 'icon.png')
+    return RES_DIR / 'icons' / 'character.svg'
+
+
+def _image_suffixes():
+    return ('.png', '.jpg', '.jpeg', '.webp', '.bmp')
+
+
+def _same_stem_image(path):
+    for suffix in _image_suffixes():
+        candidate = path.with_suffix(suffix)
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _first_image_by_key(role_dir, image_key):
+    image_key = str(image_key or '').strip()
+    if not image_key:
+        return None
+    action_dir = role_dir / 'action'
+    for suffix in _image_suffixes():
+        for name in (f'{image_key}_0{suffix}', f'{image_key}{suffix}'):
+            candidate = action_dir / name
+            if candidate.is_file():
+                return candidate
+    matches = []
+    for suffix in _image_suffixes():
+        matches.extend(action_dir.glob(f'{image_key}_*{suffix}'))
+    return sorted(matches)[0] if matches else None
+
+
+def _pet_default_action_image_path(role_dir):
+    pet_conf_file = role_dir / 'pet_conf.json'
+    act_conf_file = role_dir / 'act_conf.json'
+    if not pet_conf_file.is_file() or not act_conf_file.is_file():
+        return None
+    try:
+        pet_conf = json.loads(pet_conf_file.read_text(encoding='utf-8'))
+        act_conf = json.loads(act_conf_file.read_text(encoding='utf-8'))
+    except Exception:
+        return None
+    default_act = str(pet_conf.get('default') or 'default')
+    act_data = act_conf.get(default_act) or {}
+    image_key = act_data.get('images') or default_act
+    return _first_image_by_key(role_dir, image_key)
+
+
+def pet_model_image_path(pet_name):
+    """返回角色模型自己的默认展示图。"""
+    role_dir = RES_DIR / 'role' / str(pet_name or '')
+    fallback = RES_DIR / 'icons' / 'character.svg'
+    info_dir = role_dir / 'info'
+    if info_dir.is_dir():
+        info_file = info_dir / 'info.json'
+        info = {}
+        if info_file.is_file():
+            try:
+                info = json.loads(info_file.read_text(encoding='utf-8'))
+            except Exception:
+                info = {}
+        pfp = str(info.get('pfp') or '').strip()
+        if pfp:
+            path = info_dir / pfp
+            if path.is_file():
+                return path
+            same_stem = _same_stem_image(path)
+            if same_stem is not None:
+                return same_stem
+
+        for cover in info.get('coverImages') or []:
+            path = info_dir / str(cover)
+            if path.is_file():
+                return path
+            same_stem = _same_stem_image(path)
+            if same_stem is not None:
+                return same_stem
+
+        pfp_path = info_dir / 'pfp.png'
+        if pfp_path.is_file():
+            return pfp_path
+        for suffix in ('*.png', '*.jpg', '*.jpeg', '*.webp', '*.bmp'):
+            matches = sorted(info_dir.glob(suffix))
+            if matches:
+                return matches[0]
+
+    action_image = _pet_default_action_image_path(role_dir)
+    if action_image is not None:
+        return action_image
+
+    for suffix in _image_suffixes():
+        try:
+            match = next((role_dir / 'action').glob(f'*{suffix}'))
+            return match
+        except Exception:
+            pass
+    return fallback
+
+
+def pet_display_name():
+    """返回界面和聊天中展示的宠物名字，未设置时回退到当前角色目录名。"""
+    return str(app_config.get('pet_name') or current_pet or '宠物').strip() or '宠物'
 
 
 def get_pet_list():
@@ -366,6 +466,7 @@ def load():
     # 固定置顶和掉落配置，不允许旧 JSON、环境变量或设置页覆盖。
     app_config['on_top'] = True
     app_config['allow_drop'] = True
+    app_config.pop('voice_follow_level', None)
 
     # 音量和缩放属于高级参数，只从环境变量/.env 读取，优先级高于 JSON。
     env_data = _parse_env_file()

@@ -64,6 +64,30 @@ Content-Type: application/json; charset=utf-8
 }
 ```
 
+带图片时，MiniPet 会按 Responses 多模态输入发送 data URL。OpenClaw 网关和所选模型需要支持图片输入：
+
+```json
+{
+  "model": "openclaw:main",
+  "input": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "帮我看看这张图"
+        },
+        {
+          "type": "input_image",
+          "image_url": "data:image/png;base64,iVBORw0KGgo..."
+        }
+      ]
+    }
+  ],
+  "user": "minipet_user"
+}
+```
+
 OpenClaw 预期返回 Responses API 风格数据，MiniPet 会提取 `output[].content[].text`：
 
 ```json
@@ -118,7 +142,7 @@ curl http://127.0.0.1:18889/health
 - 智能体模式：`连接 MiniPet 协议后端`
 - MiniPet 协议后端地址：`ws://127.0.0.1:18889/ws/minipet`
 
-保存后，MiniPet 会连接 miniClaw。连接成功时会显示“后端已就绪：miniClaw”。
+可先点击“检测 MiniPet 协议”。MiniPet 会发送 `session.probe`，后端应回复 `session.probe.result`。保存后，MiniPet 会连接 miniClaw。连接成功时会显示“后端已就绪：miniClaw”。
 
 3. 在桌宠输入框中发送内容。
 
@@ -284,6 +308,8 @@ ws://127.0.0.1:18889/ws/minipet
 
 推荐事件类型：
 
+- `session.probe`：MiniPet 设置页发起的协议检测，不进入正式会话
+- `session.probe.result`：后端返回协议检测结果
 - `user.input`：MiniPet 发给后端的唯一用户输入，文字命令、拖拽投喂、卡片操作都整理成 `text`
 - `surface.show`：创建回复卡片
 - `surface.update`：按 `surface_id` 更新同一张卡片，用于流式输出

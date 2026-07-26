@@ -13,6 +13,19 @@ from PySide6.QtWidgets import QApplication, QFrame
 import config
 
 
+EASTER_POPUP_GAP = 16
+
+
+def easter_popup_pos(x, y, size, gap=EASTER_POPUP_GAP):
+    screen = QApplication.screenAt(QPoint(int(x), int(y))) or QApplication.primaryScreen()
+    pos = QPoint(int(x - size.width() / 2), int(y - size.height() - gap))
+    if screen is not None:
+        area = screen.availableGeometry()
+        pos.setX(max(area.left() + 4, min(pos.x(), area.right() - size.width() - 4)))
+        pos.setY(max(area.top() + 4, min(pos.y(), area.bottom() - size.height() - 4)))
+    return pos
+
+
 class EasterGamePopup(QFrame):
     title = '小游戏'
     life_ms = 9000
@@ -24,6 +37,8 @@ class EasterGamePopup(QFrame):
         self.dragging = False
         self.drag_start_pos = QPoint()
         self.drag_window_pos = QPoint()
+        self.anchor_x = int(x)
+        self.anchor_y = int(y)
         self.fade_anim = None
         self.played_sounds = set()
         self.sound_effects = {}
@@ -43,13 +58,9 @@ class EasterGamePopup(QFrame):
         self._fade_in()
 
     def move_to_anchor(self, x, y):
-        screen = QApplication.screenAt(QPoint(int(x), int(y))) or QApplication.primaryScreen()
-        pos = QPoint(int(x - self.width() / 2), int(y - self.height() - 18))
-        if screen is not None:
-            area = screen.availableGeometry()
-            pos.setX(max(area.left() + 4, min(pos.x(), area.right() - self.width() - 4)))
-            pos.setY(max(area.top() + 4, min(pos.y(), area.bottom() - self.height() - 4)))
-        self.move(pos)
+        self.anchor_x = int(x)
+        self.anchor_y = int(y)
+        self.move(easter_popup_pos(x, y, self.size()))
 
     def _fade_in(self):
         self.setWindowOpacity(0.0)
@@ -178,6 +189,11 @@ class EasterGamePopup(QFrame):
             event.accept()
             return
         super().mouseReleaseEvent(event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if not self.dragging:
+            self.move(easter_popup_pos(self.anchor_x, self.anchor_y, self.size()))
 
     def _draw_card(self, painter, bg=QColor(255, 250, 238, 246), border=QColor(225, 205, 165, 230)):
         painter.setRenderHint(QPainter.Antialiasing)

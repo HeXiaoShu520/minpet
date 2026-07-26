@@ -4,6 +4,8 @@ PROTOCOL = 'minipet.v1'
 
 SESSION_HELLO = 'session.hello'
 SESSION_READY = 'session.ready'
+SESSION_PROBE = 'session.probe'
+SESSION_PROBE_RESULT = 'session.probe.result'
 SESSION_PING = 'session.ping'
 SESSION_PONG = 'session.pong'
 USER_INPUT = 'user.input'
@@ -15,6 +17,8 @@ AGENT_STATE = 'agent.state'
 V1_CAPABILITIES = [
     SESSION_HELLO,
     SESSION_READY,
+    SESSION_PROBE,
+    SESSION_PROBE_RESULT,
     SESSION_PING,
     SESSION_PONG,
     USER_INPUT,
@@ -40,6 +44,13 @@ def normalize_inbound_event(event):
 
 
 def hello_payload():
+    return {
+        'protocol': PROTOCOL,
+        'capabilities': list(V1_CAPABILITIES),
+    }
+
+
+def probe_payload():
     return {
         'protocol': PROTOCOL,
         'capabilities': list(V1_CAPABILITIES),

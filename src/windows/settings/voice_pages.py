@@ -1,5 +1,5 @@
 # coding:utf-8
-"""语音和回复显示设置页面。"""
+"""语音设置页面。"""
 
 import hashlib
 
@@ -12,7 +12,7 @@ from qfluentwidgets import FluentIcon as FIF
 import config
 from base_page import MiniPetScrollPage
 from clients.tts_client import TtsCacheWorker, TtsPreviewWorker, stop_tts
-from widgets.setting_cards import ComboSettingCard, LineEditSettingCard, RangeSettingCard
+from widgets.setting_cards import ComboSettingCard, LineEditSettingCard
 
 
 VOICE_OPTIONS = [
@@ -59,7 +59,7 @@ class TTSPage(MiniPetScrollPage):
         self.enabledCard.setChecked(bool(cfg.get('enabled', False)))
         self.apiKeyCard = LineEditSettingCard(FIF.VPN, 'API Key', '控制台 > API Key 管理中获取的 X-Api-Key', password=True, placeholder='火山引擎 API Key', parent=self.apiGroup)
         self.apiKeyCard.setText(cfg.get('api_key', ''))
-        self.voiceCard = ComboSettingCard(VOICE_OPTIONS, FIF.PEOPLE, '音色', '选择后会生成并播放一句音色预览', self.apiGroup)
+        self.voiceCard = ComboSettingCard(VOICE_OPTIONS, FIF.PEOPLE, '音色', '选择后播放本地音色预览', self.apiGroup)
         self.voiceCard.setCurrentValue(cfg.get('voice_name', config.DEFAULT_TTS_CONFIG['voice_name']))
         self.voiceCard.comboBox.currentTextChanged.connect(self._preview_voice)
         self.maxCharsCard = LineEditSettingCard(FIF.FONT_SIZE, '最大字数', '过长回复会截断后播放，避免请求过大', placeholder='200', parent=self.apiGroup)
@@ -160,8 +160,7 @@ class TTSPage(MiniPetScrollPage):
             self.preview_worker.wait(500)
             self.preview_worker = None
         voice_value = self.voiceCard.currentValue() or config.DEFAULT_TTS_CONFIG['voice_name']
-        preview_text = self._preview_text(voice_value)
-        self.preview_worker = TtsPreviewWorker(self._voice_preview_path(voice_value, preview_text), parent=self)
+        self.preview_worker = TtsPreviewWorker(self._voice_preview_path(voice_value), parent=self)
         self.preview_worker.result_ready.connect(self._on_preview_result)
         self.preview_worker.start()
 
@@ -230,42 +229,10 @@ class TTSPage(MiniPetScrollPage):
 
     def _on_test_result(self, success, text):
         self.testBtn.setEnabled(True)
-        self.testBtn.setText('测试连接')
+        self.testBtn.setText('测试语音')
         if success:
             InfoBar.success('测试成功', '语音已播放完成', duration=2000, position=InfoBarPosition.BOTTOM, parent=self.window())
         else:
             InfoBar.error('测试失败', text[:120], duration=5000, position=InfoBarPosition.BOTTOM, parent=self.window())
 
-
-class ReplyDisplayPage(MiniPetScrollPage):
-    def __init__(self, parent=None):
-        super().__init__('回复显示设置', parent, save_callback=lambda: self._save())
-        cfg = config.typewriter_config
-        defaults = config.DEFAULT_TYPEWRITER_CONFIG
-
-        self.displayGroup = SettingCardGroup('AI 回复显示', self.scrollWidget)
-        self.enabledCard = SwitchSettingCard(FIF.MESSAGE, 'AI 回复逐字显示', '开启后，AI 回复文字会一字一字显示；关闭后直接显示完整回复', parent=self.displayGroup)
-        self.enabledCard.setChecked(bool(cfg.get('enabled', defaults['enabled'])))
-        self.speedCard = RangeSettingCard(8, 120, 1, FIF.MESSAGE, '逐字显示速度', '每个字的最大显示间隔，单位毫秒，数值越小越快', self.displayGroup)
-        self.speedCard.setValue(int(cfg.get('speed_ms', defaults['speed_ms'])))
-        self.maxDurationCard = RangeSettingCard(500, 15000, 1, FIF.FONT_SIZE, '最长显示时长', '单条回复逐字显示的最长时间，单位毫秒', self.displayGroup)
-        self.maxDurationCard.setValue(int(cfg.get('max_duration_ms', defaults['max_duration_ms'])))
-        self.ttsDelayCard = RangeSettingCard(0, 3000, 1, FIF.VOLUME, '语音播报文字延迟', '开启语音播报时，回复文字延迟显示的时间，单位毫秒', self.displayGroup)
-        self.ttsDelayCard.setValue(int(cfg.get('tts_delay_ms', defaults['tts_delay_ms'])))
-
-        for card in [self.enabledCard, self.speedCard, self.maxDurationCard, self.ttsDelayCard]:
-            self.displayGroup.addSettingCard(card)
-        self.expandLayout.addWidget(self.displayGroup)
-
-    def _collect(self):
-        return {
-            'enabled': self.enabledCard.isChecked(),
-            'speed_ms': int(self.speedCard.value()),
-            'max_duration_ms': int(self.maxDurationCard.value()),
-            'tts_delay_ms': int(self.ttsDelayCard.value()),
-        }
-
-    def _save(self):
-        config.save_typewriter_config(self._collect())
-        InfoBar.success('保存成功', '回复显示设置已保存', duration=2000, position=InfoBarPosition.BOTTOM, parent=self.window())
 

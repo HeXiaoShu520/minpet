@@ -9,12 +9,68 @@ session hello、接收事件并规范化为协议 V1 的内部事件字典。
 import asyncio
 import json
 import os
+import socket
 import urllib.request
+import uuid
+from urllib.parse import urlparse
 
 import websockets
 from PySide6.QtCore import QThread, Signal
 
-from protocols.protocol_v1 import SESSION_HELLO, USER_INPUT, hello_payload, normalize_inbound_event
+from protocols.protocol_v1 import SESSION_HELLO, SESSION_PROBE, SESSION_PROBE_RESULT, USER_INPUT, hello_payload, normalize_inbound_event, probe_payload
+
+
+async def _probe_minipet_backend_async(url, timeout=3):
+    request_id = 'probe_' + uuid.uuid4().hex
+    async with websockets.connect(url, ping_interval=None, open_timeout=timeout, close_timeout=1) as ws:
+        await ws.send(json.dumps({
+            'version': '1.0',
+            'type': SESSION_PROBE,
+            'request_id': request_id,
+            'payload': probe_payload(),
+        }, ensure_ascii=False))
+        raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
+        event = normalize_inbound_event(json.loads(raw))
+        if event.get('type') != SESSION_PROBE_RESULT:
+            return False, '后端已连接，但未返回 session.probe.result。'
+        if event.get('request_id') and event.get('request_id') != request_id:
+            return False, '后端返回了检测结果，但 request_id 不匹配。'
+        payload = event.get('payload') if isinstance(event.get('payload'), dict) else {}
+        protocol = payload.get('protocol') or ''
+        if protocol and protocol != 'minipet.v1':
+            return False, '后端协议不匹配：' + str(protocol)
+        server = payload.get('server') if isinstance(payload.get('server'), dict) else {}
+        name = server.get('name') or payload.get('name') or 'MiniPet 协议后端'
+        return True, '协议检测通过：' + str(name)
+
+
+def probe_minipet_backend(url, timeout=3):
+    """通过 session.probe 检测 MiniPet 协议后端。"""
+    target = (url or '').strip()
+    if not target:
+        return False, '请先填写 MiniPet 协议后端地址。'
+    if not (target.startswith('ws://') or target.startswith('wss://')):
+        return False, '后端地址需要以 ws:// 或 wss:// 开头。'
+    parsed = urlparse(target)
+    host = parsed.hostname
+    port = parsed.port or (443 if parsed.scheme == 'wss' else 80)
+    if not host:
+        return False, '后端地址缺少主机名。'
+    try:
+        return asyncio.run(_probe_minipet_backend_async(target, timeout=timeout))
+    except TimeoutError:
+        return False, f'连接或等待检测结果超时：{host}:{port}'
+    except asyncio.TimeoutError:
+        return False, f'等待检测结果超时：{host}:{port}'
+    except OSError as exc:
+        message = str(exc) or exc.__class__.__name__
+        if isinstance(exc, ConnectionRefusedError):
+            return False, f'连接被拒绝：{host}:{port} 没有服务监听。'
+        if isinstance(exc, socket.gaierror):
+            return False, '无法解析后端地址：' + message
+        return False, f'连接 MiniPet 协议后端失败：{message}'
+    except Exception as exc:
+        return False, 'MiniPet 协议检测失败：' + (str(exc) or exc.__class__.__name__)
 
 
 class EventClient(QThread):

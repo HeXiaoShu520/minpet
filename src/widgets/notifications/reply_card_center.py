@@ -18,6 +18,7 @@ class ReplyCardCenter(QWidget):
     """回复卡片管理器，负责创建、堆叠、移动和关闭短生命周期卡片。"""
 
     reply_card_action_clicked = Signal(dict, dict)
+    reply_card_interrupted = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -49,6 +50,8 @@ class ReplyCardCenter(QWidget):
             'avatar_kind': 'user' if title == '你' else 'pet',
             'status': 'done',
         }, timeout)
+        card.interrupted.connect(self.reply_card_interrupted)
+        card.layout_changed.connect(lambda cid=card_id: self._reflow_reply_cards(animate=True, skip_id=cid))
         card.closed.connect(self._remove_reply_card)
         self._register_reply_card(card_id, card, x, y)
         return card_id
@@ -78,6 +81,8 @@ class ReplyCardCenter(QWidget):
         timeout = int(event.get('timeout_ms', REPLY_CARD_TIMEOUT_MS) or 0)
         card = ReplyCard(card_id, event, timeout)
         card.action_clicked.connect(self.reply_card_action_clicked)
+        card.interrupted.connect(self.reply_card_interrupted)
+        card.layout_changed.connect(lambda cid=card_id: self._reflow_reply_cards(animate=True, skip_id=cid))
         card.closed.connect(self._remove_reply_card)
         self._register_reply_card(card_id, card, x, y)
         if play_sound:

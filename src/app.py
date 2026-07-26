@@ -7,10 +7,13 @@ MiniPetApp 是整个桌宠程序的协调层，负责把桌宠窗口、设置窗
 分散在各自模块中，这里只保留跨模块流程编排。
 """
 
+import base64
 import json
+import mimetypes
 import random
 import signal
 import sys
+from pathlib import Path
 
 from PySide6.QtCore import QLocale, QTimer
 from PySide6.QtGui import QFont, QGuiApplication
@@ -35,6 +38,8 @@ from clients.doubao_call_client import DoubaoCallWorker
 
 
 WAKE_ACK_KEYS = ('wake_ack_1', 'wake_ack_2', 'wake_ack_3', 'wake_ack_4')
+EVENT_CARD_AFTER_TTS_START_DELAY_MS = 450
+GOODBYE_CARD_QUIT_DELAY_MS = 1800
 
 
 class MiniPetApp(QApplication):
@@ -76,6 +81,7 @@ class MiniPetApp(QApplication):
         # quick_chat_* 管理桌宠头顶快速输入：LLM 请求、回复卡片和可选 TTS 播报。
         self.quick_chat_worker = None
         self.openclaw_worker = None
+        self._abandoned_reply_workers = []
         self.event_tts_worker = None
         self.quick_chat_source = 'quick_chat'
         self.quick_reply_card_id = None
@@ -84,7 +90,7 @@ class MiniPetApp(QApplication):
         # 内置模型和外置 surface 都是“完整文本不断增长”的流式形态，
         # 统一交给 StreamTtsQueue 按小句切分并串行播放。
         self.quick_stream_tts = StreamTtsQueue(self, label='TTS', on_started=self._on_quick_stream_tts_started, on_idle=self._finish_quick_voice_if_tts_idle)
-        self.external_stream_tts = StreamTtsQueue(self, label='External TTS')
+        self.external_stream_tts = StreamTtsQueue(self, label='External TTS', on_started=self._on_external_stream_tts_started, on_idle=self._finish_external_voice_if_tts_idle)
 
         # pet_voice_* 是桌宠旁边的轻量语音聊天状态，不等同于独立 豆包通话窗口。
         self.pet_voice_active = False
@@ -98,9 +104,11 @@ class MiniPetApp(QApplication):
         self.wake_ack_worker = None
         self.wake_ack_pending_start = False
         self.is_quitting = False
+        self.startup_greeting_shown = False
+        self.exit_card_shown = False
 
         self.pet.show_settings.connect(self.settings.show_window)
-        self.pet.reply_card_text_requested.connect(lambda text, x, y, timeout: self.note.setup_reply_card_text(text, x, y, timeout, title=config.current_pet or '宠物'))
+        self.pet.reply_card_text_requested.connect(lambda text, x, y, timeout: self.note.setup_reply_card_text(text, x, y, timeout, title=config.pet_display_name()))
         self.pet.chat_prompt_submitted.connect(self._on_quick_chat_prompt)
         self.pet.drop_intent_submitted.connect(self._on_drop_intent)
         self.pet.chat_requested.connect(self._show_chat_window)
@@ -114,6 +122,7 @@ class MiniPetApp(QApplication):
         self.settings.settings_changed.connect(self._apply_wake_word_settings)
         self.settings.pet_changed.connect(self.pet.load_pet)
         self.note.reply_card_action_clicked.connect(self._on_reply_card_action)
+        self.note.reply_card_interrupted.connect(self._on_reply_card_interrupted)
         if self.events:
             self.events.event_received.connect(self._on_event)
             self.events.connection_changed.connect(self._on_event_connection_changed)
@@ -214,6 +223,8 @@ class MiniPetApp(QApplication):
             self._finish_wake_ack_start()
             return
         stop_tts()
+        self.quick_stream_tts.reset()
+        self.external_stream_tts.reset()
         self.wake_ack_worker = TtsPreviewWorker(path, parent=self)
         self.wake_ack_worker.result_ready.connect(self._on_wake_ack_done)
         self.wake_ack_worker.start()
@@ -246,13 +257,12 @@ class MiniPetApp(QApplication):
         return config.DATA_DIR / 'tts_events' / f'{safe_name}_{event_name}.pcm'
 
     def _play_event_tts(self, event_name):
-        cfg = config.tts_config
-        if not cfg.get('enabled') or not cfg.get('api_key'):
-            return False
         path = self._event_tts_path(event_name)
         if not path.is_file():
             return False
         stop_tts()
+        self.quick_stream_tts.reset()
+        self.external_stream_tts.reset()
         self.event_tts_worker = TtsPreviewWorker(path, parent=self)
         self.event_tts_worker.result_ready.connect(lambda success, text: self._on_event_tts_done(event_name, success, text))
         self.event_tts_worker.start()
@@ -263,13 +273,29 @@ class MiniPetApp(QApplication):
             print('Event TTS failed:', text)
         self.event_tts_worker = None
         if event_name == 'exit' and self.is_quitting:
-            self.pet.quit_now()
+            self._show_exit_card()
+            QTimer.singleShot(300 if success else GOODBYE_CARD_QUIT_DELAY_MS, self.pet.quit_now)
 
     def _show_startup_greeting(self):
+        if self._play_event_tts('startup'):
+            QTimer.singleShot(EVENT_CARD_AFTER_TTS_START_DELAY_MS, self._show_startup_greeting_card)
+            return
+        self._show_startup_greeting_card()
+
+    def _show_startup_greeting_card(self):
+        if self.startup_greeting_shown:
+            return
+        self.startup_greeting_shown = True
         x, y = self.pet.reply_card_anchor()
-        name = config.current_pet or '宠物'
+        name = config.pet_display_name()
         self.note.setup_reply_card_text('好久不见，想我了吗？', x, y, 6000, title=name)
-        self._play_event_tts('startup')
+
+    def _show_exit_card(self):
+        if self.exit_card_shown:
+            return
+        self.exit_card_shown = True
+        x, y = self.pet.reply_card_anchor()
+        self.note.setup_reply_card_text('我会想你的，再见~', x, y, 3000, title=config.pet_display_name())
 
     def _show_chat_window(self):
         self.pet.show_chat(self.chat_history, self._append_chat_message, self.chat_store.content_for_llm, self._build_system_prompt, self._clear_chat_history)
@@ -294,7 +320,7 @@ class MiniPetApp(QApplication):
         if not config.tts_config.get('api_key'):
             self.pet.update_voice_popup('error', '缺少语音配置')
             x, y = self.pet.reply_card_anchor()
-            self.note.setup_reply_card_text('请先在设置 > 语音中填写 TTS API Key', x, y, 4000, title=config.current_pet or '宠物')
+            self.note.setup_reply_card_text('请先在设置 > 语音中填写 TTS API Key', x, y, 4000, title=config.pet_display_name())
             QTimer.singleShot(1800, self.pet.close_voice_popup)
             return
         self.pet_voice_active = True
@@ -322,7 +348,7 @@ class MiniPetApp(QApplication):
         if not config.tts_config.get('api_key'):
             self.pet.update_voice_popup('error', '缺少语音配置')
             x, y = self.pet.reply_card_anchor()
-            self.note.setup_reply_card_text('请先在设置 > 语音中填写 TTS API Key', x, y, 4000, title=config.current_pet or '宠物')
+            self.note.setup_reply_card_text('请先在设置 > 语音中填写 TTS API Key', x, y, 4000, title=config.pet_display_name())
             QTimer.singleShot(1800, self.pet.close_voice_popup)
             return
         self.pet_voice_active = True
@@ -368,6 +394,10 @@ class MiniPetApp(QApplication):
         self.pet_voice_paused = True
         self._stop_pet_voice_recording()
         stop_tts()
+        self._cancel_current_reply_workers()
+        self.quick_stream_tts.reset()
+        self.external_stream_tts.reset()
+        self.pet_voice_waiting_reply = False
         self.pet.update_voice_popup('idle', '已暂停，单击继续')
         QTimer.singleShot(1600, self._shrink_paused_voice_popup)
 
@@ -392,6 +422,9 @@ class MiniPetApp(QApplication):
             self.wake_ack_worker.wait(1200)
             self.wake_ack_worker = None
         stop_tts()
+        self._cancel_current_reply_workers()
+        self.quick_stream_tts.reset()
+        self.external_stream_tts.reset()
         self.pet.close_voice_popup()
         if not self.is_quitting:
             QTimer.singleShot(int(config.wake_word_config.get('restart_delay_ms') or 1200), self._resume_wake_word_listener)
@@ -459,7 +492,7 @@ class MiniPetApp(QApplication):
         if self.pet_voice_active:
             self.pet.update_voice_popup('error', str(text)[:60])
             x, y = self.pet.reply_card_anchor()
-            self.note.setup_reply_card_text('语音识别出错：' + str(text), x, y, 5000, title=config.current_pet or '宠物')
+            self.note.setup_reply_card_text('语音识别出错：' + str(text), x, y, 5000, title=config.pet_display_name())
         self._stop_pet_voice_chat()
 
     def _on_pet_voice_finished(self):
@@ -477,14 +510,15 @@ class MiniPetApp(QApplication):
         if self.pet_voice_active or self.pet_voice_asr_worker is not None:
             self._stop_pet_voice_chat()
         self._stop_wake_word_listener()
-        x, y = self.pet.reply_card_anchor()
-        self.note.setup_reply_card_text('我会想你的，再见~', x, y, 3000, title=config.current_pet or '宠物')
-        if not self._play_event_tts('exit'):
-            self.pet.quit_now()
+        if self._play_event_tts('exit'):
+            QTimer.singleShot(EVENT_CARD_AFTER_TTS_START_DELAY_MS, self._show_exit_card)
+        else:
+            self._show_exit_card()
+            QTimer.singleShot(GOODBYE_CARD_QUIT_DELAY_MS, self.pet.quit_now)
 
     def _append_chat_message(self, role, content, source):
         """保存一条聊天消息，并同步到当前运行中的短期上下文。"""
-        stored_message = self.chat_store.append(role, content, source, pet_name=config.current_pet)
+        stored_message = self.chat_store.append(role, content, source, pet_name=config.pet_display_name())
         self.chat_history.append(stored_message)
         return stored_message
 
@@ -514,50 +548,168 @@ class MiniPetApp(QApplication):
         image_count = sum(1 for block in content or [] if block.get('type') == 'image')
         return (text + '\n' if text else '') + ('[图片] × %d' % image_count if image_count else '')
 
+    def _attachment_from_data_url(self, data_url, name='image.png', source='input'):
+        data_url = str(data_url or '').strip()
+        if not data_url.startswith('data:') or ';base64,' not in data_url:
+            return None
+        header, data = data_url.split(',', 1)
+        mime_type = header[5:].split(';', 1)[0] or 'application/octet-stream'
+        if not data:
+            return None
+        return {
+            'type': 'image',
+            'name': name,
+            'mime_type': mime_type,
+            'encoding': 'base64',
+            'data': data,
+            'source': source,
+        }
+
+    def _attachment_from_image_file(self, file_path, source='drop'):
+        path = Path(str(file_path or ''))
+        if not path.is_file():
+            return None
+        mime_type = mimetypes.guess_type(str(path))[0] or ''
+        if not mime_type.startswith('image/'):
+            return None
+        return {
+            'type': 'image',
+            'name': path.name,
+            'mime_type': mime_type,
+            'encoding': 'base64',
+            'data': base64.b64encode(path.read_bytes()).decode('ascii'),
+            'source': source,
+        }
+
+    def _content_attachments(self, content, screenshot=''):
+        attachments = []
+        if screenshot:
+            item = self._attachment_from_data_url(screenshot, name='screenshot.jpg', source='screenshot')
+            if item:
+                attachments.append(item)
+        if isinstance(content, list):
+            for index, block in enumerate(content):
+                if block.get('type') != 'image':
+                    continue
+                src = block.get('src') or block.get('path') or block.get('data_url') or ''
+                item = self._attachment_from_data_url(src, name=block.get('name') or 'image_%d.png' % (index + 1), source='message')
+                if item is None:
+                    item = self._attachment_from_image_file(src, source='message')
+                if item:
+                    attachments.append(item)
+        return attachments
+
+    def _drop_attachments(self, payload):
+        attachments = []
+        for index, item in enumerate(payload.get('items') or []):
+            if item.get('kind') not in ('image', 'file'):
+                continue
+            attachment = self._attachment_from_data_url(item.get('data_url'), name=item.get('name') or 'drop_%d.png' % (index + 1), source='drop')
+            if attachment is None:
+                attachment = self._attachment_from_image_file(item.get('path'), source='drop')
+            if attachment:
+                attachments.append(attachment)
+        return attachments
+
+    def _drop_payload_without_inline_image_data(self, payload):
+        data = dict(payload or {})
+        items = []
+        for item in data.get('items') or []:
+            clean = dict(item)
+            clean.pop('data_url', None)
+            items.append(clean)
+        data['items'] = items
+        return data
+
+    def _user_input_payload(self, content, mode='text', surface='pet_popup', screenshot='', attachments=None):
+        text = self._content_text_for_preview(content)
+        preview = self._content_preview(content)
+        payload = {
+            'text': text or preview,
+            'preview': preview,
+            'mode': mode,
+            'surface': surface,
+        }
+        merged = list(attachments or [])
+        merged.extend(self._content_attachments(content, screenshot=screenshot))
+        if merged:
+            payload['attachments'] = merged
+        return payload
+
+    def _openclaw_input_payload(self, content, screenshot='', attachments=None):
+        text = self._content_text_for_preview(content) or self._content_preview(content)
+        merged = list(attachments or [])
+        merged.extend(self._content_attachments(content, screenshot=screenshot))
+        if not merged:
+            return text
+        parts = [{'type': 'input_text', 'text': text or '请处理图片内容'}]
+        for item in merged:
+            if item.get('type') != 'image' or item.get('encoding') != 'base64' or not item.get('data'):
+                continue
+            mime_type = item.get('mime_type') or 'image/png'
+            parts.append({
+                'type': 'input_image',
+                'image_url': 'data:%s;base64,%s' % (mime_type, item.get('data')),
+            })
+        return [{'role': 'user', 'content': parts}]
+
     def _send_external_command(self, content, mode='text', surface='pet_popup', screenshot=''):
         if self._agent_backend() == 'openclaw':
-            return self._send_openclaw_prompt(content, mode)
+            return self._send_openclaw_prompt(content, mode, screenshot=screenshot)
         x, y = self.pet.reply_card_anchor()
         self.note.setup_reply_card_text(self._content_preview(content), x, y, 2000, title='你')
         if mode in ('text', 'voice'):
+            self._begin_reply_card_turn()
             self._reset_external_stream_tts()
             self._show_reply_card('正在思考...', status='streaming', timeout_ms=60000)
-        payload = {
-            'text': self._content_preview(content),
-        }
+        payload = self._user_input_payload(content, mode=mode, surface=surface, screenshot=screenshot)
         sent = self.events.send_event(USER_INPUT, payload) if self.events else False
         if not sent:
             self._close_reply_card()
-            self.note.setup_reply_card_text('外置智能体还没连接，先检查“智能体”设置。', x, y, 4500, title=config.current_pet or '宠物')
+            self.note.setup_reply_card_text('外置智能体还没连接，先检查“智能体”设置。', x, y, 4500, title=config.pet_display_name())
         return sent
 
-    def _send_openclaw_prompt(self, content, mode='text'):
+    def _send_openclaw_prompt(self, content, mode='text', screenshot='', attachments=None):
         if self.openclaw_worker is not None:
             x, y = self.pet.reply_card_anchor()
-            self.note.setup_reply_card_text('OpenClaw 还在处理上一句话，稍等一下。', x, y, 3000, title=config.current_pet or '宠物')
+            self.note.setup_reply_card_text('OpenClaw 还在处理上一句话，稍等一下。', x, y, 3000, title=config.pet_display_name())
             return False
         prompt = self._content_preview(content).strip()
-        if not prompt:
+        openclaw_input = self._openclaw_input_payload(content, screenshot=screenshot, attachments=attachments)
+        has_input = bool(prompt) or (isinstance(openclaw_input, list) and bool(openclaw_input[0].get('content')))
+        if not has_input:
             return False
         x, y = self.pet.reply_card_anchor()
         self.quick_chat_source = 'voice_chat' if mode == 'voice' else 'quick_chat'
         self.note.setup_reply_card_text(prompt, x, y, 2000, title='你')
+        self._begin_reply_card_turn()
         self._reset_external_stream_tts()
         self._show_reply_card('正在问 OpenClaw...', status='streaming', timeout_ms=60000)
-        self.openclaw_worker = OpenClawWorker(prompt, parent=self)
+        self.openclaw_worker = OpenClawWorker(openclaw_input, parent=self)
+        self.openclaw_worker.delta_ready.connect(self._on_openclaw_delta)
         self.openclaw_worker.result_ready.connect(self._on_openclaw_reply)
         self.openclaw_worker.start()
         return True
 
+    def _on_openclaw_delta(self, text):
+        if not text:
+            return
+        self._quick_stream_text += text
+        shown = self._quick_stream_text.strip()
+        if not shown:
+            return
+        self._show_reply_card(shown, status='streaming', timeout_ms=60000)
+        self.external_stream_tts.queue_text('openclaw-reply', shown, terminal=False)
+
     def _on_openclaw_reply(self, success, text):
         self.openclaw_worker = None
-        reply = (text or '').strip()
+        reply = (text or self._quick_stream_text or '').strip()
         if success:
             reply = reply or 'OpenClaw 没有返回文本。'
             self._show_reply_card(reply, status='done', timeout_ms=max(5000, min(25000, len(reply) * 180)))
+            self._quick_stream_text = reply
             self.external_stream_tts.queue_text('openclaw-reply', reply, terminal=True)
-            if self.quick_chat_source == 'voice_chat':
-                self._finish_voice_turn(delay_ms=500)
+            self._finish_external_voice_if_tts_idle()
             return
         self._reset_external_stream_tts()
         self._show_reply_card(reply or '调用 OpenClaw 失败。', status='failed', timeout_ms=8000)
@@ -575,6 +727,10 @@ class MiniPetApp(QApplication):
         if self.quick_reply_card_id and self.note.update_reply_card(self.quick_reply_card_id, event, timeout=timeout_ms):
             return
         self.quick_reply_card_id = self.note.setup_reply_card(event, x, y, play_sound=False)
+
+    def _begin_reply_card_turn(self):
+        self.quick_reply_card_id = None
+        self._quick_stream_text = ''
 
     def _close_reply_card(self):
         if self.quick_reply_card_id:
@@ -613,13 +769,28 @@ class MiniPetApp(QApplication):
             self._submit_quick_chat(prompt, 'drop')
             return
         if self._agent_backend() == 'openclaw':
-            self._send_openclaw_prompt(self._drop_prompt_for_builtin(payload, intent_labels.get(intent, intent)), 'text')
+            self._send_openclaw_prompt(
+                self._drop_prompt_for_builtin(payload, intent_labels.get(intent, intent)),
+                'text',
+                attachments=self._drop_attachments(payload),
+            )
             return
-        sent = self.events.send_event(USER_INPUT, {'text': self._drop_prompt_for_builtin(payload, intent_labels.get(intent, intent))}) if self.events else False
+        prompt = self._drop_prompt_for_builtin(payload, intent_labels.get(intent, intent))
+        event_payload = self._user_input_payload(
+            prompt,
+            mode='drop',
+            surface='desktop_pet',
+            attachments=self._drop_attachments(payload),
+        )
+        event_payload.update({
+            'intent': intent,
+            'drop': self._drop_payload_without_inline_image_data(payload),
+        })
+        sent = self.events.send_event(USER_INPUT, event_payload) if self.events else False
         if sent:
-            self.note.setup_reply_card_text('收到，我交给外置智能体处理：' + intent_labels.get(intent, intent), x, y, 3500, title=config.current_pet or '宠物')
+            self.note.setup_reply_card_text('收到，我交给外置智能体处理：' + intent_labels.get(intent, intent), x, y, 3500, title=config.pet_display_name())
         else:
-            self.note.setup_reply_card_text('外置智能体还没连接，先检查“智能体”设置。', x, y, 4500, title=config.current_pet or '宠物')
+            self.note.setup_reply_card_text('外置智能体还没连接，先检查“智能体”设置。', x, y, 4500, title=config.pet_display_name())
 
     def _drop_prompt_for_builtin(self, payload, intent_label):
         lines = ['用户投喂了内容，希望你处理：%s。' % intent_label]
@@ -640,14 +811,15 @@ class MiniPetApp(QApplication):
                 self.pet.input_popup.close()
                 self.pet.input_popup = None
             x, y = self.pet.reply_card_anchor()
-            self.note.setup_reply_card_text('我还在想上一句话，稍等一下。', x, y, 3000, title=config.current_pet or '宠物')
+            self.note.setup_reply_card_text('我还在想上一句话，稍等一下。', x, y, 3000, title=config.pet_display_name())
             return False
         self.quick_chat_source = source
         self._append_chat_message('user', text, source)
         if self.pet.chat_window is not None and self.pet.chat_window.isVisible():
             self.pet.chat_window.reload_history()
-        self._show_reply_card('正在思考...', status='streaming', timeout_ms=60000)
+        self._begin_reply_card_turn()
         self._reset_quick_stream_tts()
+        self._show_reply_card('正在思考...', status='streaming', timeout_ms=60000)
         self.quick_chat_worker = ChatWorker(self._build_quick_chat_messages(screenshot=screenshot), parent=self)
         self.quick_chat_worker.delta_ready.connect(self._on_quick_chat_delta)
         self.quick_chat_worker.result_ready.connect(self._on_quick_chat_reply)
@@ -719,6 +891,16 @@ class MiniPetApp(QApplication):
         if self.quick_chat_source == 'voice_chat' and self.pet_voice_active:
             self._finish_voice_turn(delay_ms=500)
 
+    def _on_external_stream_tts_started(self, stream_id, text):
+        if self.quick_chat_source == 'voice_chat' and self.pet_voice_active:
+            self.pet.update_voice_popup('speaking', '')
+
+    def _finish_external_voice_if_tts_idle(self):
+        if self.external_stream_tts.is_active():
+            return
+        if self.quick_chat_source == 'voice_chat' and self.pet_voice_active:
+            self._finish_voice_turn(delay_ms=500)
+
     def _reset_quick_stream_tts(self):
         self._quick_stream_text = ''
         self.quick_stream_tts.reset()
@@ -748,7 +930,7 @@ class MiniPetApp(QApplication):
         x, y = self.pet.reply_card_anchor()
         if event_type == SESSION_READY:
             server = payload.get('server') if isinstance(payload.get('server'), dict) else {}
-            self.note.setup_reply_card_text('后端已就绪：' + str(server.get('name') or payload.get('name') or '智能体'), x, y, 3000, title=config.current_pet or '宠物')
+            self.note.setup_reply_card_text('后端已就绪：' + str(server.get('name') or payload.get('name') or '智能体'), x, y, 3000, title=config.pet_display_name())
         elif event_type == SURFACE_SHOW:
             self._handle_surface_show(payload)
         elif event_type == SURFACE_UPDATE:
@@ -824,7 +1006,7 @@ class MiniPetApp(QApplication):
             self.pet.close_voice_popup()
             self.pet.play_action('idle')
         if is_terminal_surface_status(card_event):
-            self._finish_voice_turn(delay_ms=500)
+            self._finish_external_voice_if_tts_idle()
 
     def _handle_surface_close(self, payload):
         surface_id = payload.get('surface_id')
@@ -853,6 +1035,39 @@ class MiniPetApp(QApplication):
             return
         if self.events:
             self.events.execute_action(event, action)
+
+    def _on_reply_card_interrupted(self, _card_id):
+        self._cancel_current_reply_workers()
+        self.quick_stream_tts.reset()
+        self.external_stream_tts.reset()
+        if self.pet_voice_active and self.pet_voice_waiting_reply:
+            self._finish_voice_turn(delay_ms=300)
+
+    def _cancel_current_reply_workers(self):
+        for attr, delta_slot, result_slot in (
+            ('quick_chat_worker', self._on_quick_chat_delta, self._on_quick_chat_reply),
+            ('openclaw_worker', self._on_openclaw_delta, self._on_openclaw_reply),
+        ):
+            worker = getattr(self, attr, None)
+            if worker is None:
+                continue
+            try:
+                worker.delta_ready.disconnect(delta_slot)
+            except (TypeError, RuntimeError):
+                pass
+            try:
+                worker.result_ready.disconnect(result_slot)
+            except (TypeError, RuntimeError):
+                pass
+            if worker.isRunning():
+                worker.requestInterruption()
+                self._abandoned_reply_workers.append(worker)
+                worker.finished.connect(lambda w=worker: self._forget_abandoned_reply_worker(w))
+            setattr(self, attr, None)
+
+    def _forget_abandoned_reply_worker(self, worker):
+        if worker in self._abandoned_reply_workers:
+            self._abandoned_reply_workers.remove(worker)
 
     def shutdown(self):
         stop_tts()

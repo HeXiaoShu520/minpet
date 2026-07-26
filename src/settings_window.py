@@ -8,9 +8,8 @@ from qfluentwidgets import FluentIcon as FIF
 
 import config
 from windows.settings.basic_pages import AgentPage, BasicPage
-from windows.settings.llm_page import LLMPage
 from windows.settings.role_page import RolePage
-from windows.settings.voice_pages import ReplyDisplayPage, TTSPage
+from windows.settings.voice_pages import TTSPage
 
 
 def _icon(name):
@@ -32,24 +31,19 @@ class SettingsWindow(FluentWindow):
         self.basic.setObjectName('BasicPage')
         self.agent = AgentPage(self)
         self.agent.setObjectName('AgentPage')
-        self.llm = LLMPage(self)
-        self.llm.setObjectName('LLMPage')
         self.role = RolePage(self)
         self.role.setObjectName('RolePage')
         self.tts = TTSPage(self)
         self.tts.setObjectName('TTSPage')
-        self.reply_display = ReplyDisplayPage(self)
-        self.reply_display.setObjectName('ReplyDisplayPage')
         self.basic.settings_changed.connect(self.settings_changed)
         self.agent.settings_changed.connect(self.settings_changed)
+        self.role.settings_changed.connect(self.settings_changed)
         self.tts.settings_changed.connect(self.settings_changed)
-        self.basic.pet_changed.connect(self.pet_changed)
+        self.role.pet_changed.connect(self.pet_changed)
         self.addSubInterface(self.basic, FIF.SETTING, '基础')
         self.addSubInterface(self.agent, FIF.ROBOT, '智能体')
-        self.addSubInterface(self.llm, FIF.CLOUD, '大模型')
         self.addSubInterface(self.role, _icon('character.svg'), '角色')
         self.addSubInterface(self.tts, FIF.VOLUME, '语音')
-        self.addSubInterface(self.reply_display, FIF.MESSAGE, '回复显示')
         self.navigationInterface.setExpandWidth(180)
         self.navigationInterface.setMinimumExpandWidth(180)
         self.navigationInterface.setCollapsible(False)
@@ -111,8 +105,8 @@ class SettingsWindow(FluentWindow):
         pass
 
     def shutdown(self):
-        for page in (self.llm, self.tts):
-            for worker_name in ('worker', 'preview_worker'):
+        for page in (self.agent, self.tts):
+            for worker_name in ('worker', 'openclaw_enable_worker', 'openclaw_probe_worker', 'custom_probe_worker', 'preview_worker'):
                 worker = getattr(page, worker_name, None)
                 if worker is not None and worker.isRunning():
                     worker.requestInterruption()

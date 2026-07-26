@@ -23,7 +23,7 @@ class MiniPetScrollPage(ScrollArea):
             self.saveButton.setIcon(FIF.SAVE)
             self.saveButton.clicked.connect(save_callback)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setViewportMargins(0, 74, 0, 20)
+        self.setViewportMargins(0, 64, 0, 12)
         self.setWidget(self.scrollWidget)
         self.setWidgetResizable(True)
         self.scrollWidget.setObjectName('scrollWidget')
@@ -34,9 +34,9 @@ class MiniPetScrollPage(ScrollArea):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.settingLabel.move(50, 20)
+        self.settingLabel.move(50, 12)
         if self.saveButton:
-            self.saveButton.move(self.width() - self.saveButton.width() - 60, 20)
+            self.saveButton.move(self.width() - self.saveButton.width() - 60, 14)
 
     def _set_qss(self):
         qss = config.RES_DIR / 'icons' / 'system' / 'qss' / 'light' / 'setting_interface.qss'

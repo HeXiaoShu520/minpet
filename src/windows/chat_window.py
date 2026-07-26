@@ -189,17 +189,17 @@ class ChatWindow(QWidget):
         header.setStyleSheet('QWidget{background:#ffffff;border-bottom:1px solid #e5e7eb;}')
         h_layout = QHBoxLayout(header)
         h_layout.setContentsMargins(18, 0, 12, 0)
-        avatar = Avatar(config.avatar_path('pet'), self.pet_name or '宠', False, header, size=34, icon_size=27)
+        self.avatar_widget = Avatar(config.avatar_path('pet'), self.pet_name or '宠', False, header, size=34, icon_size=27)
         title_box = QHBoxLayout()
         title_box.setContentsMargins(0, 0, 0, 0)
         title_box.setSpacing(8)
-        title = TitleLabel(self.pet_name or '宠物')
-        title.setFont(QFont(title.font().family(), 13, QFont.DemiBold))
+        self.title_label = TitleLabel(self.pet_name or '宠物')
+        self.title_label.setFont(QFont(self.title_label.font().family(), 13, QFont.DemiBold))
         badge = QLabel('智能体')
         badge.setStyleSheet('QLabel{background:#ede7ff;color:#5b3fd6;border-radius:5px;padding:2px 6px;font-size:12px;}')
-        title_box.addWidget(title)
+        title_box.addWidget(self.title_label)
         title_box.addWidget(badge, 0, Qt.AlignVCenter)
-        h_layout.addWidget(avatar)
+        h_layout.addWidget(self.avatar_widget)
         h_layout.addLayout(title_box)
         h_layout.addStretch(1)
         clear_btn = TransparentToolButton(FIF.DELETE, header)
@@ -252,6 +252,11 @@ class ChatWindow(QWidget):
         for js in self._pending_js:
             self.web.page().runJavaScript(js)
         self._pending_js.clear()
+
+    def set_pet_name(self, pet_name):
+        self.pet_name = pet_name or '宠物'
+        if hasattr(self, 'title_label'):
+            self.title_label.setText(self.pet_name)
 
     def _js(self, code):
         if self._web_ready:

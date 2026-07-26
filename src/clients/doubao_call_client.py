@@ -124,6 +124,7 @@ class DoubaoCallSession:
         self.say_hello_finished = False
         self.playing_tts = False
         self.resuming_recording = False
+        self.ignore_tts_until_next_query = False
         self.recording = False
         self.recording_requested = False
         self.closed = False
@@ -259,7 +260,7 @@ class DoubaoCallSession:
             packet = parse_packet(message)
             if packet.is_audio:
                 self.received_audio_bytes += len(packet.payload_bytes or b'')
-            elif packet.event != EVENT_ASR_RESPONSE:
+            elif packet.event not in (EVENT_ASR_RESPONSE, EVENT_CHAT_RESPONSE):
                 self._log('recv event=%s(%s) payload=%s' % (packet.event_name, packet.event, self._payload_summary(packet)))
             self.event_cb(packet.event_name, packet.payload if not packet.is_audio else {})
             if packet.event == EVENT_CONNECTION_STARTED:
@@ -278,13 +279,20 @@ class DoubaoCallSession:
                 if self.recording_requested and not self.say_hello_finished:
                     self._log('recording pending until welcome finished')
             elif packet.event == EVENT_ASR_INFO:
-                self._interrupt_playback()
+                self._interrupt_playback(ignore_pending_tts=True)
+                self.playing_tts = False
+                self._clear_audio_queue()
+                if self.recording_requested and not self.closed:
+                    self._start_recording()
+                    self._emit_status('正在听')
             elif packet.event == EVENT_ASR_RESPONSE:
                 for result in (packet.payload or {}).get('results', []):
                     text = result.get('text', '')
                     interim = bool(result.get('is_interim'))
                     stream_finish = bool(result.get('stream_asr_finish'))
                     if text and (not interim or stream_finish):
+                        self.ignore_tts_until_next_query = False
+                        self._emit_status('识别中')
                         self._log('asr final text=%s' % text)
                     self.asr_cb(text, interim)
             elif packet.event == EVENT_CHAT_RESPONSE:
@@ -347,8 +355,9 @@ class DoubaoCallSession:
                 self._emit_status('麦克风已关闭')
             elif command == 'interrupt':
                 self._log('command interrupt')
-                self._interrupt_playback()
+                self._interrupt_playback(ignore_pending_tts=True)
                 self.playing_tts = False
+                self.resuming_recording = False
                 self._clear_audio_queue()
                 await self._send_json(EVENT_CLIENT_INTERRUPT, {})
                 if self.recording_requested and not self.closed:
@@ -448,6 +457,8 @@ class DoubaoCallSession:
     def _write_playback(self, chunk):
         if not chunk:
             return
+        if self.ignore_tts_until_next_query:
+            return
         if not self.playing_tts:
             self.playing_tts = True
             self._stop_recording()
@@ -466,7 +477,9 @@ class DoubaoCallSession:
             player.close()
             self._log('playback closed received_audio=%dB' % self.received_audio_bytes)
 
-    def _interrupt_playback(self):
+    def _interrupt_playback(self, ignore_pending_tts=False):
+        if ignore_pending_tts:
+            self.ignore_tts_until_next_query = True
         self._close_player()
 
     def _error_text(self, packet):

@@ -25,7 +25,7 @@ from pet.desktop_easter import show_coin as show_coin_popup
 from pet.desktop_easter import show_dice as show_dice_popup
 from pet.desktop_easter import show_easter_menu as show_easter_popup_menu
 from pet.desktop_easter import show_fortune as show_fortune_popup
-from pet.desktop_easter import show_fortune_result, show_gacha as show_gacha_popup
+from pet.desktop_easter import show_gacha as show_gacha_popup
 from pet.desktop_easter import show_magic_conch as show_magic_conch_popup
 from pet.desktop_easter import toggle_wooden_fish as toggle_wooden_fish_popup
 from pet.desktop_hover import arm_hover_menu_from_cursor, close_quick_menu_if_mouse_away, disarm_hover_menu, start_hover_tracking
@@ -131,7 +131,7 @@ class DesktopPet(QWidget):
         config.current_pet = pet_name
         config.app_config['default_pet'] = pet_name
         config.save_app_config()
-        self.setWindowTitle(f'{config.APP_DISPLAY_NAME} - {pet_name}')
+        self.setWindowTitle(f'{config.APP_DISPLAY_NAME} - {config.pet_display_name()}')
         self._set_image(self.profile.default.images[0], self.profile.default.anchor)
         self._reset_size(keep_position=False)
         self._start_animation()
@@ -247,9 +247,6 @@ class DesktopPet(QWidget):
     def show_fortune(self):
         show_fortune_popup(self)
 
-    def _show_fortune_result(self, level, text):
-        show_fortune_result(self, level, text)
-
     def toggle_wooden_fish(self):
         toggle_wooden_fish_popup(self)
 
@@ -364,6 +361,12 @@ class DesktopPet(QWidget):
         top_y = self.y() + self.label.y() + bounds.top()
         return center_x, top_y + 12
 
+    def easter_popup_anchor(self):
+        bounds = self._current_visible_bounds()
+        center_x = self.x() + self.label.x() + bounds.left() + bounds.width() // 2
+        top_y = self.y() + self.label.y() + bounds.top()
+        return center_x, top_y + 8
+
     def quick_menu_anchor(self):
         bounds = self._current_visible_bounds()
         center_x = self.x() + self.label.x() + bounds.left() + bounds.width() // 2
@@ -373,6 +376,11 @@ class DesktopPet(QWidget):
 
     def apply_settings(self):
         self._init_window()
+        self.setWindowTitle(f'{config.APP_DISPLAY_NAME} - {config.pet_display_name()}')
+        if self.chat_window is not None:
+            self.chat_window.set_pet_name(config.pet_display_name())
+        if self.doubao_call_window is not None:
+            self.doubao_call_window.pet_name = config.pet_display_name()
         self.show()
         self._reset_size(keep_position=True)
         self._setup_tray()

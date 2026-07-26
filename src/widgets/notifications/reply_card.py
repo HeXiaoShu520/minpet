@@ -1,22 +1,22 @@
 # coding:utf-8
 """回复卡片窗口。"""
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QEasingCurve, Property, QPropertyAnimation, Qt, QTimer, Signal
 from PySide6.QtGui import QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import QApplication, QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton, QVBoxLayout
-from qfluentwidgets import TransparentToolButton
-from qfluentwidgets import FluentIcon as FIF
 
 import config
 from typewriter import Typewriter
 from widgets.notifications.constants import REPLY_CARD_TIMEOUT_MS
-from widgets.notifications.text_format import markdown_to_html
+from widgets.notifications.text_format import has_structured_markdown, markdown_to_html
 from widgets.notifications.card_window import ReplyCardWindow
 
-REPLY_CARD_DEFAULT_WIDTH = 320
-REPLY_CARD_MIN_WIDTH = 280
-REPLY_CARD_MAX_WIDTH = 420
-REPLY_CARD_AVATAR_SIZE = 40
+REPLY_CARD_WIDTH_LEVELS = (248, 288, 328, 368, 408, 456)
+REPLY_CARD_DEFAULT_WIDTH = 288
+REPLY_CARD_MIN_WIDTH = REPLY_CARD_WIDTH_LEVELS[0]
+REPLY_CARD_MAX_WIDTH = REPLY_CARD_WIDTH_LEVELS[-1]
+REPLY_CARD_AVATAR_SIZE = 36
+REPLY_CARD_RESIZE_ANIM_MS = 180
 
 def _reply_card_style_qss(style):
     card = {
@@ -37,7 +37,7 @@ def _reply_card_style_qss(style):
             QFrame#ReplyCardHr {{ border: none; border-top: 1px solid rgba(180,190,215,130); background: transparent; max-height: 1px; }}
             QLabel {{ border: none; background: transparent; font-family: "Microsoft YaHei UI", "Microsoft YaHei"; }}
             QLabel#ReplyCardTitle {{ color: {title}; font-size: 16px; font-weight: 700; }}
-            QLabel#ReplyCardAvatar {{ border-radius: 20px; background: #e8f2ff; }}
+            QLabel#ReplyCardAvatar {{ border-radius: 18px; background: #e8f2ff; }}
             QLabel#ReplyCardStatus {{ color: {meta}; font-size: 12px; font-weight: 700; }}
             QLabel#ReplyCardMeta, QLabel#ReplyCardControlLabel, QLabel#ReplyCardOptionDescription {{ color: {meta}; font-size: 12px; }}
             QLabel#ReplyCardSummary, QLabel#ReplyCardElement {{ color: {body}; font-size: 13px; line-height: 1.45; }}
@@ -55,6 +55,7 @@ class ReplyCard(ReplyCardWindow):
     """回复卡片，按需渲染展示内容、输入控件和操作按钮。"""
 
     action_clicked = Signal(dict, dict)
+    layout_changed = Signal()
 
     def __init__(self, card_id, event, timeout=REPLY_CARD_TIMEOUT_MS, parent=None):
         super().__init__(card_id, parent, fade_in=True, initial_opacity=0.0)
@@ -66,15 +67,21 @@ class ReplyCard(ReplyCardWindow):
         self._status_animating = False
         self._primary_text = ''
         self._primary_text_html = ''
+        self._primary_structured = False
         self._primary_typewriter = None
         self._body_structure_signature = None
+        self._animated_width = 0
+        self._resize_anim = None
+        self._resize_anchor_center_x = None
+        self._resize_anchor_bottom_y = None
         self.setStyleSheet(_reply_card_style_qss(config.app_config.get('reply_card_style', 'aurora')))
         # 顶层透明窗口叠加 QGraphicsDropShadowEffect 在 Windows 多屏/缩放环境下
         # 容易产生负 dirty rect，触发 UpdateLayeredWindowIndirect 参数错误。
         # 卡片本身已有边框和半透明背景，这里不再给顶层窗口加 Qt 阴影。
 
-        self._card_width = self._normalized_card_width(self.event_data.get('width'))
-        self._content_width = max(220, self._card_width - 86)
+        self._card_width = self._card_width_for_event(self.event_data)
+        self._animated_width = self._card_width
+        self._content_width = self._content_width_for_card(self._card_width)
         self.setFixedWidth(self._card_width)
         card = QFrame(self)
         card.setObjectName('ReplyCard')
@@ -82,8 +89,8 @@ class ReplyCard(ReplyCardWindow):
         shell.setContentsMargins(0, 0, 0, 0)
         shell.setSpacing(0)
         self.layout_box = QVBoxLayout()
-        self.layout_box.setContentsMargins(15, 13, 15, 13)
-        self.layout_box.setSpacing(9)
+        self.layout_box.setContentsMargins(15, 10, 15, 11)
+        self.layout_box.setSpacing(5)
         shell.addLayout(self.layout_box, 1)
 
         self._build_header(card)
@@ -102,16 +109,139 @@ class ReplyCard(ReplyCardWindow):
         if timeout > 0:
             self.timer.start(timeout)
 
+    def _nearest_width_level(self, width):
+        return min(REPLY_CARD_WIDTH_LEVELS, key=lambda level: abs(level - width))
+
     def _normalized_card_width(self, width):
+        try:
+            value = int(width or REPLY_CARD_DEFAULT_WIDTH)
+        except (TypeError, ValueError):
+            value = REPLY_CARD_DEFAULT_WIDTH
+        return self._nearest_width_level(self._clamped_card_width(value))
+
+    def _clamped_card_width(self, width):
         try:
             value = int(width or REPLY_CARD_DEFAULT_WIDTH)
         except (TypeError, ValueError):
             value = REPLY_CARD_DEFAULT_WIDTH
         return max(REPLY_CARD_MIN_WIDTH, min(REPLY_CARD_MAX_WIDTH, value))
 
+    def _content_width_for_card(self, card_width):
+        return max(168, card_width - 30)
+
+    def _sync_content_widths(self):
+        for label in self.findChildren(QLabel, 'ReplyCardElement'):
+            label.setFixedWidth(self._content_width)
+
+    def _get_adaptive_width(self):
+        return int(self._animated_width or self.width() or self._card_width)
+
+    def _set_adaptive_width(self, width):
+        self._apply_card_width(
+            int(width),
+            anchor_center_x=self._resize_anchor_center_x,
+            anchor_bottom_y=self._resize_anchor_bottom_y,
+        )
+
+    adaptiveWidth = Property(int, _get_adaptive_width, _set_adaptive_width)
+
+    def _resize_anchor(self):
+        return self.x() + self.width() / 2, self.y() + self.height()
+
+    def _move_to_resize_anchor(self, anchor_center_x=None, anchor_bottom_y=None):
+        if self.manual_position or not self.isVisible():
+            return
+        center_x = self.x() + self.width() / 2 if anchor_center_x is None else anchor_center_x
+        bottom_y = self.y() + self.height() if anchor_bottom_y is None else anchor_bottom_y
+        self.move(int(center_x - self.width() / 2), int(bottom_y - self.height()))
+
+    def _apply_card_width(self, width, anchor_center_x=None, anchor_bottom_y=None):
+        width = self._clamped_card_width(width)
+        self._animated_width = width
+        self._content_width = self._content_width_for_card(width)
+        self.setFixedWidth(width)
+        self._sync_content_widths()
+        self.adjustSize()
+        self._move_to_resize_anchor(anchor_center_x, anchor_bottom_y)
+        self._ensure_topmost()
+
+    def _animate_card_width_to(self, width, anchor_center_x=None, anchor_bottom_y=None):
+        width = self._normalized_card_width(width)
+        start_width = self._get_adaptive_width()
+        if self._resize_anim is not None:
+            self._resize_anim.stop()
+            self._resize_anim = None
+        self._resize_anchor_center_x = anchor_center_x
+        self._resize_anchor_bottom_y = anchor_bottom_y
+        if abs(start_width - width) <= 1 or not self.isVisible():
+            self._apply_card_width(width, anchor_center_x, anchor_bottom_y)
+            self._resize_anchor_center_x = None
+            self._resize_anchor_bottom_y = None
+            self.layout_changed.emit()
+            return
+        anim = QPropertyAnimation(self, b'adaptiveWidth', self)
+        anim.setDuration(REPLY_CARD_RESIZE_ANIM_MS)
+        anim.setStartValue(start_width)
+        anim.setEndValue(width)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+        anim.finished.connect(lambda: self._finish_resize_animation(width))
+        self._resize_anim = anim
+        anim.start()
+
+    def _finish_resize_animation(self, width):
+        self._apply_card_width(width, self._resize_anchor_center_x, self._resize_anchor_bottom_y)
+        self._resize_anim = None
+        self._resize_anchor_center_x = None
+        self._resize_anchor_bottom_y = None
+        self.layout_changed.emit()
+
+    def _card_width_for_event(self, event):
+        if event.get('width') is not None:
+            return self._normalized_card_width(event.get('width'))
+        controls = event.get('controls') or []
+        actions = event.get('actions') or []
+        elements = event.get('elements') or []
+        text = self._event_text_for_width(event)
+        length = self._weighted_text_length(text)
+        if has_structured_markdown(text) and length > 90:
+            return 456
+        if controls:
+            return 408 if len(controls) > 2 or length > 90 else 368
+        if actions:
+            return 408 if len(actions) > 2 or length > 70 else 368
+        if isinstance(elements, list) and len(elements) > 1:
+            return 408 if length > 90 else 368
+        if length <= 24:
+            return 248
+        if length <= 52:
+            return 288
+        if length <= 78:
+            return 328
+        if length <= 130:
+            return 368
+        return 408
+
+    def _event_text_for_width(self, event):
+        parts = [event.get('summary'), event.get('content'), event.get('message')]
+        for element in event.get('elements') or []:
+            if isinstance(element, dict):
+                parts.append(element.get('content') or element.get('text'))
+        return '\n'.join(str(part) for part in parts if part)
+
+    def _weighted_text_length(self, text):
+        total = 0
+        for ch in str(text or ''):
+            if ch in '\r\n\t':
+                total += 8
+            elif ord(ch) > 127:
+                total += 2
+            else:
+                total += 1
+        return total
+
     def _build_header(self, card):
         header = QHBoxLayout()
-        header.setSpacing(10)
+        header.setSpacing(9)
         self.avatar_label = QLabel(card)
         self.avatar_label.setObjectName('ReplyCardAvatar')
         self.avatar_label.setFixedSize(REPLY_CARD_AVATAR_SIZE, REPLY_CARD_AVATAR_SIZE)
@@ -126,7 +256,7 @@ class ReplyCard(ReplyCardWindow):
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
         title_row.setSpacing(6)
-        self.title_label = QLabel(config.current_pet or '宠物', card)
+        self.title_label = QLabel(config.pet_display_name(), card)
         self.title_label.setObjectName('ReplyCardTitle')
         self.title_label.setWordWrap(True)
         self.title_label.setMaximumWidth(280)
@@ -136,10 +266,6 @@ class ReplyCard(ReplyCardWindow):
         title_row.addWidget(self.status_label, 0, Qt.AlignVCenter)
         title_row.addStretch(1)
         header.addLayout(title_row, 1)
-        close_btn = TransparentToolButton(FIF.CLOSE, card)
-        close_btn.setFixedSize(28, 28)
-        close_btn.clicked.connect(self.request_close)
-        header.addWidget(close_btn, 0, Qt.AlignTop)
         self.layout_box.addLayout(header)
         self._refresh_title_meta()
 
@@ -188,6 +314,7 @@ class ReplyCard(ReplyCardWindow):
         self.control_widgets = {}
         self._typewriters = []
         self._primary_typewriter = None
+        self._primary_structured = False
         self._add_elements(self.body_layout, card, self._normalized_elements())
         self._add_controls(self.body_layout, card, self.event_data.get('controls') or [])
         self._add_actions(self.body_layout, card, self.event_data.get('actions') or [])
@@ -211,15 +338,26 @@ class ReplyCard(ReplyCardWindow):
         if self.closing:
             return
         previous_html = self._primary_text_html
+        anchor_center_x, anchor_bottom_y = self._resize_anchor()
         self.event_data.update(event or {})
+        new_width = self._card_width_for_event(self.event_data)
+        width_changed = new_width != self._card_width
+        if width_changed:
+            self._card_width = new_width
         self._refresh_title_meta()
-        new_html = markdown_to_html(str(self._primary_text_value()))
+        new_text = str(self._primary_text_value())
+        new_html = markdown_to_html(new_text)
+        new_structured = has_structured_markdown(new_text)
         if self._structure_signature() == self._body_structure_signature and self._primary_typewriter is not None:
-            if new_html.startswith(previous_html):
+            if new_structured or self._primary_structured:
+                self._primary_typewriter.set_text(new_html)
+            elif new_html.startswith(previous_html):
                 self._primary_typewriter.append_chunk(new_html[len(previous_html):])
             else:
                 self._primary_typewriter.set_text(new_html)
+            self._primary_text = new_text
             self._primary_text_html = new_html
+            self._primary_structured = new_structured
         else:
             self._render_body()
         self._refresh_status()
@@ -227,14 +365,19 @@ class ReplyCard(ReplyCardWindow):
             self.timer.stop()
             if int(timeout) > 0:
                 self.timer.start(int(timeout))
-        self.adjustSize()
+        if width_changed:
+            self._animate_card_width_to(new_width, anchor_center_x, anchor_bottom_y)
+        else:
+            self.adjustSize()
+            self._move_to_resize_anchor(anchor_center_x, anchor_bottom_y)
+            self._ensure_topmost()
 
     def update_message(self, message, timeout=None):
         """兼容纯文本回复的更新入口。"""
         self.update_card({'content': message, 'elements': []}, timeout=timeout)
 
     def _refresh_title_meta(self):
-        self.title_label.setText(str(self.event_data.get('title') or config.current_pet or '宠物'))
+        self.title_label.setText(str(self.event_data.get('title') or config.pet_display_name()))
 
     def _status_value(self):
         if self.event_data.get('done'):
@@ -294,16 +437,22 @@ class ReplyCard(ReplyCardWindow):
             label.setTextFormat(Qt.RichText)
             label.setWordWrap(True)
             label.setFixedWidth(self._content_width)
-            html_text = markdown_to_html(str(content))
+            content_text = str(content)
+            structured = has_structured_markdown(content_text)
+            html_text = markdown_to_html(content_text)
             label.setText(html_text)
             layout.addWidget(label)
             tw = Typewriter(label)
             self._typewriters.append(tw)
             if is_primary:
-                self._primary_text = str(content)
+                self._primary_text = content_text
                 self._primary_text_html = html_text
+                self._primary_structured = structured
                 self._primary_typewriter = tw
-            tw.typewrite(html_text)
+            if structured:
+                tw.set_text(html_text)
+            else:
+                tw.typewrite(html_text)
 
     def _add_controls(self, layout, card, controls):
         for control in controls[:5]:
@@ -433,5 +582,8 @@ class ReplyCard(ReplyCardWindow):
 
     def _before_close_event(self):
         self.status_timer.stop()
+        if self._resize_anim is not None:
+            self._resize_anim.stop()
+            self._resize_anim = None
         for tw in self._typewriters:
             tw.set_text('')

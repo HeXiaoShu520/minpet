@@ -9,9 +9,10 @@ from datetime import date
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QPoint, QPointF, QRectF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap, QTransform
 from PySide6.QtMultimedia import QSoundEffect
-from PySide6.QtWidgets import QApplication, QFrame
+from PySide6.QtWidgets import QFrame
 
 import config
+from widgets.easter.base import easter_popup_pos
 
 
 class WoodenFishPopup(QFrame):
@@ -107,13 +108,7 @@ class WoodenFishPopup(QFrame):
         return sound_path
 
     def move_to_anchor(self, x, y):
-        screen = QApplication.screenAt(QPoint(int(x), int(y))) or QApplication.primaryScreen()
-        pos = QPoint(int(x - self.width() / 2), int(y - self.height() - 24))
-        if screen is not None:
-            area = screen.availableGeometry()
-            pos.setX(max(area.left() + 4, min(pos.x(), area.right() - self.width() - 4)))
-            pos.setY(max(area.top() + 4, min(pos.y(), area.bottom() - self.height() - 4)))
-        self.move(pos)
+        self.move(easter_popup_pos(x, y, self.size()))
 
     def knock(self):
         now = time.monotonic()
@@ -202,16 +197,31 @@ class WoodenFishPopup(QFrame):
 
     def _hammer_angle(self):
         p = self._hit_progress()
-        rest = -6
+        rest = 18
         if p >= 1:
             return rest
         if p < 0.22:
-            return rest - 34 * self._ease_out(p / 0.22)
+            return rest + 18 * self._ease_out(p / 0.22)
         if p < 0.55:
-            return -40 + 54 * self._ease_out((p - 0.22) / 0.33)
+            return 36 - 30 * self._ease_out((p - 0.22) / 0.33)
         if p < 0.82:
-            return 14 - 22 * self._ease_out((p - 0.55) / 0.27)
-        return -8 + 2 * self._ease_out((p - 0.82) / 0.18)
+            return 6 + 16 * self._ease_out((p - 0.55) / 0.27)
+        return 22 - 4 * self._ease_out((p - 0.82) / 0.18)
+
+    def _hammer_offset(self):
+        p = self._hit_progress()
+        if p >= 1:
+            return QPointF(0, 0)
+        if p < 0.22:
+            lift = self._ease_out(p / 0.22)
+            return QPointF(6 * lift, -5 * lift)
+        if p < 0.55:
+            hit = self._ease_out((p - 0.22) / 0.33)
+            return QPointF(6 - 10 * hit, -5 + 14 * hit)
+        if p < 0.82:
+            bounce = self._ease_out((p - 0.55) / 0.27)
+            return QPointF(-4 + 4 * bounce, 9 - 9 * bounce)
+        return QPointF(0, 0)
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -240,13 +250,13 @@ class WoodenFishPopup(QFrame):
             painter.drawEllipse(fish_rect)
 
         if not self.hammer.isNull():
-            hammer_w = 122
+            hammer_w = 118
             hammer = self.hammer.scaledToWidth(hammer_w, Qt.SmoothTransformation)
-            pivot = QPointF(self.width() * 0.72, self.height() * 0.22)
+            strike_point = QPointF(self.width() * 0.56, self.height() * 0.49) + self._hammer_offset()
             transform = QTransform()
-            transform.translate(pivot.x(), pivot.y())
+            transform.translate(strike_point.x(), strike_point.y())
             transform.rotate(self._hammer_angle())
-            transform.translate(-hammer_w * 0.95, -hammer.height() * 0.76)
+            transform.translate(-hammer_w * 0.18, -hammer.height() * 0.52)
             painter.setTransform(transform)
             painter.drawPixmap(0, 0, hammer)
             painter.resetTransform()

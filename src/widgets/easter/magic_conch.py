@@ -1,9 +1,8 @@
 # coding:utf-8
 import math
-import random
 import time
 
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QKeyEvent, QPainter, QPen, QPixmap, QRadialGradient
 from PySide6.QtWidgets import QLineEdit, QPushButton
 
@@ -15,11 +14,6 @@ from widgets.easter.base import EasterGamePopup
 class MagicConchPopup(EasterGamePopup):
     title = '魔法海螺'
     life_ms = 0
-    ANSWERS = [
-        '可以。', '不可以。', '也许吧。', '再问一次。', '现在还不是时候。', '海螺不知道。',
-        '当然。', '别想了，去做。', '先保存再说。', '答案已经很明显了。'
-    ]
-
     def __init__(self, x, y, parent=None):
         self.answer = ''
         self.question = ''
@@ -59,16 +53,19 @@ class MagicConchPopup(EasterGamePopup):
             {'role': 'system', 'content': '你就是神奇海螺本身。用户问你问题，你必须用"海螺说："开头，接一句神秘、笃定、可爱的中文短答案，总长度不超过20个字。不要解释，不要换行，不要出现"海螺低语"等其他前缀，只用"海螺说："。'},
             {'role': 'user', 'content': question},
         ]
-        self.worker = ChatWorker(messages, parent=self)
+        self.worker = ChatWorker(messages, cfg=dict(config.llm_config), parent=self)
         self.worker.result_ready.connect(self._answer_ready)
         self.worker.start()
         self.update()
 
     def _answer_ready(self, ok, text):
-        if ok and text.strip():
-            self.answer = text.strip().replace('\n', ' ')[:36]
+        result = (text or '').strip().replace('\n', ' ')
+        if ok and result:
+            self.answer = result[:48]
+        elif ok:
+            self.answer = '内置大模型没有返回内容。'
         else:
-            self.answer = random.choice(self.ANSWERS)
+            self.answer = ('内置大模型错误：' + (result or '请求失败'))[:96]
         self.waiting_llm = False
         self.update()
 
@@ -120,15 +117,15 @@ class MagicConchPopup(EasterGamePopup):
         painter.setFont(QFont('Microsoft YaHei UI', 8))
         painter.setPen(QColor(77, 105, 145, 190))
         painter.drawText(46, 240, self.width() - 92, 18, Qt.AlignCenter, '你问：' + self.question[:24])
-        font = QFont('Microsoft YaHei UI', 11, QFont.Bold)
-        painter.setFont(font)
         painter.setPen(QColor(42, 69, 108))
-        metrics = painter.fontMetrics()
         answer = self.answer
         answer_rect = QRectF(42, 262, self.width() - 84, 48)
-        if metrics.boundingRect(answer_rect.toRect(), Qt.AlignCenter | Qt.TextWordWrap, answer).height() > answer_rect.height():
-            font.setPointSize(10)
+        for size in (11, 10, 9, 8):
+            font = QFont('Microsoft YaHei UI', size, QFont.Bold)
             painter.setFont(font)
+            metrics = painter.fontMetrics()
+            if metrics.boundingRect(answer_rect.toRect(), Qt.AlignCenter | Qt.TextWordWrap, answer).height() <= answer_rect.height():
+                break
         painter.drawText(answer_rect, Qt.AlignCenter | Qt.TextWordWrap, answer)
         painter.setOpacity(1)
 

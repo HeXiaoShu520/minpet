@@ -15,7 +15,7 @@ MiniPet 不执行业务 API，不替代后端；它只负责：
 ## 1. 设计目标
 
 - 协议小：只保留 `session`、`user`、`surface` 三类顶层概念。
-- 输入简单：外置后端只接收 `user.input` 文本输入，不承载语音协议。
+- 输入简单：外置后端只接收 `user.input`，其中 `text` 是用户意图，`attachments` 可携带图片等附件；不承载语音协议。
 - 输出统一：普通文字、按钮、富文本、选择、输入、流式状态都用回复卡片表达。
 - 交互闭环：用户点击按钮或提交控件值后，MiniPet 整理成文本继续发送 `user.input`。
 - 可扩展：后续增加更多控件时，扩展 `controls`，不增加新的 surface 类型。
@@ -115,6 +115,19 @@ import websockets
 async def handler(ws):
     async for raw in ws:
         event = json.loads(raw)
+        if event.get("type") == "session.probe":
+            await ws.send(json.dumps({
+                "version": "1.0",
+                "type": "session.probe.result",
+                "request_id": event.get("request_id"),
+                "payload": {
+                    "ok": True,
+                    "protocol": "minipet.v1",
+                    "server": {"name": "demo-agent"},
+                },
+            }, ensure_ascii=False))
+            continue
+
         if event.get("type") == "session.hello":
             await ws.send(json.dumps({
                 "version": "1.0",
@@ -171,16 +184,62 @@ asyncio.run(main())
 
 | 类型 | 方向 | 用途 |
 | --- | --- | --- |
+| `session.probe` | MiniPet → 后端 | 设置页检测协议可用性，不进入正式会话 |
+| `session.probe.result` | 后端 → MiniPet | 返回检测结果 |
 | `session.hello` | MiniPet → 后端 | MiniPet 连接后声明协议和能力 |
 | `session.ready` | 后端 → MiniPet | 后端就绪 |
 | `session.ping` | 后端 → MiniPet | 心跳请求 |
 | `session.pong` | MiniPet → 后端 | 心跳响应 |
-| `user.input` | MiniPet → 后端 | 用户输入文本；文字命令、拖拽投喂、卡片操作都整理成文本发送 |
+| `user.input` | MiniPet → 后端 | 用户输入；文字命令、拖拽投喂、卡片操作都整理成 `text`，图片放入 `attachments` |
 | `surface.show` | 后端 → MiniPet | 创建回复卡片 |
 | `surface.update` | 后端 → MiniPet | 更新已有卡片 |
 | `surface.close` | 后端 → MiniPet | 关闭已有卡片 |
 
 ## 5. Session
+
+### session.probe
+
+设置页点击“检测 MiniPet 协议”时发送。后端收到后应立即回复 `session.probe.result`，不要把它当作正式会话连接。
+
+```json
+{
+  "version": "1.0",
+  "type": "session.probe",
+  "request_id": "probe_xxx",
+  "payload": {
+    "protocol": "minipet.v1",
+    "capabilities": [
+      "session.probe",
+      "session.probe.result",
+      "session.hello",
+      "session.ready",
+      "session.ping",
+      "session.pong",
+      "user.input",
+      "surface.show",
+      "surface.update",
+      "surface.close"
+    ]
+  }
+}
+```
+
+后端回复：
+
+```json
+{
+  "version": "1.0",
+  "type": "session.probe.result",
+  "request_id": "probe_xxx",
+  "payload": {
+    "ok": true,
+    "protocol": "minipet.v1",
+    "server": {
+      "name": "miniClaw"
+    }
+  }
+}
+```
 
 ### session.hello
 
@@ -193,6 +252,8 @@ MiniPet 连接后发送：
   "payload": {
     "protocol": "minipet.v1",
     "capabilities": [
+      "session.probe",
+      "session.probe.result",
       "session.hello",
       "session.ready",
       "session.ping",
@@ -251,7 +312,7 @@ MiniPet 回：
 
 ### user.input
 
-MiniPet 发给后端的唯一用户输入事件。文字命令、拖拽投喂、卡片按钮和控件提交都整理成文本，让后端大模型自行理解意图。
+MiniPet 发给后端的唯一用户输入事件。文字命令、拖拽投喂、卡片按钮和控件提交都整理成 `text`，图片等二进制内容放在 `attachments` 中，让后端大模型自行理解意图。
 
 ```json
 {
@@ -263,14 +324,64 @@ MiniPet 发给后端的唯一用户输入事件。文字命令、拖拽投喂、
 }
 ```
 
-拖拽投喂也按文本发送：
+带图片输入时，`attachments` 使用 base64。后端直接解码 `data` 字段即可：
 
 ```json
 {
   "version": "1.0",
   "type": "user.input",
   "payload": {
-    "text": "用户投喂了内容，希望你处理：生成待办。\n预览：这段内容帮我整理成任务"
+    "text": "帮我看看这张图",
+    "preview": "帮我看看这张图\n[图片] × 1",
+    "mode": "text",
+    "surface": "pet_popup",
+    "attachments": [
+      {
+        "type": "image",
+        "name": "image_1.png",
+        "mime_type": "image/png",
+        "encoding": "base64",
+        "data": "iVBORw0KGgo...",
+        "source": "message"
+      }
+    ]
+  }
+}
+```
+
+Python 解码示例：
+
+```python
+import base64
+
+payload = event.get("payload", {})
+for attachment in payload.get("attachments", []):
+    if attachment.get("type") == "image" and attachment.get("encoding") == "base64":
+        image_bytes = base64.b64decode(attachment["data"])
+        mime_type = attachment.get("mime_type", "image/png")
+```
+
+拖拽投喂也按 `text` 描述意图；如果投喂的是图片，会同时携带 `attachments`：
+
+```json
+{
+  "version": "1.0",
+  "type": "user.input",
+  "payload": {
+    "text": "用户投喂了内容，希望你处理：总结。\n预览：一张图片，可以识别文字、总结或发到飞书。",
+    "mode": "drop",
+    "surface": "desktop_pet",
+    "intent": "summarize",
+    "attachments": [
+      {
+        "type": "image",
+        "name": "拖入的图片",
+        "mime_type": "image/png",
+        "encoding": "base64",
+        "data": "iVBORw0KGgo...",
+        "source": "drop"
+      }
+    ]
   }
 }
 ```
@@ -588,9 +699,9 @@ Card
 - 默认只连接本机地址。
 - 自定义后端应被视为受信任后端。
 - MiniPet 不直接执行业务 API。
-- 文件拖拽只传路径和元信息。
+- 普通文件拖拽只传路径和元信息；图片拖拽会作为 base64 附件发送给后端。
 - 高风险业务动作必须通过卡片清楚展示，并由用户点击确认按钮。
-- 屏幕截图、选中文本、窗口标题等敏感上下文不属于外置后端默认协议。
+- 屏幕截图、选中文本、窗口标题等敏感上下文不属于外置后端默认协议；只有用户主动发起的图片或开启语音看屏时的截图会进入 `attachments`。
 
 ## 11. Python 调用示例
 

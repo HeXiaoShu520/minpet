@@ -1,6 +1,9 @@
 # coding:utf-8
 """回复卡片顶层窗口的公共交互和动画。"""
 
+import ctypes
+import sys
+
 from PySide6.QtCore import QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, QPoint, Qt, Signal
 from PySide6.QtWidgets import QFrame
 
@@ -12,6 +15,7 @@ class ReplyCardWindow(QFrame):
     """带拖拽、右键打断和进出动画的透明置顶回复卡片窗口。"""
 
     closed = Signal(str)
+    interrupted = Signal(str)
 
     def __init__(self, card_id, parent=None, fade_in=False, initial_opacity=0.0):
         super().__init__(parent)
@@ -28,11 +32,23 @@ class ReplyCardWindow(QFrame):
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setWindowOpacity(initial_opacity)
 
+    def _ensure_topmost(self):
+        self.raise_()
+        if sys.platform != 'win32':
+            return
+        try:
+            hwnd = int(self.winId())
+            flags = 0x0001 | 0x0002 | 0x0010 | 0x0040  # NOMOVE | NOSIZE | NOACTIVATE | SHOWWINDOW
+            ctypes.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, flags)
+        except Exception:
+            pass
+
     def animate_in(self, end_pos):
         if self.anim_group is not None:
             self.anim_group.stop()
         self.move(end_pos + CARD_ENTER_OFFSET)
         self.show()
+        self._ensure_topmost()
         pos_anim = QPropertyAnimation(self, b'pos', self)
         pos_anim.setDuration(CARD_ANIM_IN_MS)
         pos_anim.setStartValue(self.pos())
@@ -48,6 +64,7 @@ class ReplyCardWindow(QFrame):
             self.anim_group.addAnimation(opacity_anim)
         else:
             self.setWindowOpacity(1.0)
+        self.anim_group.finished.connect(self._ensure_topmost)
         self.anim_group.start()
 
     def animate_to(self, end_pos):
@@ -62,6 +79,7 @@ class ReplyCardWindow(QFrame):
         pos_anim.setEasingCurve(QEasingCurve.OutCubic)
         self.anim_group = QParallelAnimationGroup(self)
         self.anim_group.addAnimation(pos_anim)
+        self.anim_group.finished.connect(self._ensure_topmost)
         self.anim_group.start()
 
     def request_close(self):
@@ -82,6 +100,7 @@ class ReplyCardWindow(QFrame):
             self.drag_window_pos = self.pos()
             if self.anim_group is not None:
                 self.anim_group.stop()
+            self._ensure_topmost()
             timer = getattr(self, 'timer', None)
             if timer is not None:
                 timer.stop()
@@ -106,6 +125,7 @@ class ReplyCardWindow(QFrame):
 
     def _interrupt(self):
         stop_tts()
+        self.interrupted.emit(self.card_id)
         self.request_close()
 
     def _before_request_close(self):
