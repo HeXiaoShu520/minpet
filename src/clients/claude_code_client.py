@@ -24,6 +24,7 @@ class ClaudeCodeSession(QThread):
     result_ready = Signal(str)
     error_ready = Signal(str)
     stopped = Signal()
+    process_ready = Signal()
     session_ready = Signal(str)
     session_mode_mismatch = Signal(str)
 
@@ -37,6 +38,7 @@ class ClaudeCodeSession(QThread):
         self._buffer = ''
         self._write_queue = queue.Queue()
         self._write_thread_started = False
+        self._process_ready_emitted = False
         self._session_ready_emitted = False
         self._mode_mismatch_emitted = False
 
@@ -210,7 +212,9 @@ class ClaudeCodeSession(QThread):
                         'content': [{'type': 'text', 'text': text}],
                     },
                 }
-                self._proc.stdin.write(json.dumps(event, ensure_ascii=False) + '\n')
+                payload = json.dumps(event, ensure_ascii=False)
+                print('[Claude Code stdin]', payload, flush=True)
+                self._proc.stdin.write(payload + '\n')
                 self._proc.stdin.flush()
             except Exception as exc:
                 if not self._stopping:
@@ -224,6 +228,7 @@ class ClaudeCodeSession(QThread):
             line = self._proc.stdout.readline()
             if not line:
                 break
+            print('[Claude Code stdout]', line.rstrip(), flush=True)
             self._handle_json_line(line)
 
     def _read_stderr_loop(self):
@@ -235,6 +240,7 @@ class ClaudeCodeSession(QThread):
             text = ANSI_RE.sub('', line or '').strip()
             if not text:
                 continue
+            print('[Claude Code stderr]', text, flush=True)
             if self._handle_mode_mismatch(text):
                 continue
             self.error_ready.emit(text)
@@ -250,6 +256,9 @@ class ClaudeCodeSession(QThread):
             return
 
         event_type = event.get('type', '')
+        if event_type == 'system' and event.get('subtype') == 'init' and not self._process_ready_emitted:
+            self._process_ready_emitted = True
+            self.process_ready.emit()
         if event_type == 'stream_event' and isinstance(event.get('event'), dict):
             event = event.get('event')
             event_type = event.get('type', '')

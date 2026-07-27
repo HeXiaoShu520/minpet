@@ -704,6 +704,7 @@ class MiniPetApp(QApplication):
         known_sessions = config.app_config.get('claude_code_known_sessions') or []
         resume = force_mode == 'resume' or (force_mode is None and session_id in known_sessions)
         self.claude_code_session = ClaudeCodeSession(str(project_dir), reset_token=reset_token, resume=resume, parent=self)
+        self.claude_code_session.process_ready.connect(self._on_claude_code_process_ready)
         self.claude_code_session.output_ready.connect(self._on_claude_code_output)
         self.claude_code_session.result_ready.connect(self._on_claude_code_result)
         self.claude_code_session.error_ready.connect(self._on_claude_code_error)
@@ -727,13 +728,19 @@ class MiniPetApp(QApplication):
             return False
         if self.claude_code_starting:
             self._pending_claude_code_text = prompt
-            QTimer.singleShot(250, self._flush_pending_claude_code_text)
             return True
         self._show_reply_card('已发送给 Claude Code，等待输出...', status='streaming', timeout_ms=60000)
         sent = self.claude_code_session.send(prompt)
         if sent:
             QTimer.singleShot(6000, self._warn_if_claude_code_silent)
         return sent
+
+    def _on_claude_code_process_ready(self):
+        if self.sender() is not self.claude_code_session:
+            return
+        self.claude_code_starting = False
+        if self._pending_claude_code_text:
+            QTimer.singleShot(0, self._flush_pending_claude_code_text)
 
     def _flush_pending_claude_code_text(self):
         text = self._pending_claude_code_text
@@ -799,8 +806,7 @@ class MiniPetApp(QApplication):
     def _restart_claude_code_mode(self, mode):
         if not self._pending_claude_code_text or self._agent_backend() != 'claude_code':
             return
-        if self._ensure_claude_code_session(force_mode=mode):
-            QTimer.singleShot(250, self._flush_pending_claude_code_text)
+        self._ensure_claude_code_session(force_mode=mode)
 
     def _on_claude_code_error(self, text):
         self.claude_code_starting = False
