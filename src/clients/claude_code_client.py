@@ -24,16 +24,21 @@ class ClaudeCodeSession(QThread):
     result_ready = Signal(str)
     error_ready = Signal(str)
     stopped = Signal()
+    session_ready = Signal(str)
+    session_mode_mismatch = Signal(str)
 
-    def __init__(self, project_dir, reset_token=0, parent=None):
+    def __init__(self, project_dir, reset_token=0, resume=False, parent=None):
         super().__init__(parent)
         self.project_dir = project_dir
         self.session_id = self._session_id_for_project(project_dir, reset_token)
+        self.resume = bool(resume)
         self._proc = None
         self._stopping = False
         self._buffer = ''
         self._write_queue = queue.Queue()
         self._write_thread_started = False
+        self._session_ready_emitted = False
+        self._mode_mismatch_emitted = False
 
     @staticmethod
     def _session_id_for_project(project_dir, reset_token=0):
@@ -165,7 +170,7 @@ class ClaudeCodeSession(QThread):
                 pass
 
     def _command(self):
-        return [
+        command = [
             'claude',
             '--print',
             '--verbose',
@@ -174,8 +179,12 @@ class ClaudeCodeSession(QThread):
             '--include-partial-messages',
             '--replay-user-messages',
             '--permission-mode', 'auto',
-            '--session-id', self.session_id,
         ]
+        if self.resume:
+            command.extend(['--resume', self.session_id])
+        else:
+            command.extend(['--session-id', self.session_id])
+        return command
 
     def _start_write_thread(self):
         threading.Thread(target=self._write_loop, daemon=True).start()
@@ -224,8 +233,11 @@ class ClaudeCodeSession(QThread):
             if not line:
                 break
             text = ANSI_RE.sub('', line or '').strip()
-            if text:
-                self.error_ready.emit(text)
+            if not text:
+                continue
+            if self._handle_mode_mismatch(text):
+                continue
+            self.error_ready.emit(text)
 
     def _handle_json_line(self, line):
         line = (line or '').strip()
@@ -242,12 +254,32 @@ class ClaudeCodeSession(QThread):
             event = event.get('event')
             event_type = event.get('type', '')
         if event_type == 'error':
-            self.error_ready.emit(self._event_error_text(event) or 'Claude Code 调用失败。')
+            text = self._event_error_text(event) or 'Claude Code 调用失败。'
+            if not self._handle_mode_mismatch(text):
+                self.error_ready.emit(text)
             return
+
+        if event_type in ('system', 'result', 'stream_event') and not self._session_ready_emitted:
+            self._session_ready_emitted = True
+            self.session_ready.emit(self.session_id)
 
         text = self._event_text(event)
         if text:
             self._append_output(text)
+
+    def _handle_mode_mismatch(self, text):
+        if self._mode_mismatch_emitted:
+            return True
+        normalized = str(text or '').lower()
+        if not self.resume and 'session id' in normalized and 'already in use' in normalized:
+            mode = 'resume'
+        elif self.resume and ('no conversation found' in normalized or 'session not found' in normalized or 'could not find session' in normalized):
+            mode = 'new'
+        else:
+            return False
+        self._mode_mismatch_emitted = True
+        self.session_mode_mismatch.emit(mode)
+        return True
 
     def _event_error_text(self, event):
         error = event.get('error')

@@ -25,7 +25,7 @@ MiniPet 的桌宠输入不是一次性任务，而是连续聊天式输入。因
 
 ### 启动命令
 
-MiniPet 只保留 Claude Code 的 `stream-json` 子进程方式：
+MiniPet 只保留 Claude Code 的 `stream-json` 子进程方式。首次创建会话时使用：
 
 ```bash
 claude --print \
@@ -37,6 +37,21 @@ claude --print \
   --permission-mode auto \
   --session-id <由项目路径生成的固定 UUID>
 ```
+
+同一个会话在 MiniPet 重启后使用：
+
+```bash
+claude --print \
+  --verbose \
+  --input-format stream-json \
+  --output-format stream-json \
+  --include-partial-messages \
+  --replay-user-messages \
+  --permission-mode auto \
+  --resume <固定 UUID>
+```
+
+`--resume` 只恢复原会话，不使用 `--fork-session`，不会生成分叉会话。
 
 ### 关键参数含义
 
@@ -55,7 +70,9 @@ claude --print \
 - `--permission-mode auto`
   - 让 CLI 以自动权限模式运行
 - `--session-id ...`
-  - 用于把同一个项目目录映射到同一个 Claude Code 会话
+  - 首次创建固定 ID 的 Claude Code 会话
+- `--resume ...`
+  - 后续启动时恢复该固定 ID 的已有会话
 
 ### 会话 ID 生成
 
@@ -70,6 +87,16 @@ session_id = UUID(sha256(project_dir + reset_token).前 16 字节)
 - 项目目录相同、reset token 相同 → session id 相同
 - 用户点击“重置会话” → reset token 加 1 → session id 改变
 - 同一项目目录重启 MiniPet → 仍会复用相同会话上下文
+
+MiniPet 会把已经成功创建的 ID 记录在 `claude_code_known_sessions`：
+
+- ID 不在列表中 → 使用 `--session-id` 创建
+- ID 已在列表中 → 使用 `--resume` 恢复
+- 创建成功后 → 把 ID 写入列表
+- `--session-id` 报 ID 已存在 → 自动记为已知并改用 `--resume`
+- `--resume` 报找不到会话 → 自动移除标记并改用 `--session-id`
+
+这个标记只负责判断“创建还是恢复”，真正的聊天上下文仍由 Claude Code 自己保存。
 
 ### 输入格式
 

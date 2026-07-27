@@ -686,7 +686,7 @@ class MiniPetApp(QApplication):
     def _claude_code_project_dir(self):
         return Path(config.app_config.get('claude_code_project_dir') or config.ROOT_DIR)
 
-    def _ensure_claude_code_session(self):
+    def _ensure_claude_code_session(self, force_mode=None):
         if self.claude_code_session is not None and self.claude_code_session.isRunning():
             return True
         project_dir = self._claude_code_project_dir()
@@ -696,13 +696,19 @@ class MiniPetApp(QApplication):
         self.claude_code_starting = True
         self.claude_code_received_output = False
         reset_token = config.app_config.get('claude_code_reset_token', 0)
-        self.claude_code_session = ClaudeCodeSession(str(project_dir), reset_token=reset_token, parent=self)
+        session_id = ClaudeCodeSession._session_id_for_project(str(project_dir), reset_token)
+        known_sessions = config.app_config.get('claude_code_known_sessions') or []
+        resume = force_mode == 'resume' or (force_mode is None and session_id in known_sessions)
+        self.claude_code_session = ClaudeCodeSession(str(project_dir), reset_token=reset_token, resume=resume, parent=self)
         self.claude_code_session.output_ready.connect(self._on_claude_code_output)
         self.claude_code_session.result_ready.connect(self._on_claude_code_result)
         self.claude_code_session.error_ready.connect(self._on_claude_code_error)
+        self.claude_code_session.session_ready.connect(self._on_claude_code_session_ready)
+        self.claude_code_session.session_mode_mismatch.connect(self._on_claude_code_mode_mismatch)
         self.claude_code_session.stopped.connect(self._on_claude_code_stopped)
         self.claude_code_session.start()
-        self._show_reply_card('正在启动 Claude Code：%s' % project_dir, status='streaming', timeout_ms=60000)
+        action = '恢复' if resume else '创建'
+        self._show_reply_card('正在%s Claude Code 会话：%s' % (action, project_dir), status='streaming', timeout_ms=60000)
         return True
 
     def _send_claude_code_prompt(self, content, mode='text'):
@@ -749,7 +755,6 @@ class MiniPetApp(QApplication):
         shown = (text or 'Claude Code 正在处理...').strip()
         self._quick_stream_text = shown
         self._show_reply_card(shown, status='streaming', timeout_ms=60000)
-        self.quick_stream_tts.queue_text('claude-code-reply', shown, terminal=False)
 
     def _on_claude_code_result(self, text):
         self.claude_code_starting = False
@@ -759,6 +764,39 @@ class MiniPetApp(QApplication):
         self._show_reply_card(reply, status='done', timeout_ms=max(5000, min(25000, len(reply) * 180)))
         self.quick_stream_tts.queue_text('claude-code-reply', reply, terminal=True)
         self._finish_quick_voice_if_tts_idle()
+
+    def _on_claude_code_session_ready(self, session_id):
+        known_sessions = list(config.app_config.get('claude_code_known_sessions') or [])
+        if session_id in known_sessions:
+            return
+        known_sessions.append(session_id)
+        config.app_config['claude_code_known_sessions'] = known_sessions[-50:]
+        config.save_app_config()
+
+    def _on_claude_code_mode_mismatch(self, mode):
+        session = self.sender()
+        if session is not self.claude_code_session:
+            return
+        session_id = session.session_id
+        known_sessions = list(config.app_config.get('claude_code_known_sessions') or [])
+        if mode == 'resume' and session_id not in known_sessions:
+            known_sessions.append(session_id)
+        elif mode == 'new' and session_id in known_sessions:
+            known_sessions.remove(session_id)
+        config.app_config['claude_code_known_sessions'] = known_sessions[-50:]
+        config.save_app_config()
+        self.claude_code_session = None
+        session.stop()
+        session.wait(2500)
+        if self._pending_claude_code_text:
+            self.claude_code_starting = True
+            QTimer.singleShot(0, lambda: self._restart_claude_code_mode(mode))
+
+    def _restart_claude_code_mode(self, mode):
+        if not self._pending_claude_code_text or self._agent_backend() != 'claude_code':
+            return
+        if self._ensure_claude_code_session(force_mode=mode):
+            QTimer.singleShot(250, self._flush_pending_claude_code_text)
 
     def _on_claude_code_error(self, text):
         self.claude_code_starting = False

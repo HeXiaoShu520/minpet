@@ -42,7 +42,7 @@ claude --help
 - 智能体模式：`连接 Claude Code`
 - 项目目录：选择 Claude Code 需要操作的项目目录
 
-MiniPet 会在该目录下启动 Claude Code 子进程。首次发送前会先尝试清理当前 MiniPet 自己启动的同 session 残留进程，避免新会话被旧会话占用。连接方式固定使用 Claude Code 的机器流接口：
+MiniPet 会在该目录下启动 Claude Code 子进程。首次发送前会先尝试清理当前 MiniPet 自己启动的同 session 残留进程，避免新会话被旧会话占用。首次创建会话时使用 Claude Code 的机器流接口：
 
 ```bash
 claude --print \
@@ -54,6 +54,21 @@ claude --print \
   --permission-mode auto \
   --session-id <由项目路径生成的固定 UUID>
 ```
+
+会话创建成功后，MiniPet 会持久化记录该 ID。下次启动同一项目会改用：
+
+```bash
+claude --print \
+  --verbose \
+  --input-format stream-json \
+  --output-format stream-json \
+  --include-partial-messages \
+  --replay-user-messages \
+  --permission-mode auto \
+  --resume <相同的固定 UUID>
+```
+
+这只是恢复原会话，不使用 `--fork-session`。如果首次/后续标记与 Claude Code 的本地会话记录不一致，MiniPet 会根据“ID 已存在”或“找不到会话”错误在 `--session-id` 和 `--resume` 之间自动纠正一次。
 
 同一个会话 ID 同一时间只能被一个 Claude Code 进程占用。MiniPet 在切换后端或退出程序时会停止当前 Claude Code 子进程并等待释放；如果外部还有其他 Claude Code 进程占用同一个 ID，需要先关闭那个进程再重新发送。
 

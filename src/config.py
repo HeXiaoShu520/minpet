@@ -56,6 +56,7 @@ DEFAULT_APP_CONFIG = {
     'custom_agent_ws_url': CUSTOM_AGENT_WS_DEFAULT,
     'claude_code_project_dir': str(ROOT_DIR),
     'claude_code_reset_token': 0,
+    'claude_code_known_sessions': [],
     'codex_project_dir': str(ROOT_DIR),
     'reply_card_style': 'aurora',
     'voice_orb_style': 'jade',
