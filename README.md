@@ -23,7 +23,7 @@ MiniPet 提供多种智能体模式：
 | 连接 OpenClaw 网关 | 直接请求 OpenClaw Gateway 的 HTTP Responses API，不经过额外中转端口。使用前需要开启 OpenClaw 的 Responses HTTP API。 |
 | 连接 MiniPet 协议后端 | 连接 miniClaw 或其他按 MiniPet 通用协议实现的 WebSocket 后端。快速接入教程见 [minipet交互协议设计.md](minipet交互协议设计.md)。 |
 | 连接 Claude Code | 启动本地 Claude Code CLI 的 `stream-json` 子进程，把桌宠输入作为同一项目会话的连续聊天发送给 Claude Code。 |
-| 连接 Codex | 启动本地 Codex CLI 会话，把桌宠输入转交给 Codex。 |
+| 连接 Codex | 使用本地 Codex CLI 的 JSONL 接口；首次创建 thread，后续每轮恢复同一 thread，支持连续聊天和重启后续聊。 |
 
 使用 OpenClaw 网关、MiniPet 协议后端、Claude Code 或 Codex 时，MiniPet 只把当前输入转交给对应后端并显示返回内容，不记录本地对话历史。
 
@@ -98,6 +98,24 @@ MiniPet 发给 Claude Code 的最小输入事件为一行 JSON：
 ```
 
 Claude Code 输出中的 `stream_event.content_block_delta` 用于流式更新回复卡片，最终 `result` 事件用于结束卡片状态并触发 TTS 收尾。
+
+## 连接 Codex
+
+MiniPet 使用 Codex CLI 的非交互 JSONL 接口。首次消息执行：
+
+```bash
+codex exec --json --cd <项目目录> -
+```
+
+MiniPet 从 `thread.started` 事件保存 Codex 返回的 thread ID。后续消息以及 MiniPet 重启后的消息执行：
+
+```bash
+codex exec resume <thread_id> --json -
+```
+
+Codex 每轮都是一个短进程，不使用交互式 TUI、winpty、`--ephemeral` 或 fork；上下文由持久化的 Codex thread 恢复。设置页提供“重置会话”，重置后下一条消息会创建新 thread。
+
+`item.completed` 中的最终 agent message 用于更新回复卡片，`turn.completed` 用于结束卡片并触发最终 TTS。命令、工具日志和普通诊断输出不会作为最终语音播报。详细说明见 [Claude Code / Codex 调用桥接说明](docs/claude_codex_bridge.md)。
 
 ## 连接 OpenClaw
 

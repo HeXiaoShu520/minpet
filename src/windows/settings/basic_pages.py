@@ -260,6 +260,12 @@ class AgentPage(MiniPetScrollPage):
         self.codexBrowseCard.hBoxLayout.addWidget(self.codexBrowseBtn, 0, Qt.AlignRight)
         self.codexBrowseCard.hBoxLayout.addSpacing(16)
         self.codexBrowseBtn.clicked.connect(self._choose_codex_dir)
+        self.codexResetCard = SettingCard(FIF.DELETE, '重置会话', '结束当前 Codex 会话，下次会创建新的会话', self.codexGroup)
+        self.codexResetBtn = PrimaryPushButton('重置', self.codexResetCard)
+        self.codexResetCard.hBoxLayout.addStretch(1)
+        self.codexResetCard.hBoxLayout.addWidget(self.codexResetBtn, 0, Qt.AlignRight)
+        self.codexResetCard.hBoxLayout.addSpacing(16)
+        self.codexResetBtn.clicked.connect(self._reset_codex_session)
 
         self.builtinGroup = SettingCardGroup('内置大模型设置', self.scrollWidget)
         self.apiBaseCard = LineEditSettingCard(FIF.GLOBE, 'API 地址', 'OpenAI 兼容接口地址，例如 https://api.openai.com/v1', placeholder='https://api.openai.com/v1', parent=self.builtinGroup)
@@ -284,7 +290,7 @@ class AgentPage(MiniPetScrollPage):
             self.customGroup.addSettingCard(card)
         for card in [self.claudeCodeDirCard, self.claudeCodeBrowseCard, self.claudeCodeResetCard]:
             self.claudeCodeGroup.addSettingCard(card)
-        for card in [self.codexDirCard, self.codexBrowseCard]:
+        for card in [self.codexDirCard, self.codexBrowseCard, self.codexResetCard]:
             self.codexGroup.addSettingCard(card)
         for card in [self.apiBaseCard, self.apiKeyCard, self.modelCard, self.memoryTurnsCard, self.actionCard]:
             self.builtinGroup.addSettingCard(card)
@@ -322,6 +328,12 @@ class AgentPage(MiniPetScrollPage):
         config.app_config['claude_code_reset_token'] = int(config.app_config.get('claude_code_reset_token') or 0) + 1
         config.save_app_config()
         InfoBar.success('已重置', '下次发送消息会启动新的 Claude Code 会话', duration=2500, position=InfoBarPosition.BOTTOM, parent=self.window())
+        self.settings_changed.emit()
+
+    def _reset_codex_session(self):
+        config.app_config['codex_reset_token'] = int(config.app_config.get('codex_reset_token') or 0) + 1
+        config.save_app_config()
+        InfoBar.success('已重置', '下次发送消息会创建新的 Codex 会话', duration=2500, position=InfoBarPosition.BOTTOM, parent=self.window())
         self.settings_changed.emit()
 
     def _openclaw_session_key(self):

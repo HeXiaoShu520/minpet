@@ -1,5 +1,5 @@
 # coding:utf-8
-"""Codex 本地会话桥接。"""
+"""Codex JSONL 本地连续会话桥接。"""
 
 import json
 import os
@@ -8,6 +8,7 @@ import re
 import shutil
 import signal
 import subprocess
+import threading
 
 from PySide6.QtCore import QThread, Signal
 
@@ -20,28 +21,38 @@ class CodexSession(QThread):
     output_ready = Signal(str)
     result_ready = Signal(str)
     error_ready = Signal(str)
+    thread_ready = Signal(str)
+    thread_invalidated = Signal(str)
     stopped = Signal()
 
-    def __init__(self, project_dir, parent=None):
+    def __init__(self, project_dir, reset_token=0, thread_id='', parent=None):
         super().__init__(parent)
         self.project_dir = project_dir
+        self.reset_token = int(reset_token or 0)
+        self.thread_id = str(thread_id or '').strip()
+        self._proc = None
+        self._proc_lock = threading.Lock()
         self._stopping = False
         self._buffer = ''
         self._write_queue = queue.Queue()
+        self._turn_final_text = ''
+        self._turn_completed = False
+        self._turn_error = ''
 
     def send(self, text):
         text = (text or '').strip()
-        if not text:
+        if not text or self._stopping:
             return False
         self._write_queue.put(text)
         return True
 
     def interrupt(self):
-        self.stop()
+        self._terminate_active_process()
 
     def stop(self):
         self._stopping = True
         self._write_queue.put(None)
+        self._terminate_active_process()
 
     def run(self):
         if not shutil.which('codex'):
@@ -57,27 +68,31 @@ class CodexSession(QThread):
                     continue
                 if prompt is None:
                     break
-                self._buffer = ''
-                self._run_exec_prompt(prompt)
+                self._run_prompt(prompt, allow_new_retry=True)
         except Exception as exc:
             if not self._stopping:
                 self.error_ready.emit('Codex 会话异常：%s' % exc)
         finally:
+            self._terminate_active_process()
             self.stopped.emit()
 
-    def _run_exec_prompt(self, prompt):
-        command = [
-            'codex',
-            'exec',
-            '--json',
-            '--ephemeral',
-            '--cd', self.project_dir,
-            '-',
-        ]
+    def _command(self, resume):
+        if resume:
+            return ['codex', 'exec', 'resume', self.thread_id, '--json', '-']
+        return ['codex', 'exec', '--json', '--cd', self.project_dir, '-']
+
+    def _run_prompt(self, prompt, allow_new_retry):
+        resume = bool(self.thread_id)
+        self._buffer = ''
+        self._turn_final_text = ''
+        self._turn_completed = False
+        self._turn_error = ''
         proc = None
+        stderr_text = ''
         try:
             proc = subprocess.Popen(
-                command,
+                self._command(resume),
+                cwd=self.project_dir,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -87,6 +102,8 @@ class CodexSession(QThread):
                 bufsize=1,
                 creationflags=getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0),
             )
+            with self._proc_lock:
+                self._proc = proc
             try:
                 proc.stdin.write(prompt + '\n')
                 proc.stdin.flush()
@@ -100,28 +117,128 @@ class CodexSession(QThread):
                     break
                 self._handle_json_line(line)
 
-            stderr_text = ''
+            if proc.poll() is None:
+                proc.wait(timeout=3)
             if proc.stderr is not None:
-                try:
-                    stderr_text = proc.stderr.read() or ''
-                except Exception:
-                    stderr_text = ''
-            if proc.poll() not in (0, None):
-                text = ANSI_RE.sub('', stderr_text).strip()
-                if text:
-                    self.error_ready.emit(text)
+                stderr_text = proc.stderr.read() or ''
+        except subprocess.TimeoutExpired:
+            self._terminate_process(proc)
         except Exception as exc:
             if not self._stopping:
                 self.error_ready.emit('Codex 执行失败：%s' % exc)
+            return
         finally:
-            if proc is not None:
-                try:
-                    if proc.poll() is None:
-                        self._terminate_process(proc)
-                except Exception:
-                    pass
+            with self._proc_lock:
+                if self._proc is proc:
+                    self._proc = None
+
+        if self._stopping:
+            return
+        error_text = self._turn_error or ANSI_RE.sub('', stderr_text).strip()
+        if resume and allow_new_retry and self._resume_target_missing(error_text):
+            old_thread_id = self.thread_id
+            self.thread_id = ''
+            self.thread_invalidated.emit(old_thread_id)
+            self._run_prompt(prompt, allow_new_retry=False)
+            return
+        if error_text and proc is not None and proc.returncode not in (0, None):
+            self.error_ready.emit(error_text)
+            return
+        if not self._turn_completed:
+            if self._turn_final_text:
+                self.result_ready.emit(self._turn_final_text)
+            elif proc is not None and proc.returncode not in (0, None):
+                self.error_ready.emit(error_text or 'Codex 调用失败。')
+
+    def _handle_json_line(self, line):
+        line = (line or '').strip()
+        if not line:
+            return
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            self._append_output(line)
+            return
+        if not isinstance(event, dict):
+            return
+
+        event_type = str(event.get('type') or event.get('event_type') or '')
+        if event_type == 'thread.started':
+            thread_id = str(event.get('thread_id') or '').strip()
+            if thread_id:
+                self.thread_id = thread_id
+                self.thread_ready.emit(thread_id)
+            return
+
+        if event_type == 'item.completed':
+            item = event.get('item') or {}
+            if isinstance(item, dict) and item.get('type') == 'agent_message':
+                text = str(item.get('text') or '').strip()
+                if text:
+                    self._turn_final_text = text
+                    self._set_output(text)
+            return
+
+        if event_type == 'turn.completed':
+            self._turn_completed = True
+            if self._turn_final_text:
+                self.result_ready.emit(self._turn_final_text)
+            else:
+                self.error_ready.emit('Codex 没有返回文本。')
+            return
+
+        if event_type in ('error', 'fatal', 'turn.failed'):
+            self._turn_error = self._error_text(event) or 'Codex 调用失败。'
+
+    def _error_text(self, event):
+        error = event.get('error')
+        if isinstance(error, dict):
+            return str(error.get('message') or error.get('type') or '').strip()
+        if isinstance(error, str):
+            return error.strip()
+        message = event.get('message')
+        if isinstance(message, str):
+            return message.strip()
+        return ''
+
+    def _resume_target_missing(self, text):
+        text = str(text or '').lower()
+        if not text:
+            return False
+        target = 'thread' in text or 'session' in text or 'conversation' in text
+        missing = any(marker in text for marker in (
+            'not found',
+            'no thread',
+            'no session',
+            'no conversation',
+            'unknown thread',
+            'unknown session',
+            'failed to find',
+            'failed to load',
+            'failed to resume',
+        ))
+        return target and missing
+
+    def _set_output(self, text):
+        self._buffer = ANSI_RE.sub('', text or '')[-MAX_OUTPUT_CHARS:]
+        if self._buffer:
+            self.output_ready.emit(self._buffer.strip())
+
+    def _append_output(self, text):
+        text = ANSI_RE.sub('', text or '')
+        if not text:
+            return
+        self._buffer = (self._buffer + text)[-MAX_OUTPUT_CHARS:]
+        self.output_ready.emit(self._buffer.strip())
+
+    def _terminate_active_process(self):
+        with self._proc_lock:
+            proc = self._proc
+        self._terminate_process(proc)
 
     def _terminate_process(self, proc):
+        if proc is None:
+            return
         try:
             if proc.stdin is not None:
                 try:
@@ -147,90 +264,6 @@ class CodexSession(QThread):
                         proc.wait(timeout=2)
                     except subprocess.TimeoutExpired:
                         proc.kill()
+                        proc.wait(timeout=2)
         except Exception:
             pass
-
-    def _handle_json_line(self, line):
-        line = (line or '').strip()
-        if not line:
-            return
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            self._append_output(line)
-            return
-
-        if isinstance(event, dict) and 'event' in event and isinstance(event['event'], dict):
-            event = event['event']
-
-        event_type = str(event.get('type') or event.get('event_type') or '')
-        if event_type in ('error', 'fatal'):
-            self.error_ready.emit(self._event_text(event) or 'Codex 调用失败。')
-            return
-
-        if event_type in ('result', 'final', 'done', 'completed'):
-            text = self._event_text(event)
-            if text:
-                self.result_ready.emit(text)
-            return
-
-        text = self._event_text(event)
-        if text:
-            self._append_output(text)
-
-    def _event_text(self, event):
-        if not isinstance(event, dict):
-            return ''
-
-        for key in ('text', 'content', 'message', 'output_text', 'result'):
-            value = event.get(key)
-            if isinstance(value, str) and value.strip():
-                return value
-
-        delta = event.get('delta')
-        if isinstance(delta, dict):
-            for key in ('text', 'content', 'message', 'output_text'):
-                value = delta.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value
-
-        content = event.get('content')
-        if isinstance(content, list):
-            parts = []
-            for block in content:
-                if isinstance(block, str):
-                    parts.append(block)
-                elif isinstance(block, dict):
-                    for key in ('text', 'content', 'result'):
-                        value = block.get(key)
-                        if isinstance(value, str):
-                            parts.append(value)
-                            break
-            return ''.join(parts).strip()
-
-        message = event.get('message')
-        if isinstance(message, dict):
-            content = message.get('content')
-            if isinstance(content, str):
-                return content
-            if isinstance(content, list):
-                parts = []
-                for block in content:
-                    if isinstance(block, str):
-                        parts.append(block)
-                    elif isinstance(block, dict):
-                        for key in ('text', 'content', 'result'):
-                            value = block.get(key)
-                            if isinstance(value, str):
-                                parts.append(value)
-                                break
-                return ''.join(parts).strip()
-
-        return ''
-
-    def _append_output(self, text):
-        text = ANSI_RE.sub('', text or '')
-        if not text:
-            return
-        self._buffer = (self._buffer + text)[-MAX_OUTPUT_CHARS:]
-        self.output_ready.emit(self._buffer.strip())

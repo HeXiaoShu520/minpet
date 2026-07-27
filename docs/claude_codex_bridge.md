@@ -155,60 +155,63 @@ Claude Code 这条桥接仍是“单会话单进程”模型：
 
 ### 启动命令
 
-Codex 这边不再走交互式 TUI / winpty，而是使用非交互 `exec`：
+Codex 不走交互式 TUI / winpty，而是每轮使用一个短生命周期的非交互 `exec` 子进程。首次消息创建持久化 thread：
 
 ```bash
 codex exec \
   --json \
-  --ephemeral \
   --cd <项目目录> \
   -
 ```
 
-### 参数含义
+MiniPet 从输出的 `thread.started.thread_id` 保存 Codex 实际生成的 thread ID。后续消息和 MiniPet 重启后的消息恢复该 thread：
 
-- `exec`
-  - 非交互执行一次任务
-- `--json`
-  - stdout 输出 JSONL 事件，方便 MiniPet 解析
-- `--ephemeral`
-  - 不持久化会话文件，避免占用和恢复混乱
-- `--cd <项目目录>`
-  - 指定 Codex 运行目录
-- `-`
-  - 从 stdin 读取 prompt
+```bash
+codex exec resume <thread_id> \
+  --json \
+  -
+```
+
+不使用 `--ephemeral`，否则 Codex 不会保存可恢复会话；也不使用 fork。
+
+### Thread 持久化与重置
+
+thread ID 按“规范化项目路径 + `codex_reset_token`”保存在 MiniPet 设置中：
+
+- 没有 thread ID → 普通 `codex exec` 创建
+- 有 thread ID → `codex exec resume <thread_id>` 恢复
+- 收到 `thread.started` → 写入或更新 ID
+- resume 明确返回 thread/session 不存在 → 删除旧 ID，对同一个 prompt 普通创建重试一次
+- 认证、权限、参数或网络错误 → 不错误地回退创建
+- 点击设置页“重置会话” → token 加 1，下一条消息创建新 thread
 
 ### 输入方式
 
-MiniPet 把用户输入直接写入 Codex 子进程 stdin：
-
-```text
-用户输入
-→ codex exec stdin
-```
+MiniPet 把每轮用户输入写入该轮 Codex 子进程 stdin，随后关闭 stdin 并读取 JSONL stdout。多条消息在本地队列中串行处理，不会并发恢复同一个 thread。
 
 ### 输出解析
 
-Codex 侧会尽量解析 JSONL 事件：
+主要事件：
 
-- 普通文本行 → 当作流式输出
-- JSON 事件里的文本字段 → 当作流式或最终输出
-- `result / final / done / completed` 类事件 → 当作最终结果
+- `thread.started`：提取并持久化 `thread_id`
+- `item.completed` 且 `item.type == agent_message`：提取最终回答候选并更新回复卡片
+- `turn.completed`：确认本轮结束，发出最终结果
+- `error / fatal / turn.failed`：提取真实错误
+- 非 JSON stdout：只作为卡片诊断输出，不作为最终回复
+
+命令、工具和 reasoning item 不会被误当成最终回答。
 
 ### 卡片与 TTS 行为
 
-和 Claude Code 保持一致：
+- 每次输入先创建新的等待卡片
+- agent message 到达时更新 `streaming` 卡片
+- `turn.completed` 后把卡片切为 `done`
+- 流式和诊断内容不送 TTS
+- 仅最终 agent message 以 `terminal=True` 播报一次
 
-- 新输入先开启新轮次
-- 流式阶段卡片为 `streaming`
-- 最终阶段卡片为 `done`
-- TTS 在最终阶段收尾
+### 进程清理
 
-### 现状限制
-
-- Codex CLI 的 JSON 事件格式可能随版本变化
-- 如果某个版本输出不是标准 JSONL，MiniPet 会回退成普通文本追加
-- 当前实现优先保证“能稳定跑起来”，不是把所有 Codex 版本差异都吃满
+Codex 每轮进程正常完成后会被 `wait()` 回收。中断回复、切换后端、重置会话或退出 MiniPet 时，会按 CTRL_BREAK/SIGINT、terminate、kill 的顺序停止当前进程，并等待线程结束。
 
 ---
 
@@ -238,6 +241,6 @@ MiniPet 对 Claude Code 和 Codex 都遵循同一套桌宠侧状态机：
 
 ## 推荐使用方式
 
-- 如果你要的是“当前项目内连续聊天开发助手”，优先用 Claude Code
-- 如果你要的是“只跑一次、输出一次”的本地命令式助手，可以用 Codex
-- 如果你希望两者都稳定，建议始终从 MiniPet 的设置页进入，不要在外部手工同时占用同一个后端进程
+- Claude Code 和 Codex 都支持当前项目内连续聊天以及 MiniPet 重启后恢复上下文
+- Claude Code 运行中复用一个常驻 stream-json 进程；Codex 每轮启动一个短进程并 resume 同一 thread
+- 建议始终从 MiniPet 的设置页选择项目和重置会话，不要在外部同时操作 MiniPet 正在使用的同一会话

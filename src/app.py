@@ -91,6 +91,7 @@ class MiniPetApp(QApplication):
         self.codex_session = None
         self.codex_starting = False
         self.codex_received_output = False
+        self.codex_reset_token = config.app_config.get('codex_reset_token', 0)
         self._pending_codex_text = ''
         self._abandoned_reply_workers = []
         self.event_tts_worker = None
@@ -167,8 +168,11 @@ class MiniPetApp(QApplication):
         if backend != 'claude_code' or current_reset_token != self.claude_code_reset_token:
             self._stop_claude_code_session()
             self.claude_code_reset_token = current_reset_token
-        if backend != 'codex':
+        current_codex_reset_token = config.app_config.get('codex_reset_token', 0)
+        codex_dir_changed = self.codex_session is not None and self.codex_session.project_dir != str(self._codex_project_dir())
+        if backend != 'codex' or current_codex_reset_token != self.codex_reset_token or codex_dir_changed:
             self._stop_codex_session()
+            self.codex_reset_token = current_codex_reset_token
         if backend != 'openclaw' and self.openclaw_worker is not None:
             self._cancel_current_reply_workers()
         if not self.events:
@@ -831,13 +835,18 @@ class MiniPetApp(QApplication):
             return False
         self.codex_starting = True
         self.codex_received_output = False
-        self.codex_session = CodexSession(str(project_dir), parent=self)
+        reset_token = config.app_config.get('codex_reset_token', 0)
+        thread_id = config.get_codex_thread_id(project_dir, reset_token)
+        self.codex_session = CodexSession(str(project_dir), reset_token=reset_token, thread_id=thread_id, parent=self)
         self.codex_session.output_ready.connect(self._on_codex_output)
         self.codex_session.result_ready.connect(self._on_codex_result)
         self.codex_session.error_ready.connect(self._on_codex_error)
+        self.codex_session.thread_ready.connect(self._on_codex_thread_ready)
+        self.codex_session.thread_invalidated.connect(self._on_codex_thread_invalidated)
         self.codex_session.stopped.connect(self._on_codex_stopped)
         self.codex_session.start()
-        self._show_reply_card('正在启动 Codex：%s' % project_dir, status='streaming', timeout_ms=60000)
+        action = '恢复' if thread_id else '创建'
+        self._show_reply_card('正在%s Codex 会话：%s' % (action, project_dir), status='streaming', timeout_ms=60000)
         return True
 
     def _send_codex_prompt(self, content, mode='text'):
@@ -873,12 +882,30 @@ class MiniPetApp(QApplication):
         if self._agent_backend() == 'codex' and self.codex_session is not None and not self.codex_received_output:
             self._show_reply_card('Codex 已启动并收到输入，但暂时没有输出。可能是 CLI 在等待终端交互或 PATH/权限环境不完整。', status='streaming', timeout_ms=10000)
 
+    def _on_codex_thread_ready(self, thread_id):
+        session = self.sender()
+        if session is not self.codex_session:
+            return
+        if session.project_dir != str(self._codex_project_dir()) or session.reset_token != int(config.app_config.get('codex_reset_token', 0) or 0):
+            return
+        config.set_codex_thread_id(session.project_dir, session.reset_token, thread_id)
+
+    def _on_codex_thread_invalidated(self, thread_id):
+        session = self.sender()
+        if session is not self.codex_session:
+            return
+        saved = config.get_codex_thread_id(session.project_dir, session.reset_token)
+        if saved == thread_id:
+            config.set_codex_thread_id(session.project_dir, session.reset_token, '')
+
     def _on_codex_output(self, text):
         self.codex_starting = False
         self.codex_received_output = True
         if self._pending_codex_text:
             QTimer.singleShot(0, self._flush_pending_codex_text)
-        self._show_reply_card(text or 'Codex 正在处理...', status='streaming', timeout_ms=60000)
+        shown = (text or 'Codex 正在处理...').strip()
+        self._quick_stream_text = shown
+        self._show_reply_card(shown, status='streaming', timeout_ms=60000)
 
     def _on_codex_result(self, text):
         self.codex_starting = False
@@ -908,6 +935,7 @@ class MiniPetApp(QApplication):
         self._pending_codex_text = ''
         if session is not None:
             session.stop()
+            session.wait(5500)
 
     def _send_external_command(self, content, mode='text', surface='pet_popup', screenshot=''):
         if self._agent_backend() == 'openclaw':
