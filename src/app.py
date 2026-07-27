@@ -712,12 +712,14 @@ class MiniPetApp(QApplication):
         self.quick_chat_source = 'voice_chat' if mode == 'voice' else 'quick_chat'
         self._begin_reply_card_turn()
         self._reset_quick_stream_tts()
+        self.claude_code_received_output = False
         if not self._ensure_claude_code_session():
             return False
         if self.claude_code_starting:
             self._pending_claude_code_text = prompt
             QTimer.singleShot(250, self._flush_pending_claude_code_text)
             return True
+        self._show_reply_card('已发送给 Claude Code，等待输出...', status='streaming', timeout_ms=60000)
         sent = self.claude_code_session.send(prompt)
         if sent:
             QTimer.singleShot(6000, self._warn_if_claude_code_silent)
@@ -763,6 +765,9 @@ class MiniPetApp(QApplication):
         self._show_reply_card(text or 'Claude Code 调用失败。', status='failed', timeout_ms=8000)
 
     def _on_claude_code_stopped(self):
+        session = self.sender()
+        if session is not self.claude_code_session:
+            return
         self.claude_code_starting = False
         self._pending_claude_code_text = ''
         self.claude_code_session = None
@@ -804,12 +809,14 @@ class MiniPetApp(QApplication):
         self.quick_chat_source = 'voice_chat' if mode == 'voice' else 'quick_chat'
         self._begin_reply_card_turn()
         self._reset_quick_stream_tts()
+        self.codex_received_output = False
         if not self._ensure_codex_session():
             return False
         if self.codex_starting:
             self._pending_codex_text = prompt
             QTimer.singleShot(500, self._flush_pending_codex_text)
             return True
+        self._show_reply_card('已发送给 Codex，等待输出...', status='streaming', timeout_ms=60000)
         return self.codex_session.send(prompt)
 
     def _flush_pending_codex_text(self):
@@ -849,6 +856,9 @@ class MiniPetApp(QApplication):
         self._show_reply_card(text or 'Codex 调用失败。', status='failed', timeout_ms=8000)
 
     def _on_codex_stopped(self):
+        session = self.sender()
+        if session is not self.codex_session:
+            return
         self.codex_starting = False
         self._pending_codex_text = ''
         self.codex_session = None

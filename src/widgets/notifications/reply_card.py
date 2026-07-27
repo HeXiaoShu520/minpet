@@ -206,7 +206,8 @@ class ReplyCard(ReplyCardWindow):
         self._card_width = self._card_width_for_event(self.event_data)
         self._animated_width = self._card_width
         self._content_width = self._content_width_for_card(self._card_width)
-        self.setFixedWidth(self._card_width)
+        self.setMinimumWidth(REPLY_CARD_MIN_WIDTH)
+        self.resize(self._card_width, self.height())
         card = QFrame(self)
         card.setObjectName('ReplyCard')
         shell = QHBoxLayout(card)
@@ -332,7 +333,7 @@ class ReplyCard(ReplyCardWindow):
         width = self._clamped_card_width(width)
         self._animated_width = width
         self._content_width = self._content_width_for_card(width)
-        self.setFixedWidth(width)
+        self.resize(width, self.height())
         self._sync_content_widths()
         self.adjustSize()
         self._move_to_resize_anchor(anchor_center_x, anchor_bottom_y)
