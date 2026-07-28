@@ -57,9 +57,6 @@ DEFAULT_APP_CONFIG = {
     'claude_code_project_dir': str(ROOT_DIR),
     'claude_code_reset_token': 0,
     'claude_code_known_sessions': [],
-    'codex_project_dir': str(ROOT_DIR),
-    'codex_reset_token': 0,
-    'codex_thread_ids': {},
     'reply_card_style': 'aurora',
     'voice_orb_style': 'jade',
     'voice_follow_effect': 'spring',
@@ -473,6 +470,10 @@ def load():
     app_config['on_top'] = True
     app_config['allow_drop'] = True
     app_config.pop('voice_follow_level', None)
+    if app_config.get('agent_backend') == 'codex':
+        app_config['agent_backend'] = 'builtin'
+    for key in ('codex_project_dir', 'codex_reset_token', 'codex_thread_ids'):
+        app_config.pop(key, None)
 
     # 音量和缩放属于高级参数，只从环境变量/.env 读取，优先级高于 JSON。
     env_data = _parse_env_file()
@@ -504,28 +505,6 @@ def save_app_config():
     """保存基础设置到 data/minipet_settings.json。"""
     ensure_data_dir()
     SETTINGS_FILE.write_text(json.dumps(app_config, ensure_ascii=False, indent=2), encoding='utf-8')
-
-
-def codex_thread_key(project_dir, reset_token=0):
-    project_key = os.path.normcase(os.path.abspath(str(project_dir or ROOT_DIR))).replace('\\', '/')
-    return '%s#reset:%s' % (project_key, int(reset_token or 0))
-
-
-def get_codex_thread_id(project_dir, reset_token=0):
-    thread_ids = app_config.get('codex_thread_ids') or {}
-    return str(thread_ids.get(codex_thread_key(project_dir, reset_token)) or '').strip()
-
-
-def set_codex_thread_id(project_dir, reset_token, thread_id):
-    thread_ids = dict(app_config.get('codex_thread_ids') or {})
-    key = codex_thread_key(project_dir, reset_token)
-    thread_id = str(thread_id or '').strip()
-    if thread_id:
-        thread_ids[key] = thread_id
-    else:
-        thread_ids.pop(key, None)
-    app_config['codex_thread_ids'] = thread_ids
-    save_app_config()
 
 
 def save_llm_config(config):

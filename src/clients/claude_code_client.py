@@ -288,7 +288,6 @@ class ClaudeCodeSession(QThread):
             line = self._proc.stdout.readline()
             if not line:
                 break
-            print('[Claude Code stdout]', line.rstrip(), flush=True)
             self._handle_json_line(line)
 
     def _read_stderr_loop(self):

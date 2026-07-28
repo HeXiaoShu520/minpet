@@ -3,7 +3,7 @@
 
 from PySide6.QtCore import QEasingCurve, Property, QElapsedTimer, QPropertyAnimation, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap, QTextDocument
-from PySide6.QtWidgets import QApplication, QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton, QVBoxLayout
 
 import config
 from typewriter import Typewriter
@@ -18,10 +18,6 @@ REPLY_CARD_MAX_WIDTH = REPLY_CARD_WIDTH_LEVELS[-1]
 REPLY_CARD_AVATAR_SIZE = 36
 REPLY_CARD_RESIZE_ANIM_MS = 180
 REPLY_CARD_COUNTDOWN_TICK_MS = 80
-REPLY_CARD_BODY_MIN_MAX_HEIGHT = 180
-REPLY_CARD_BODY_MAX_HEIGHT = 360
-REPLY_CARD_BODY_SCREEN_RATIO = 0.42
-REPLY_CARD_SCROLL_BOTTOM_THRESHOLD = 24
 
 
 class CountdownAvatarLabel(QLabel):
@@ -160,12 +156,6 @@ def _reply_card_style_qss(style):
             QFrame#ReplyCard {{ border-radius: 22px; {card} }}
             QFrame#ReplyCardSectionBox {{ border: 1px solid rgba(222,231,255,180); border-radius: 14px; background: {box_bg}; }}
             QFrame#ReplyCardHr {{ border: none; border-top: 1px solid rgba(180,190,215,130); background: transparent; max-height: 1px; }}
-            QScrollArea#ReplyCardBodyScroll {{ border: none; background: transparent; }}
-            QScrollArea#ReplyCardBodyScroll > QWidget > QWidget {{ background: transparent; }}
-            QScrollBar:vertical {{ width: 7px; margin: 0; background: transparent; }}
-            QScrollBar::handle:vertical {{ min-height: 24px; border-radius: 3px; background: rgba(135,145,170,120); }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
             QLabel {{ border: none; background: transparent; font-family: "Microsoft YaHei UI", "Microsoft YaHei"; }}
             QLabel#ReplyCardTitle {{ color: {title}; font-size: 16px; font-weight: 700; }}
             QLabel#ReplyCardAvatar {{ border-radius: 18px; background: #e8f2ff; }}
@@ -206,7 +196,6 @@ class ReplyCard(ReplyCardWindow):
         self._resize_anchor_center_x = None
         self._resize_anchor_bottom_y = None
         self._content_resize_pending = False
-        self._scroll_follow_pending = True
         self._timeout_ms = 0
         self._countdown_elapsed = QElapsedTimer()
         self.setStyleSheet(_reply_card_style_qss(config.app_config.get('reply_card_style', 'aurora')))
@@ -235,7 +224,6 @@ class ReplyCard(ReplyCardWindow):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(card)
-        self._sync_body_scroll_height()
         self.adjustSize()
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
@@ -267,57 +255,13 @@ class ReplyCard(ReplyCardWindow):
     def _content_width_for_card(self, card_width):
         return max(168, card_width - 30)
 
-    def _body_content_width(self):
-        width = self._content_width
-        if hasattr(self, 'body_scroll'):
-            width -= self.body_scroll.verticalScrollBar().sizeHint().width()
-        return max(1, width)
-
     def _sync_content_widths(self):
-        body_width = self._body_content_width()
         for label in self.findChildren(QLabel, 'ReplyCardElement'):
-            label.setFixedWidth(body_width)
-
-    def _body_max_height(self):
-        screen = QApplication.screenAt(self.frameGeometry().center())
-        if screen is None:
-            screen = QApplication.primaryScreen()
-        screen_height = screen.availableGeometry().height() if screen else 800
-        return min(
-            REPLY_CARD_BODY_MAX_HEIGHT,
-            max(REPLY_CARD_BODY_MIN_MAX_HEIGHT, int(screen_height * REPLY_CARD_BODY_SCREEN_RATIO)),
-        )
-
-    def _sync_body_scroll_height(self):
-        if not hasattr(self, 'body_scroll'):
-            return
-        self.body_content.adjustSize()
-        natural_height = sum(
-            self.body_layout.itemAt(index).sizeHint().height()
-            for index in range(self.body_layout.count())
-        )
-        natural_height += self.body_layout.spacing() * max(0, self.body_layout.count() - 1)
-        self.body_content.setFixedSize(self._body_content_width(), natural_height)
-        has_content = self.body_layout.count() > 0
-        self.body_scroll.setVisible(has_content)
-        self.body_scroll.setFixedHeight(min(natural_height, self._body_max_height()) if has_content else 0)
-
-    def _is_body_scroll_near_bottom(self):
-        if not hasattr(self, 'body_scroll'):
-            return True
-        bar = self.body_scroll.verticalScrollBar()
-        return bar.maximum() - bar.value() <= REPLY_CARD_SCROLL_BOTTOM_THRESHOLD
-
-    def _restore_body_scroll(self):
-        if not self._scroll_follow_pending or not hasattr(self, 'body_scroll'):
-            return
-        bar = self.body_scroll.verticalScrollBar()
-        bar.setValue(bar.maximum())
+            label.setFixedWidth(self._content_width)
 
     def _schedule_content_resize(self):
         if self.closing or self._content_resize_pending:
             return
-        self._scroll_follow_pending = self._is_body_scroll_near_bottom()
         self._content_resize_pending = True
         QTimer.singleShot(0, self._resize_to_current_content)
 
@@ -332,9 +276,7 @@ class ReplyCard(ReplyCardWindow):
         layout = self.layout()
         if layout is not None:
             layout.activate()
-        self._sync_body_scroll_height()
         self.adjustSize()
-        QTimer.singleShot(0, self._restore_body_scroll)
         if self.size() != old_size:
             self._move_to_resize_anchor(anchor_center_x, anchor_bottom_y)
             self.layout_changed.emit()
@@ -393,7 +335,6 @@ class ReplyCard(ReplyCardWindow):
         self._content_width = self._content_width_for_card(width)
         self.resize(width, self.height())
         self._sync_content_widths()
-        self._sync_body_scroll_height()
         self.adjustSize()
         self._move_to_resize_anchor(anchor_center_x, anchor_bottom_y)
         self._refresh_topmost_soon()
@@ -539,33 +480,19 @@ class ReplyCard(ReplyCardWindow):
             tw.set_text('')
         if hasattr(self, 'body_layout'):
             self._clear_layout(self.body_layout)
-            self._clear_layout(self.interaction_layout)
         else:
-            self.body_scroll = QScrollArea(card)
-            self.body_scroll.setObjectName('ReplyCardBodyScroll')
-            self.body_scroll.setWidgetResizable(False)
-            self.body_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            self.body_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-            self.body_content = QWidget(self.body_scroll)
             self.body_layout = QVBoxLayout()
             self.body_layout.setContentsMargins(0, 0, 0, 0)
             self.body_layout.setSpacing(9)
-            self.body_content.setLayout(self.body_layout)
-            self.body_scroll.setWidget(self.body_content)
-            self.layout_box.addWidget(self.body_scroll)
-            self.interaction_layout = QVBoxLayout()
-            self.interaction_layout.setContentsMargins(0, 0, 0, 0)
-            self.interaction_layout.setSpacing(9)
-            self.layout_box.addLayout(self.interaction_layout)
+            self.layout_box.addLayout(self.body_layout)
         self.control_widgets = {}
         self._typewriters = []
         self._primary_typewriter = None
         self._primary_structured = False
-        self._add_elements(self.body_layout, self.body_content, self._normalized_elements())
-        self._add_controls(self.interaction_layout, card, self.event_data.get('controls') or [])
-        self._add_actions(self.interaction_layout, card, self.event_data.get('actions') or [])
+        self._add_elements(self.body_layout, card, self._normalized_elements())
+        self._add_controls(self.body_layout, card, self.event_data.get('controls') or [])
+        self._add_actions(self.body_layout, card, self.event_data.get('actions') or [])
         self._body_structure_signature = self._structure_signature()
-        self._sync_body_scroll_height()
 
     def _primary_text_value(self):
         return self.event_data.get('summary') or self.event_data.get('content') or self.event_data.get('message') or ''
@@ -614,7 +541,6 @@ class ReplyCard(ReplyCardWindow):
         if width_changed:
             self._animate_card_width_to(new_width, anchor_center_x, anchor_bottom_y)
         else:
-            self._sync_body_scroll_height()
             self.adjustSize()
             self._move_to_resize_anchor(anchor_center_x, anchor_bottom_y)
             self._refresh_topmost_soon()
@@ -694,7 +620,7 @@ class ReplyCard(ReplyCardWindow):
             label.setObjectName('ReplyCardElement')
             label.setTextFormat(Qt.RichText)
             label.setWordWrap(True)
-            label.setFixedWidth(self._body_content_width())
+            label.setFixedWidth(self._content_width)
             content_text = str(content)
             structured = has_structured_markdown(content_text)
             html_text = markdown_to_html(content_text)

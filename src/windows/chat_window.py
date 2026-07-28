@@ -268,7 +268,6 @@ class ChatWindow(QWidget):
             'custom': '自定义智能体',
             'openclaw': 'OpenClaw',
             'claude_code': 'Claude Code',
-            'codex': 'Codex',
         }
         if hasattr(self, 'backend_badge'):
             self.backend_badge.setText(labels.get(self.backend, self.backend))
@@ -284,7 +283,7 @@ class ChatWindow(QWidget):
     def _backend_label(self, backend):
         labels = {
             'builtin': '内置模型', 'custom': '自定义智能体', 'openclaw': 'OpenClaw',
-            'claude_code': 'Claude Code', 'codex': 'Codex',
+            'claude_code': 'Claude Code',
         }
         return labels.get(backend or 'builtin', backend or 'builtin')
 
