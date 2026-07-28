@@ -11,6 +11,12 @@ MiniPet 是一个独立桌面 AI 宠物应用。它由 MINIPET 简化整合而�
 
 第三方资源和许可证说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
+MiniPet 文档：
+
+- [当前协议设计](MiniPet%20当前协议设计.md)：外置后端当前可用的严格接入规范与兼容行为。
+- [完整功能设计](MiniPet%20完整功能设计.md)：产品定位、核心场景和近期功能路线。
+- [未来展望](MiniPet%20未来展望.md)：尚未实现的长期产品与协议方向。
+
 > 当前目标：`minipet/` 是独立应用目录。源码、资源、文档、依赖样例和启动入口都已收敛到这里；后续功能不要再依赖外层 MINIPET 结构。
 
 ## 智能体模式
@@ -21,7 +27,7 @@ MiniPet 提供多种智能体模式：
 | --- | --- |
 | 使用内置大模型 | 使用“大模型”页配置的 OpenAI 兼容接口。 |
 | 连接 OpenClaw 网关 | 直接请求 OpenClaw Gateway 的 HTTP Responses API，不经过额外中转端口。使用前需要开启 OpenClaw 的 Responses HTTP API。 |
-| 连接 MiniPet 协议后端 | 连接 miniClaw 或其他按 MiniPet 通用协议实现的 WebSocket 后端。快速接入教程见 [minipet交互协议设计.md](minipet交互协议设计.md)。 |
+| 连接 MiniPet 协议后端 | 连接 miniClaw 或其他按 MiniPet 通用协议实现的 WebSocket 后端。接入规范见 [MiniPet 当前协议设计](MiniPet%20当前协议设计.md)。 |
 | 连接 Claude Code | 启动本地 Claude Code CLI 的 `stream-json` 子进程，把桌宠输入作为同一项目会话的连续聊天发送给 Claude Code。 |
 | 连接 Codex | 使用本地 Codex CLI 的 JSONL 接口；首次创建 thread，后续每轮恢复同一 thread，支持连续聊天和重启后续聊。 |
 
@@ -425,7 +431,7 @@ POST http://127.0.0.1:18889/actions/execute
 
 ## 系统架构
 
-当前源码已经按功能目录解耦，不再把所有模块堆在 `src/` 根目录。详细说明见 [软件架构文档](ARCHITECTURE.md)。
+当前源码已经按功能目录解耦，不再把所有模块堆在 `src/` 根目录。详细说明见 [软件架构文档](MiniPet%20软件架构.md)。
 
 ```text
 MiniPet QApplication
@@ -587,7 +593,7 @@ minipet/
   run_minipet.py          # 启动入口
   requirements.txt        # Python 依赖
   README.md               # 项目说明
-  ARCHITECTURE.md        # 软件架构、模块边界和重构原则
+  MiniPet 软件架构.md    # 软件架构、模块边界和重构原则
   docs/
     art_dev.md            # 角色资源制作文档
   src/

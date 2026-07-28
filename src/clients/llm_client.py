@@ -21,6 +21,25 @@ except Exception:
 import config
 
 
+def _message_text(content):
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return str(content or '')
+    return ''.join(
+        str(block.get('text') or '')
+        for block in content
+        if isinstance(block, dict) and block.get('type') == 'text'
+    )
+
+
+def _last_user_input(messages):
+    for message in reversed(messages):
+        if message.get('role') == 'user':
+            return _message_text(message.get('content'))
+    return ''
+
+
 def _normalize_openai_messages(messages):
     """规范化 OpenAI 兼容接口需要的 text/image_url 消息块。"""
     normalized = []
@@ -59,6 +78,7 @@ async def _call_openai(messages, cfg, timeout, on_delta=None):
         kwargs['base_url'] = api_base
     client = AsyncOpenAI(**kwargs)
     messages = _normalize_openai_messages(messages)
+    print('[MiniPet input]', _last_user_input(messages), flush=True)
     try:
         if on_delta:
             chunks = []
@@ -72,12 +92,16 @@ async def _call_openai(messages, cfg, timeout, on_delta=None):
                 if delta:
                     chunks.append(delta)
                     on_delta(delta)
-            return True, ''.join(chunks).strip()
+            reply = ''.join(chunks).strip()
+            print('[MiniPet final]', reply, flush=True)
+            return True, reply
         response = await client.chat.completions.create(
             model=model,
             messages=messages,
         )
-        return True, (response.choices[0].message.content or '').strip()
+        reply = (response.choices[0].message.content or '').strip()
+        print('[MiniPet final]', reply, flush=True)
+        return True, reply
     except OpenAITimeoutError as e:
         return False, '网络超时：%s' % e
     except OpenAIConnectionError as e:

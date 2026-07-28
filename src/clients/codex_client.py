@@ -38,11 +38,13 @@ class CodexSession(QThread):
         self._turn_final_text = ''
         self._turn_completed = False
         self._turn_error = ''
+        self._codex_path = ''
 
     def send(self, text):
         text = (text or '').strip()
         if not text or self._stopping:
             return False
+        print('[Codex input]', text, flush=True)
         self._write_queue.put(text)
         return True
 
@@ -55,7 +57,8 @@ class CodexSession(QThread):
         self._terminate_active_process()
 
     def run(self):
-        if not shutil.which('codex'):
+        self._codex_path = shutil.which('codex') or ''
+        if not self._codex_path:
             self.error_ready.emit('找不到 codex 命令，请先安装 Codex CLI 并加入 PATH。')
             self.stopped.emit()
             return
@@ -77,9 +80,12 @@ class CodexSession(QThread):
             self.stopped.emit()
 
     def _command(self, resume):
+        command = [self._codex_path]
+        if os.name == 'nt' and self._codex_path.lower().endswith(('.cmd', '.bat')):
+            command = [os.environ.get('COMSPEC', 'cmd.exe'), '/d', '/c', self._codex_path]
         if resume:
-            return ['codex', 'exec', 'resume', self.thread_id, '--json', '-']
-        return ['codex', 'exec', '--json', '--cd', self.project_dir, '-']
+            return command + ['exec', 'resume', self.thread_id, '--json', '-']
+        return command + ['exec', '--json', '--cd', self.project_dir, '-']
 
     def _run_prompt(self, prompt, allow_new_retry):
         resume = bool(self.thread_id)
@@ -146,6 +152,7 @@ class CodexSession(QThread):
             return
         if not self._turn_completed:
             if self._turn_final_text:
+                print('[Codex final]', self._turn_final_text, flush=True)
                 self.result_ready.emit(self._turn_final_text)
             elif proc is not None and proc.returncode not in (0, None):
                 self.error_ready.emit(error_text or 'Codex 调用失败。')
@@ -182,6 +189,7 @@ class CodexSession(QThread):
         if event_type == 'turn.completed':
             self._turn_completed = True
             if self._turn_final_text:
+                print('[Codex final]', self._turn_final_text, flush=True)
                 self.result_ready.emit(self._turn_final_text)
             else:
                 self.error_ready.emit('Codex 没有返回文本。')

@@ -17,6 +17,8 @@ from PySide6.QtCore import QThread, Signal
 
 ANSI_RE = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
 MAX_OUTPUT_CHARS = 3000
+STARTUP_TIMEOUT_SECONDS = 15
+MAX_STARTUP_ERROR_CHARS = 1000
 
 
 class ClaudeCodeSession(QThread):
@@ -41,6 +43,9 @@ class ClaudeCodeSession(QThread):
         self._process_ready_emitted = False
         self._session_ready_emitted = False
         self._mode_mismatch_emitted = False
+        self._startup_timer = None
+        self._startup_lock = threading.Lock()
+        self._startup_error = ''
 
     @staticmethod
     def _session_id_for_project(project_dir, reset_token=0):
@@ -65,6 +70,7 @@ class ClaudeCodeSession(QThread):
 
     def stop(self):
         self._stopping = True
+        self._cancel_startup_timer()
         self._terminate_process()
 
     def _send_interrupt(self):
@@ -113,8 +119,14 @@ class ClaudeCodeSession(QThread):
 
         self._cleanup_own_claude_processes()
         try:
+            command = self._command()
+            print(
+                '[Claude Code startup] mode=%s session=%s command=%s'
+                % ('resume' if self.resume else 'new', self.session_id, command),
+                flush=True,
+            )
             self._proc = subprocess.Popen(
-                self._command(),
+                command,
                 cwd=self.project_dir,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -125,15 +137,26 @@ class ClaudeCodeSession(QThread):
                 errors='replace',
                 bufsize=1,
             )
+            print('[Claude Code startup] pid=%s waiting for first stdin/init' % self._proc.pid, flush=True)
+            self._start_startup_timer()
             self._start_stderr_thread()
             if not self._write_thread_started:
                 self._start_write_thread()
                 self._write_thread_started = True
             self._read_stdout_loop()
+            if not self._stopping and not self._process_ready_emitted:
+                return_code = self._proc.poll()
+                detail = 'Claude Code 在初始化前退出'
+                if return_code is not None:
+                    detail += '（退出码 %s）' % return_code
+                if self._startup_error:
+                    detail += '：%s' % self._startup_error
+                self._fail_startup(detail)
         except Exception as exc:
             if not self._stopping:
                 self.error_ready.emit('Claude Code 会话异常：%s' % exc)
         finally:
+            self._cancel_startup_timer()
             self._terminate_process()
             self._proc = None
             self.stopped.emit()
@@ -188,6 +211,43 @@ class ClaudeCodeSession(QThread):
             command.extend(['--session-id', self.session_id])
         return command
 
+    def _start_startup_timer(self):
+        self._startup_timer = threading.Timer(
+            STARTUP_TIMEOUT_SECONDS,
+            self._on_startup_timeout,
+        )
+        self._startup_timer.daemon = True
+        self._startup_timer.start()
+
+    def _cancel_startup_timer(self):
+        timer = self._startup_timer
+        self._startup_timer = None
+        if timer is not None:
+            timer.cancel()
+
+    def _on_startup_timeout(self):
+        self._fail_startup(
+            'Claude Code 在 %s 秒内未完成 stream-json 初始化。'
+            % STARTUP_TIMEOUT_SECONDS
+        )
+
+    def _fail_startup(self, detail, mode=None):
+        with self._startup_lock:
+            if self._stopping or self._process_ready_emitted or self._mode_mismatch_emitted:
+                return False
+            self._mode_mismatch_emitted = True
+        self._startup_error = str(detail or '')[-MAX_STARTUP_ERROR_CHARS:]
+        self._cancel_startup_timer()
+        target_mode = mode or ('new' if self.resume else 'resume')
+        print(
+            '[Claude Code startup failed] mode=%s session=%s fallback=%s reason=%s'
+            % ('resume' if self.resume else 'new', self.session_id, target_mode, self._startup_error),
+            flush=True,
+        )
+        self.session_mode_mismatch.emit(target_mode)
+        self._terminate_process()
+        return True
+
     def _start_write_thread(self):
         threading.Thread(target=self._write_loop, daemon=True).start()
 
@@ -205,6 +265,7 @@ class ClaudeCodeSession(QThread):
                     self.error_ready.emit('Claude Code 进程未运行，发送失败。')
                 continue
             try:
+                print('[Claude Code input]', text, flush=True)
                 event = {
                     'type': 'user',
                     'message': {
@@ -213,7 +274,6 @@ class ClaudeCodeSession(QThread):
                     },
                 }
                 payload = json.dumps(event, ensure_ascii=False)
-                print('[Claude Code stdin]', payload, flush=True)
                 self._proc.stdin.write(payload + '\n')
                 self._proc.stdin.flush()
             except Exception as exc:
@@ -241,6 +301,8 @@ class ClaudeCodeSession(QThread):
             if not text:
                 continue
             print('[Claude Code stderr]', text, flush=True)
+            if not self._process_ready_emitted:
+                self._startup_error = text[-MAX_STARTUP_ERROR_CHARS:]
             if self._handle_mode_mismatch(text):
                 continue
             self.error_ready.emit(text)
@@ -257,8 +319,20 @@ class ClaudeCodeSession(QThread):
 
         event_type = event.get('type', '')
         if event_type == 'system' and event.get('subtype') == 'init' and not self._process_ready_emitted:
-            self._process_ready_emitted = True
+            with self._startup_lock:
+                if self._mode_mismatch_emitted:
+                    return
+                self._process_ready_emitted = True
+            self._cancel_startup_timer()
+            print(
+                '[Claude Code ready] mode=%s session=%s'
+                % ('resume' if self.resume else 'new', self.session_id),
+                flush=True,
+            )
             self.process_ready.emit()
+            if not self._session_ready_emitted:
+                self._session_ready_emitted = True
+                self.session_ready.emit(self.session_id)
         if event_type == 'stream_event' and isinstance(event.get('event'), dict):
             event = event.get('event')
             event_type = event.get('type', '')
@@ -268,17 +342,13 @@ class ClaudeCodeSession(QThread):
                 self.error_ready.emit(text)
             return
 
-        if event_type in ('system', 'result', 'stream_event') and not self._session_ready_emitted:
-            self._session_ready_emitted = True
-            self.session_ready.emit(self.session_id)
-
         text = self._event_text(event)
         if text:
             self._append_output(text)
 
     def _handle_mode_mismatch(self, text):
-        if self._mode_mismatch_emitted:
-            return True
+        if self._process_ready_emitted:
+            return False
         normalized = str(text or '').lower()
         if not self.resume and 'session id' in normalized and 'already in use' in normalized:
             mode = 'resume'
@@ -286,8 +356,7 @@ class ClaudeCodeSession(QThread):
             mode = 'new'
         else:
             return False
-        self._mode_mismatch_emitted = True
-        self.session_mode_mismatch.emit(mode)
+        self._fail_startup(text, mode=mode)
         return True
 
     def _event_error_text(self, event):
@@ -310,6 +379,7 @@ class ClaudeCodeSession(QThread):
         if event_type == 'result':
             text = event.get('result') or self._message_text(event.get('message'))
             if text:
+                print('[Claude Code final]', text, flush=True)
                 self.result_ready.emit(text)
             return ''
 

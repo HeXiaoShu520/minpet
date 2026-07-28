@@ -232,8 +232,8 @@ class AgentPage(MiniPetScrollPage):
         self.customProbeCard.hBoxLayout.addWidget(self.customProbeBtn, 0, Qt.AlignRight)
         self.customProbeCard.hBoxLayout.addSpacing(16)
         self.customProbeBtn.clicked.connect(self._probe_minipet_backend)
-        self.protocolDocCard = PushSettingCard('打开', FIF.MESSAGE, 'MiniPet 协议文档', '通用后端接入见 minipet交互协议设计.md', self.customGroup)
-        self.protocolDocCard.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(config.ROOT_DIR / 'minipet交互协议设计.md'))))
+        self.protocolDocCard = PushSettingCard('打开', FIF.MESSAGE, 'MiniPet 协议文档', '通用后端接入见 MiniPet 当前协议设计.md', self.customGroup)
+        self.protocolDocCard.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(config.ROOT_DIR / 'MiniPet 当前协议设计.md'))))
 
         self.claudeCodeGroup = SettingCardGroup('Claude Code 设置', self.scrollWidget)
         self.claudeCodeDirCard = LineEditSettingCard(FIF.LINK, '项目目录', '第一次输入时会在这个目录下启动 Claude Code 会话', placeholder=str(config.ROOT_DIR), parent=self.claudeCodeGroup)

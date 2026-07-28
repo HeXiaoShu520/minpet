@@ -90,6 +90,10 @@ class MiniPetApp(QApplication):
         self.claude_code_received_output = False
         self.claude_code_reset_token = config.app_config.get('claude_code_reset_token', 0)
         self._pending_claude_code_text = ''
+        self._claude_code_pending_sent = False
+        self._claude_code_attempted_modes = set()
+        self._claude_code_restart_pending = False
+        self._claude_code_last_startup_error = ''
         self.codex_session = None
         self.codex_starting = False
         self.codex_received_output = False
@@ -762,6 +766,9 @@ class MiniPetApp(QApplication):
         session_id = ClaudeCodeSession._session_id_for_project(str(project_dir), reset_token)
         known_sessions = config.app_config.get('claude_code_known_sessions') or []
         resume = force_mode == 'resume' or (force_mode is None and session_id in known_sessions)
+        mode = 'resume' if resume else 'new'
+        self._claude_code_attempted_modes.add(mode)
+        self._claude_code_restart_pending = False
         self.claude_code_session = ClaudeCodeSession(str(project_dir), reset_token=reset_token, resume=resume, parent=self)
         self.claude_code_session.process_ready.connect(self._on_claude_code_process_ready)
         self.claude_code_session.output_ready.connect(self._on_claude_code_output)
@@ -784,11 +791,15 @@ class MiniPetApp(QApplication):
         self._begin_reply_card_turn()
         self._reset_quick_stream_tts()
         self.claude_code_received_output = False
+        self._claude_code_attempted_modes = set()
+        self._claude_code_restart_pending = False
+        self._claude_code_last_startup_error = ''
         if not self._ensure_claude_code_session():
             return False
         if self.claude_code_starting:
             self._pending_claude_code_text = prompt
-            return True
+            self._claude_code_pending_sent = self.claude_code_session.send(prompt)
+            return self._claude_code_pending_sent
         self._show_reply_card('已发送给 Claude Code，等待输出...', status='streaming', timeout_ms=60000)
         sent = self.claude_code_session.send(prompt)
         if sent:
@@ -799,7 +810,13 @@ class MiniPetApp(QApplication):
         if self.sender() is not self.claude_code_session:
             return
         self.claude_code_starting = False
-        if self._pending_claude_code_text:
+        self._claude_code_attempted_modes = set()
+        self._claude_code_restart_pending = False
+        self._claude_code_last_startup_error = ''
+        if self._claude_code_pending_sent:
+            self._pending_claude_code_text = ''
+            self._claude_code_pending_sent = False
+        elif self._pending_claude_code_text:
             QTimer.singleShot(0, self._flush_pending_claude_code_text)
 
     def _flush_pending_claude_code_text(self):
@@ -807,9 +824,13 @@ class MiniPetApp(QApplication):
         if not text or self.claude_code_session is None:
             return
         if not self.claude_code_session.send(text):
-            QTimer.singleShot(500, self._flush_pending_claude_code_text)
+            self.claude_code_starting = False
+            self._pending_claude_code_text = ''
+            self._claude_code_pending_sent = False
+            self._show_reply_card('Claude Code 已初始化，但发送消息失败。', status='failed', timeout_ms=8000)
             return
         self._pending_claude_code_text = ''
+        self._claude_code_pending_sent = False
         self.claude_code_starting = False
         self._show_reply_card('已发送给 Claude Code，等待输出...', status='streaming', timeout_ms=60000)
         QTimer.singleShot(6000, self._warn_if_claude_code_silent)
@@ -822,7 +843,7 @@ class MiniPetApp(QApplication):
         self.claude_code_starting = False
         self._chat_window_delta('claude_code', (text or '').strip())
         self.claude_code_received_output = True
-        if self._pending_claude_code_text:
+        if self._pending_claude_code_text and not self._claude_code_pending_sent:
             QTimer.singleShot(0, self._flush_pending_claude_code_text)
         shown = (text or 'Claude Code 正在处理...').strip()
         self._quick_stream_text = shown
@@ -850,25 +871,45 @@ class MiniPetApp(QApplication):
         session = self.sender()
         if session is not self.claude_code_session:
             return
+        self._claude_code_last_startup_error = getattr(session, '_startup_error', '')
+        if mode in self._claude_code_attempted_modes:
+            self._finish_claude_code_startup_failure()
+            return
         session_id = session.session_id
         known_sessions = list(config.app_config.get('claude_code_known_sessions') or [])
-        if mode == 'resume' and session_id not in known_sessions:
-            known_sessions.append(session_id)
-        elif mode == 'new' and session_id in known_sessions:
+        if mode == 'new' and session_id in known_sessions:
             known_sessions.remove(session_id)
-        config.app_config['claude_code_known_sessions'] = known_sessions[-50:]
-        config.save_app_config()
+            config.app_config['claude_code_known_sessions'] = known_sessions[-50:]
+            config.save_app_config()
+        self._claude_code_restart_pending = True
+        self._claude_code_pending_sent = False
         self.claude_code_session = None
         session.stop()
-        session.wait(2500)
+        session.wait(5500)
         if self._pending_claude_code_text:
             self.claude_code_starting = True
             QTimer.singleShot(0, lambda: self._restart_claude_code_mode(mode))
 
     def _restart_claude_code_mode(self, mode):
         if not self._pending_claude_code_text or self._agent_backend() != 'claude_code':
+            self._claude_code_restart_pending = False
             return
-        self._ensure_claude_code_session(force_mode=mode)
+        if self._ensure_claude_code_session(force_mode=mode):
+            self._claude_code_pending_sent = self.claude_code_session.send(
+                self._pending_claude_code_text
+            )
+
+    def _finish_claude_code_startup_failure(self):
+        session = self.claude_code_session
+        self.claude_code_session = None
+        self.claude_code_starting = False
+        self._claude_code_restart_pending = False
+        detail = self._claude_code_last_startup_error or '恢复和新建模式均未完成初始化。'
+        self._pending_claude_code_text = ''
+        self._claude_code_pending_sent = False
+        if session is not None:
+            session.stop()
+        self._show_reply_card('Claude Code 会话启动失败：%s' % detail, status='failed', timeout_ms=10000)
 
     def _on_claude_code_error(self, text):
         self.claude_code_starting = False
@@ -879,7 +920,8 @@ class MiniPetApp(QApplication):
         if session is not self.claude_code_session:
             return
         self.claude_code_starting = False
-        self._pending_claude_code_text = ''
+        if not self._claude_code_restart_pending:
+            self._pending_claude_code_text = ''
         self.claude_code_session = None
 
     def _stop_claude_code_session(self):
@@ -887,6 +929,7 @@ class MiniPetApp(QApplication):
         self.claude_code_session = None
         self.claude_code_starting = False
         self._pending_claude_code_text = ''
+        self._claude_code_pending_sent = False
         if session is not None:
             session.stop()
             session.wait(2500)

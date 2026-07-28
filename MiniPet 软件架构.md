@@ -2,6 +2,12 @@
 
 本文档说明 MiniPet 当前源码目录、模块职责和后续拆分原则。目标是避免所有代码堆在一个目录里，让功能边界清晰、依赖方向稳定、后续维护更容易。
 
+相关文档：
+
+- [MiniPet 当前协议设计](MiniPet%20当前协议设计.md)：以当前实现为准的外置后端协议。
+- [MiniPet 完整功能设计](MiniPet%20完整功能设计.md)：产品边界、核心场景与近期路线。
+- [MiniPet 未来展望](MiniPet%20未来展望.md)：尚未实现的扩展方向。
+
 ## 总体分层
 
 ```text
@@ -127,9 +133,12 @@ pet/
 
 ```text
 protocols/
-  protocol_v1.py              # MiniPet 通用智能体协议
-  doubao_call_protocol.py        # 豆包 豆包通话二进制协议封装
+  protocol_v1.py              # MiniPet 通用智能体协议常量与入站规范化
+  surface_utils.py            # surface 文本、状态、超时与展示事件辅助
+  doubao_call_protocol.py     # 豆包通话二进制协议封装
 ```
+
+外置后端的消息信封、事件方向、卡片字段和兼容边界统一记录在 [MiniPet 当前协议设计](MiniPet%20当前协议设计.md)，不要从历史文档或 UI 表现反推协议。
 
 依赖原则：
 - 尽量保持纯函数/常量，不依赖 UI。
