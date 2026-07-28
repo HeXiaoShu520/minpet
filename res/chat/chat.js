@@ -95,6 +95,12 @@ const Chat = (() => {
     const nameEl = document.createElement('div');
     nameEl.className = 'msg-name';
     nameEl.textContent = msg.name || (isUser ? '我' : '宠物');
+    if (!isUser && msg.backend) {
+      const badge = document.createElement('span');
+      badge.textContent = msg.backend;
+      badge.style.cssText = 'margin-left:6px;background:#e8eef1;color:#53646c;border-radius:5px;padding:1px 5px;font-size:11px;font-weight:400;';
+      nameEl.appendChild(badge);
+    }
     body.appendChild(nameEl);
 
     const blocks = msg.content || [];

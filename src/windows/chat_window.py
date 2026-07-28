@@ -155,7 +155,7 @@ class ChatWindow(QWidget):
     则在本地列表里维护临时历史，便于独立测试。
     """
 
-    def __init__(self, pet_name='', parent=None, history=None, append_message=None, content_for_llm=None, system_prompt_builder=None, clear_history_callback=None):
+    def __init__(self, pet_name='', parent=None, history=None, append_message=None, content_for_llm=None, system_prompt_builder=None, clear_history_callback=None, send_callback=None, backend='builtin'):
         super().__init__(parent)
         self.pet_name = pet_name
         self.history = history if history is not None else []
@@ -163,6 +163,8 @@ class ChatWindow(QWidget):
         self.content_for_llm = content_for_llm
         self.system_prompt_builder = system_prompt_builder
         self.clear_history_callback = clear_history_callback
+        self.send_callback = send_callback
+        self.backend = backend or 'builtin'
         self.worker = None
         self._stream_id = None
         self._stream_text = ''
@@ -195,10 +197,11 @@ class ChatWindow(QWidget):
         title_box.setSpacing(8)
         self.title_label = TitleLabel(self.pet_name or '宠物')
         self.title_label.setFont(QFont(self.title_label.font().family(), 13, QFont.DemiBold))
-        badge = QLabel('智能体')
-        badge.setStyleSheet('QLabel{background:#ede7ff;color:#5b3fd6;border-radius:5px;padding:2px 6px;font-size:12px;}')
+        self.backend_badge = QLabel()
+        self.backend_badge.setStyleSheet('QLabel{background:#e8eef1;color:#53646c;border-radius:5px;padding:2px 6px;font-size:12px;}')
         title_box.addWidget(self.title_label)
-        title_box.addWidget(badge, 0, Qt.AlignVCenter)
+        title_box.addWidget(self.backend_badge, 0, Qt.AlignVCenter)
+        self.set_backend(self.backend)
         h_layout.addWidget(self.avatar_widget)
         h_layout.addLayout(title_box)
         h_layout.addStretch(1)
@@ -258,6 +261,18 @@ class ChatWindow(QWidget):
         if hasattr(self, 'title_label'):
             self.title_label.setText(self.pet_name)
 
+    def set_backend(self, backend):
+        self.backend = backend or 'builtin'
+        labels = {
+            'builtin': '内置模型',
+            'custom': '自定义智能体',
+            'openclaw': 'OpenClaw',
+            'claude_code': 'Claude Code',
+            'codex': 'Codex',
+        }
+        if hasattr(self, 'backend_badge'):
+            self.backend_badge.setText(labels.get(self.backend, self.backend))
+
     def _js(self, code):
         if self._web_ready:
             self.web.page().runJavaScript(code)
@@ -266,7 +281,14 @@ class ChatWindow(QWidget):
 
     # ─── 消息构建工具 ───
 
-    def _msg_dict(self, role, content, msg_id=None):
+    def _backend_label(self, backend):
+        labels = {
+            'builtin': '内置模型', 'custom': '自定义智能体', 'openclaw': 'OpenClaw',
+            'claude_code': 'Claude Code', 'codex': 'Codex',
+        }
+        return labels.get(backend or 'builtin', backend or 'builtin')
+
+    def _msg_dict(self, role, content, msg_id=None, backend=None):
         """把 str 或 blocks list 转成 chat.js 需要的 msg dict。"""
         avatar_url = QUrl.fromLocalFile(str(config.avatar_path('user' if role == 'user' else 'pet'))).toString()
         name = '我' if role == 'user' else (self.pet_name or '宠物')
@@ -275,6 +297,7 @@ class ChatWindow(QWidget):
             'id': msg_id or str(uuid.uuid4()),
             'role': role,
             'name': name,
+            'backend': '' if role == 'user' else self._backend_label(backend or self.backend),
             'avatar': avatar_url,
             'content': blocks,
         }
@@ -312,6 +335,7 @@ class ChatWindow(QWidget):
             'id': msg_id,
             'role': 'assistant',
             'name': self.pet_name or '宠物',
+            'backend': self.backend_badge.text(),
             'avatar': avatar_url,
         }, ensure_ascii=False))
 
@@ -323,7 +347,10 @@ class ChatWindow(QWidget):
         for msg in self.history:
             role = msg.get('role')
             if role in ('user', 'assistant'):
-                self._push_message(role, msg.get('content', ''))
+                self._js('Chat.appendMessage(%s)' % json.dumps(
+                    self._msg_dict(role, msg.get('content', ''), backend=msg.get('backend')),
+                    ensure_ascii=False,
+                ))
 
     # ─── 输入区 ───
 
@@ -362,20 +389,34 @@ class ChatWindow(QWidget):
             if w:
                 w.deleteLater()
         self.input.setPlaceholderText('发送给宠物')
-        message = self.append_message('user', content, 'chat_window') if self.append_message else {'role': 'user', 'content': content}
-        if self.append_message is None:
-            self.history.append(message)
-        self._push_message('user', message.get('content', content))
-
         # 开始流式回复卡片
         stream_id = str(uuid.uuid4())
         self._start_stream(stream_id)
         self._reset_stream_tts()
         self.input.setEnabled(False)
+        if self.send_callback:
+            self.worker = self.send_callback(
+                content,
+                lambda backend: self._save_sent_user(content, backend),
+                lambda d: self._on_delta(stream_id, d),
+                lambda ok, t: self._on_reply(stream_id, ok, t),
+            )
+            if not self.worker:
+                self._on_reply(stream_id, False, '当前后端发送失败。')
+            return
+        self._save_sent_user(content, self.backend)
         self.worker = ChatWorker(self._build_messages(), parent=self)
         self.worker.delta_ready.connect(lambda d: self._on_delta(stream_id, d))
         self.worker.result_ready.connect(lambda ok, t: self._on_reply(stream_id, ok, t))
         self.worker.start()
+
+    def _save_sent_user(self, content, backend):
+        self.backend = backend or self.backend
+        self._stream_backend = self.backend
+        message = self.append_message('user', content, 'chat_window', self.backend) if self.append_message else {'role': 'user', 'content': content, 'backend': self.backend}
+        if self.append_message is None:
+            self.history.append(message)
+        self._push_message('user', message.get('content', content))
 
     def _memory_message_limit(self):
         return max(0, int(config.llm_config.get('memory_turns') or 0)) * 2
@@ -410,7 +451,7 @@ class ChatWindow(QWidget):
             final = text.strip() or '嗯。'
             self._js('Chat.endStream(%s, %s)' % (json.dumps(stream_id), json.dumps(final, ensure_ascii=False)))
             if self.append_message:
-                self.append_message('assistant', final, 'chat_window')
+                self.append_message('assistant', final, 'chat_window', getattr(self, '_stream_backend', self.backend))
             else:
                 self.history.append({'role': 'assistant', 'content': final})
             self._stream_text = final

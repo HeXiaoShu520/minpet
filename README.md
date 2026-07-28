@@ -19,13 +19,13 @@ MiniPet 提供多种智能体模式：
 
 | 模式 | 说明 |
 | --- | --- |
-| 使用内置大模型 | 使用“大模型”页配置的 OpenAI 兼容接口。只有这个模式会把对话内容写入 MiniPet 本地聊天记录。 |
+| 使用内置大模型 | 使用“大模型”页配置的 OpenAI 兼容接口。 |
 | 连接 OpenClaw 网关 | 直接请求 OpenClaw Gateway 的 HTTP Responses API，不经过额外中转端口。使用前需要开启 OpenClaw 的 Responses HTTP API。 |
 | 连接 MiniPet 协议后端 | 连接 miniClaw 或其他按 MiniPet 通用协议实现的 WebSocket 后端。快速接入教程见 [minipet交互协议设计.md](minipet交互协议设计.md)。 |
 | 连接 Claude Code | 启动本地 Claude Code CLI 的 `stream-json` 子进程，把桌宠输入作为同一项目会话的连续聊天发送给 Claude Code。 |
 | 连接 Codex | 使用本地 Codex CLI 的 JSONL 接口；首次创建 thread，后续每轮恢复同一 thread，支持连续聊天和重启后续聊。 |
 
-使用 OpenClaw 网关、MiniPet 协议后端、Claude Code 或 Codex 时，MiniPet 只把当前输入转交给对应后端并显示返回内容，不记录本地对话历史。
+五种模式都会把用户消息和最终成功回复写入 MiniPet 本地聊天记录，并按后端独立分类。切换模式时聊天窗口只显示当前后端历史，“清空对话”也只清除当前后端；旧版本未标记后端的记录兼容归入“内置大模型”。聊天窗口头部和助手名字右侧会显示当前后端徽标。Claude Code 与 Codex 自身的持久会话/线程机制保持不变，本地聊天记录仅用于展示与检索。
 
 ## 连接 Claude Code
 

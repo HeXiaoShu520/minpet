@@ -39,13 +39,13 @@ class ChatStore:
     def load_today(self):
         return self.load_date(self.today())
 
-    def load_recent(self, max_messages):
+    def load_recent(self, max_messages, backend='builtin'):
         messages = []
         max_messages = max(0, int(max_messages or 0))
         if max_messages <= 0:
             return messages
         for path in sorted(self.sessions_dir.glob('*.jsonl'), reverse=True):
-            day_messages = self.load_date(path.stem)
+            day_messages = self.load_date(path.stem, backend=backend)
             if day_messages:
                 messages = day_messages + messages
             if len(messages) >= max_messages:
@@ -71,24 +71,14 @@ class ChatStore:
                     continue
         return messages
 
-    def load_date(self, date_text):
+    def load_date(self, date_text, backend='builtin'):
         messages = []
-        path = self._session_path(date_text)
-        if not path.is_file():
-            return messages
-        with path.open('r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    stored = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
+        for stored in self.load_stored_date(date_text):
+            if self._message_backend(stored) == self._normalize_backend(backend):
                 messages.append(self.to_runtime_message(stored))
         return messages
 
-    def append(self, role, content, source='chat_window', pet_name=''):
+    def append(self, role, content, source='chat_window', pet_name='', backend='builtin'):
         now = datetime.now()
         date_text = now.strftime('%Y-%m-%d')
         message = {
@@ -97,6 +87,7 @@ class ChatStore:
             'created_at': now.isoformat(timespec='seconds'),
             'role': role,
             'source': source,
+            'backend': self._normalize_backend(backend),
             'pet_name': pet_name,
             'content': self._persist_content_images(self._normalize_content(content), date_text),
         }
@@ -122,12 +113,53 @@ class ChatStore:
         self.delete_search_date(date_text)
         self.delete_summary(date_text)
 
+    def clear_backend(self, backend):
+        backend = self._normalize_backend(backend)
+        affected_dates = []
+        for path in sorted(self.sessions_dir.glob('*.jsonl')):
+            messages = self.load_stored_date(path.stem)
+            kept = [message for message in messages if self._message_backend(message) != backend]
+            if len(kept) == len(messages):
+                continue
+            affected_dates.append(path.stem)
+            if kept:
+                path.write_text(''.join(json.dumps(message, ensure_ascii=False) + '\n' for message in kept), encoding='utf-8')
+            else:
+                path.unlink()
+        self.rebuild_metadata()
+        for date_text in affected_dates:
+            self.delete_summary(date_text)
+
     def clear_all(self):
         if self.root_dir.exists():
             shutil.rmtree(self.root_dir)
         self.root_dir.mkdir(parents=True, exist_ok=True)
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
         self.images_dir.mkdir(parents=True, exist_ok=True)
+
+    def rebuild_metadata(self):
+        self.index_file.unlink(missing_ok=True)
+        conn = self._connect_search_db()
+        try:
+            conn.execute('DELETE FROM messages_fts')
+            conn.execute('DELETE FROM messages')
+            conn.commit()
+        finally:
+            conn.close()
+        for path in sorted(self.sessions_dir.glob('*.jsonl')):
+            for message in self.load_stored_date(path.stem):
+                self._update_index(path.stem, message)
+                try:
+                    self._index_message(path.stem, message)
+                except Exception as e:
+                    print('Chat search index failed:', e)
+
+    def _normalize_backend(self, backend):
+        return str(backend or 'builtin')
+
+    def _message_backend(self, message):
+        # 旧记录没有 backend 字段，按原有内置模型记录兼容。
+        return self._normalize_backend(message.get('backend', 'builtin'))
 
     def delete_date(self, date_text):
         session = self._session_path(date_text)
@@ -149,6 +181,7 @@ class ChatStore:
         return {
             'role': stored_message.get('role', 'user'),
             'content': self._resolve_runtime_content(stored_message.get('content', [])),
+            'backend': self._message_backend(stored_message),
         }
 
     def content_text_for_memory(self, content):
@@ -307,7 +340,8 @@ class ChatStore:
         text = self.content_text_for_memory(message.get('content', ''))
         if not text:
             return False
-        with self._connect_search_db() as conn:
+        conn = self._connect_search_db()
+        try:
             old = conn.execute('SELECT rowid FROM messages WHERE id=?', (message.get('id'),)).fetchone()
             if old:
                 conn.execute('DELETE FROM messages_fts WHERE rowid=?', (old['rowid'],))
@@ -328,6 +362,8 @@ class ChatStore:
             if row:
                 conn.execute('INSERT INTO messages_fts(rowid, text) VALUES (?, ?)', (row['rowid'], text))
             conn.commit()
+        finally:
+            conn.close()
         return True
 
     def rebuild_search_index(self):
