@@ -85,10 +85,6 @@ DEFAULT_VOICE_CHAT_CONFIG = {
     'continuous': False,
 }
 
-VOICE_CHAT_ENV_KEYS = {
-    'continuous': 'VOICE_CHAT_CONTINUOUS',
-}
-
 DEFAULT_WAKE_WORD_CONFIG = {
     'enabled': False,
     'words': '小月小月',
@@ -102,43 +98,11 @@ DEFAULT_DAILY_INPUT_CONFIG = {
     'enabled': False,
 }
 
-DAILY_INPUT_ENV_KEYS = {
-    'enabled': 'DAILY_INPUT_ENABLED',
-}
-
-WAKE_WORD_ENV_KEYS = {
-    'enabled': 'WAKE_WORD_ENABLED',
-    'words': 'WAKE_WORDS',
-    'model_dir': 'WAKE_WORD_MODEL_DIR',
-    'sample_rate': 'WAKE_WORD_SAMPLE_RATE',
-    'chunk_ms': 'WAKE_WORD_CHUNK_MS',
-    'restart_delay_ms': 'WAKE_WORD_RESTART_DELAY_MS',
-}
-
-APP_BASIC_ENV_KEYS = {
-    'volume': 'APP_VOLUME',
-    'scale': 'APP_SCALE',
-}
-
-OPENCLAW_ENV_KEYS = {
-    'openclaw_api_url': 'OPENCLAW_API_URL',
-    'openclaw_model': 'OPENCLAW_MODEL',
-    'openclaw_user': 'OPENCLAW_USER',
-    'openclaw_timeout': 'OPENCLAW_TIMEOUT',
-}
-
 DEFAULT_TYPEWRITER_CONFIG = {
-    'enabled': True,         # 打字机效果总开关
-    'speed_ms': 28,          # 每字间隔上限（毫秒）
-    'max_duration_ms': 5000, # 打字总时长上限（毫秒）
-    'tts_delay_ms': 500,     # 开启语音播放时，回复延迟显示的毫秒数
-}
-
-TYPEWRITER_ENV_KEYS = {
-    'enabled': 'TYPEWRITER_ENABLED',
-    'speed_ms': 'TYPEWRITER_SPEED_MS',
-    'max_duration_ms': 'TYPEWRITER_MAX_DURATION_MS',
-    'tts_delay_ms': 'TYPEWRITER_TTS_DELAY_MS',
+    'enabled': True,
+    'speed_ms': 28,
+    'max_duration_ms': 5000,
+    'tts_delay_ms': 500,
 }
 
 DEFAULT_DOUBAO_CALL_CONFIG = {
@@ -161,23 +125,38 @@ LLM_LEGACY_ENV_KEYS = {
 }
 
 TTS_ENV_KEYS = {
-    'enabled': 'TTS_ENABLED',
     'api_key': 'TTS_API_KEY',
-    'voice_name': 'TTS_VOICE_NAME',
-    'max_chars': 'TTS_MAX_CHARS',
-    'test_text': 'TTS_TEST_TEXT',
 }
 
-DOUBAO_CALL_ENV_KEYS = {
-    'speaker': 'DOUBAO_CALL_SPEAKER',
-}
-
-DOUBAO_CALL_LEGACY_ENV_KEYS = {
+TTS_LEGACY_ENV_KEYS = {
+    'TTS_ENABLED',
+    'TTS_VOICE_NAME',
+    'TTS_MAX_CHARS',
+    'TTS_TEST_TEXT',
+    'DOUBAO_CALL_SPEAKER',
     'DOUBAO_CALL_ENABLED',
     'DOUBAO_CALL_MODEL',
     'DOUBAO_CALL_BOT_NAME',
     'DOUBAO_CALL_SYSTEM_ROLE',
     'DOUBAO_CALL_SPEAKING_STYLE',
+    'VOICE_CHAT_CONTINUOUS',
+    'WAKE_WORD_ENABLED',
+    'WAKE_WORDS',
+    'WAKE_WORD_MODEL_DIR',
+    'WAKE_WORD_SAMPLE_RATE',
+    'WAKE_WORD_CHUNK_MS',
+    'WAKE_WORD_RESTART_DELAY_MS',
+    'DAILY_INPUT_ENABLED',
+    'TYPEWRITER_ENABLED',
+    'TYPEWRITER_SPEED_MS',
+    'TYPEWRITER_MAX_DURATION_MS',
+    'TYPEWRITER_TTS_DELAY_MS',
+    'APP_VOLUME',
+    'APP_SCALE',
+    'OPENCLAW_API_URL',
+    'OPENCLAW_MODEL',
+    'OPENCLAW_USER',
+    'OPENCLAW_TIMEOUT',
     'CHAT_RESTORE_ENABLED',
     'CHAT_RESTORE_MAX_MESSAGES',
     'CHAT_RESTORE_MAX_DAYS',
@@ -463,18 +442,32 @@ def _save_env_config(config_data, env_keys, defaults, section_title, extra_manag
     ENV_FILE.write_text('\n'.join(kept).rstrip() + '\n', encoding='utf-8')
 
 
+def _load_json_config(defaults, settings, section_key):
+    """从 minipet_settings.json 的子 key 读取一组配置。"""
+    cfg = dict(defaults)
+    data = settings.get(section_key)
+    if isinstance(data, dict):
+        for k, v in data.items():
+            if k in defaults:
+                cfg[k] = _coerce_env_value(v, defaults[k])
+    return cfg
+
+
 def load():
     """加载所有配置，并初始化当前宠物等运行时状态。"""
     global app_config, llm_config, tts_config, doubao_call_config, voice_chat_config, typewriter_config, wake_word_config, daily_input_config, current_pet
     ensure_data_dir()
     pets = get_pet_list()
 
-    app_config = dict(DEFAULT_APP_CONFIG)
+    settings = {}
     if SETTINGS_FILE.is_file():
         try:
-            app_config.update(json.loads(SETTINGS_FILE.read_text(encoding='utf-8')))
+            settings = json.loads(SETTINGS_FILE.read_text(encoding='utf-8'))
         except Exception:
             pass
+
+    app_config = dict(DEFAULT_APP_CONFIG)
+    app_config.update({k: v for k, v in settings.items() if not isinstance(v, dict)})
 
     # 固定置顶和掉落配置，不允许旧 JSON、环境变量或设置页覆盖。
     app_config['on_top'] = True
@@ -489,17 +482,6 @@ def load():
     for key in ('codex_project_dir', 'codex_reset_token', 'codex_thread_ids'):
         app_config.pop(key, None)
 
-    # 音量和缩放属于高级参数，只从环境变量/.env 读取，优先级高于 JSON。
-    env_data = _parse_env_file()
-    for field, env_key in APP_BASIC_ENV_KEYS.items():
-        value = os.environ.get(env_key, env_data.get(env_key))
-        if value is not None:
-            app_config[field] = _coerce_env_value(value, DEFAULT_APP_CONFIG[field])
-    for field, env_key in OPENCLAW_ENV_KEYS.items():
-        value = os.environ.get(env_key, env_data.get(env_key))
-        if value is not None:
-            app_config[field] = _coerce_env_value(value, DEFAULT_APP_CONFIG[field])
-
     if not app_config.get('default_pet') and pets:
         app_config['default_pet'] = pets[0]
     if app_config.get('default_pet') not in pets and pets:
@@ -507,19 +489,35 @@ def load():
     current_pet = app_config.get('default_pet') or ''
 
     llm_config = _load_env_config(DEFAULT_LLM_CONFIG, LLM_ENV_KEYS)
-    tts_config = _load_env_config(DEFAULT_TTS_CONFIG, TTS_ENV_KEYS)
-    doubao_call_config = _load_env_config(DEFAULT_DOUBAO_CALL_CONFIG, DOUBAO_CALL_ENV_KEYS)
-    voice_chat_config = _load_env_config(DEFAULT_VOICE_CHAT_CONFIG, VOICE_CHAT_ENV_KEYS)
-    typewriter_config = _load_env_config(DEFAULT_TYPEWRITER_CONFIG, TYPEWRITER_ENV_KEYS)
-    wake_word_config = _load_env_config(DEFAULT_WAKE_WORD_CONFIG, WAKE_WORD_ENV_KEYS)
-    daily_input_config = _load_env_config(DEFAULT_DAILY_INPUT_CONFIG, DAILY_INPUT_ENV_KEYS)
+    tts_config = _load_json_config(DEFAULT_TTS_CONFIG, settings, 'tts')
+    # api_key 仍从 .env 读取，优先级最高
+    env_api_key = _load_env_config({'api_key': ''}, {'api_key': 'TTS_API_KEY'}).get('api_key', '')
+    if env_api_key:
+        tts_config['api_key'] = env_api_key
+    doubao_call_config = _load_json_config(DEFAULT_DOUBAO_CALL_CONFIG, settings, 'doubao_call')
+    voice_chat_config = _load_json_config(DEFAULT_VOICE_CHAT_CONFIG, settings, 'voice_chat')
+    typewriter_config = _load_json_config(DEFAULT_TYPEWRITER_CONFIG, settings, 'typewriter')
+    wake_word_config = _load_json_config(DEFAULT_WAKE_WORD_CONFIG, settings, 'wake_word')
+    daily_input_config = _load_json_config(DEFAULT_DAILY_INPUT_CONFIG, settings, 'daily_input')
     save_app_config()
+
+
+def _save_settings_file():
+    """将所有配置合并写入 minipet_settings.json。"""
+    ensure_data_dir()
+    data = dict(app_config)
+    data['tts'] = dict(tts_config)
+    data['doubao_call'] = dict(doubao_call_config)
+    data['voice_chat'] = dict(voice_chat_config)
+    data['typewriter'] = dict(typewriter_config)
+    data['wake_word'] = dict(wake_word_config)
+    data['daily_input'] = dict(daily_input_config)
+    SETTINGS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
 def save_app_config():
     """保存基础设置到 data/minipet_settings.json。"""
-    ensure_data_dir()
-    SETTINGS_FILE.write_text(json.dumps(app_config, ensure_ascii=False, indent=2), encoding='utf-8')
+    _save_settings_file()
 
 
 def save_llm_config(config):
@@ -530,42 +528,43 @@ def save_llm_config(config):
 
 
 def save_tts_config(config):
-    """保存 TTS 配置到 .env。"""
+    """保存 TTS 配置到 JSON，api_key 同步写 .env。"""
     global tts_config
     tts_config = dict(config)
-    _save_env_config(tts_config, TTS_ENV_KEYS, DEFAULT_TTS_CONFIG, '# MiniPet TTS settings')
+    _save_settings_file()
+    _save_env_config({'api_key': tts_config.get('api_key', '')}, TTS_ENV_KEYS, {'api_key': ''}, '# MiniPet TTS settings', TTS_LEGACY_ENV_KEYS)
 
 
 def save_typewriter_config(config):
-    """保存回复逐字显示配置到 .env。"""
+    """保存回复逐字显示配置到 JSON。"""
     global typewriter_config
     typewriter_config = dict(config)
-    _save_env_config(typewriter_config, TYPEWRITER_ENV_KEYS, DEFAULT_TYPEWRITER_CONFIG, '# MiniPet Typewriter settings')
+    _save_settings_file()
 
 
 def save_doubao_call_config(config):
-    """保存豆包通话音色配置到 .env。"""
+    """保存豆包通话音色配置到 JSON。"""
     global doubao_call_config
     doubao_call_config = dict(config)
-    _save_env_config(doubao_call_config, DOUBAO_CALL_ENV_KEYS, DEFAULT_DOUBAO_CALL_CONFIG, '# MiniPet DoubaoCall settings', DOUBAO_CALL_LEGACY_ENV_KEYS)
+    _save_settings_file()
 
 
 def save_voice_chat_config(config):
-    """保存本地 AI 语音聊天配置到 .env。"""
+    """保存本地 AI 语音聊天配置到 JSON。"""
     global voice_chat_config
     voice_chat_config = dict(config)
-    _save_env_config(voice_chat_config, VOICE_CHAT_ENV_KEYS, DEFAULT_VOICE_CHAT_CONFIG, '# MiniPet VoiceChat settings')
+    _save_settings_file()
 
 
 def save_wake_word_config(config):
-    """保存离线唤醒词配置到 .env。"""
+    """保存离线唤醒词配置到 JSON。"""
     global wake_word_config
     wake_word_config = dict(config)
-    _save_env_config(wake_word_config, WAKE_WORD_ENV_KEYS, DEFAULT_WAKE_WORD_CONFIG, '# MiniPet WakeWord settings')
+    _save_settings_file()
 
 
 def save_daily_input_config(config):
-    """保存日常工作语音输入配置到 .env。"""
+    """保存日常工作语音输入配置到 JSON。"""
     global daily_input_config
     daily_input_config = dict(config)
-    _save_env_config(daily_input_config, DAILY_INPUT_ENV_KEYS, DEFAULT_DAILY_INPUT_CONFIG, '# MiniPet DailyInput settings')
+    _save_settings_file()
