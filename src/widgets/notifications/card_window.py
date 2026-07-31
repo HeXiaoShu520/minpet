@@ -29,6 +29,7 @@ class ReplyCardWindow(QFrame):
         self.drag_start_pos = QPoint()
         self.drag_window_pos = QPoint()
         self.manual_position = False
+        self._last_left_click_time = 0.0
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.NoDropShadowWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setWindowOpacity(initial_opacity)
@@ -104,10 +105,22 @@ class ReplyCardWindow(QFrame):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.RightButton:
-            self._interrupt()
+            now = __import__('time').time()
+            if now - getattr(self, '_last_right_click_time', 0) < 0.4:
+                self._interrupt()
+                self._last_right_click_time = 0
+            else:
+                self._last_right_click_time = now
             event.accept()
             return
         if event.button() == Qt.LeftButton:
+            now = __import__('time').time()
+            if not self.dragging and (now - self._last_left_click_time) < 0.35:
+                self._last_left_click_time = 0.0
+                self._on_double_click()
+                event.accept()
+                return
+            self._last_left_click_time = now
             self.dragging = True
             self.drag_moved = False
             self.drag_start_pos = event.globalPos()
@@ -152,6 +165,9 @@ class ReplyCardWindow(QFrame):
         pass
 
     def _on_manual_positioned(self):
+        pass
+
+    def _on_double_click(self):
         pass
 
     def _animate_out(self):

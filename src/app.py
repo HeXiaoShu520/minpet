@@ -34,9 +34,11 @@ from protocols.protocol_v1 import SESSION_PING, SESSION_PONG, SESSION_READY, SUR
 from protocols.surface_utils import is_silent_surface_text, is_terminal_surface_status, normalize_display_event, surface_text, surface_timeout
 from settings_window import SettingsWindow
 from clients.stream_tts import StreamTtsQueue
+from stream_display_delay import StreamDisplayDelay
 from clients.tts_client import TtsPreviewWorker, stop_tts
 from clients.wake_word_client import WakeWordWorker
 from clients.doubao_call_client import DoubaoCallWorker
+from daily_input_controller import DailyInputController
 
 
 WAKE_ACK_KEYS = ('wake_ack_1', 'wake_ack_2', 'wake_ack_3', 'wake_ack_4')
@@ -74,6 +76,7 @@ class MiniPetApp(QApplication):
         self.chat_store = ChatStore(config.DATA_DIR / 'chat')
         self.settings = SettingsWindow(self.chat_store)
         self.note = ReplyCardCenter()
+        self._daily_input_ctrl = DailyInputController(app=self, parent=self)
         self.events = EventClient() if start_event_client else None
         if self.events and self._agent_backend() == 'custom':
             self.events.set_url(self._agent_ws_url())
@@ -101,6 +104,7 @@ class MiniPetApp(QApplication):
         self.quick_chat_backend = 'builtin'
         self.quick_reply_card_id = None
         self._quick_stream_text = ''
+        self.stream_display_delay = StreamDisplayDelay(self)
         self._surface_cards = {}
         # 内置模型和外置 surface 都是“完整文本不断增长”的流式形态，
         # 统一交给 StreamTtsQueue 按小句切分并串行播放。
@@ -137,15 +141,18 @@ class MiniPetApp(QApplication):
         self.settings.settings_changed.connect(self.pet.apply_settings)
         self.settings.settings_changed.connect(self._apply_agent_settings)
         self.settings.settings_changed.connect(self._apply_wake_word_settings)
+        self.settings.settings_changed.connect(self._daily_input_ctrl.apply_settings)
         self.settings.pet_changed.connect(self.pet.load_pet)
         self.note.reply_card_action_clicked.connect(self._on_reply_card_action)
         self.note.reply_card_interrupted.connect(self._on_reply_card_interrupted)
+        self.note.reply_card_quote_submitted.connect(self._on_reply_card_quote)
         if self.events:
             self.events.event_received.connect(self._on_event)
             self.events.connection_changed.connect(self._on_event_connection_changed)
             if self._agent_backend() == 'custom':
                 self.events.start()
         self._apply_wake_word_settings()
+        self._daily_input_ctrl.apply_settings()
         QTimer.singleShot(0, self._show_startup_greeting)
 
     def _memory_message_limit(self):
@@ -240,7 +247,7 @@ class MiniPetApp(QApplication):
         voice_name = config.tts_config.get('voice_name') or config.DEFAULT_TTS_CONFIG['voice_name']
         safe_voice = ''.join(ch if ch.isalnum() or ch in ('-', '_') else '_' for ch in voice_name)
         key = random.choice(WAKE_ACK_KEYS)
-        path = config.DATA_DIR / 'tts_wake_ack' / safe_voice / (key + '.pcm')
+        path = config.DATA_DIR / 'tts_wake_ack' / safe_voice / (key + '.wav')
         return path if path.is_file() else None
 
     def _play_wake_ack_then_start(self):
@@ -284,9 +291,11 @@ class MiniPetApp(QApplication):
     def _event_tts_path(self, event_name):
         voice_name = config.tts_config.get('voice_name') or config.DEFAULT_TTS_CONFIG['voice_name']
         safe_name = ''.join(ch if ch.isalnum() or ch in ('-', '_') else '_' for ch in voice_name)
-        return config.DATA_DIR / 'tts_events' / f'{safe_name}_{event_name}.pcm'
+        return config.DATA_DIR / f'tts_{event_name}' / f'{safe_name}.wav'
 
     def _play_event_tts(self, event_name):
+        if not config.tts_config.get('enabled'):
+            return False
         path = self._event_tts_path(event_name)
         if not path.is_file():
             return False
@@ -344,10 +353,12 @@ class MiniPetApp(QApplication):
 
     def _open_voice_orb(self):
         self.pet.show_voice_popup()
+        if not config.tts_config.get('enabled'):
+            self.pet.update_voice_popup('error', '语音功能未开启')
+            QTimer.singleShot(1800, self.pet.close_voice_popup)
+            return
         if not config.tts_config.get('api_key'):
             self.pet.update_voice_popup('error', '缺少语音配置')
-            x, y = self.pet.reply_card_anchor()
-            self.note.setup_reply_card_text('请先在设置 > 语音中填写 TTS API Key', x, y, 4000, title=config.pet_display_name())
             QTimer.singleShot(1800, self.pet.close_voice_popup)
             return
         self.pet_voice_active = True
@@ -367,10 +378,12 @@ class MiniPetApp(QApplication):
                 self._start_pet_voice_recording()
             return
         self.pet.show_voice_popup()
+        if not config.tts_config.get('enabled'):
+            self.pet.update_voice_popup('error', '语音功能未开启')
+            QTimer.singleShot(1800, self.pet.close_voice_popup)
+            return
         if not config.tts_config.get('api_key'):
             self.pet.update_voice_popup('error', '缺少语音配置')
-            x, y = self.pet.reply_card_anchor()
-            self.note.setup_reply_card_text('请先在设置 > 语音中填写 TTS API Key', x, y, 4000, title=config.pet_display_name())
             QTimer.singleShot(1800, self.pet.close_voice_popup)
             return
         self.pet_voice_active = True
@@ -497,11 +510,11 @@ class MiniPetApp(QApplication):
         return 'data:image/jpeg;base64,' + base64.b64encode(bytes(data)).decode('ascii')
 
     def _on_pet_voice_status(self, text):
-        if self.pet_voice_active and not self.pet_voice_paused and text in ('ASR已连接', '正在识别') and self.quick_chat_worker is None and not self.quick_stream_tts.is_active():
+        if self.pet_voice_active and not self.pet_voice_paused and not self.pet_voice_waiting_reply and text in ('ASR已连接', '正在识别') and self.quick_chat_worker is None and not self.quick_stream_tts.is_active() and not self.external_stream_tts.is_active():
             self.pet.update_voice_popup('listening', '')
 
     def _on_pet_voice_text(self, text):
-        if self.pet_voice_active and not self.pet_voice_paused and text and self.quick_chat_worker is None and not self.quick_stream_tts.is_active():
+        if self.pet_voice_active and not self.pet_voice_paused and not self.pet_voice_waiting_reply and text and self.quick_chat_worker is None and not self.quick_stream_tts.is_active() and not self.external_stream_tts.is_active():
             self.pet.update_voice_popup('listening', text)
 
     def _on_pet_voice_final(self, text):
@@ -568,10 +581,19 @@ class MiniPetApp(QApplication):
         """让独立聊天窗口始终通过 app 当前后端发送。"""
         backend = self._agent_backend()
         if backend == 'builtin':
+            self._append_chat_message('user', content, 'chat_window', backend)
             on_sent(backend)
+            lane_id = 'builtin-chat-' + str(uuid.uuid4())
             worker = ChatWorker(self._build_quick_chat_messages(), parent=self)
-            worker.delta_ready.connect(on_delta)
-            worker.result_ready.connect(on_result)
+            worker.delta_ready.connect(
+                lambda text: self.stream_display_delay.enqueue(lane_id, lambda: on_delta(text))
+            )
+            worker.result_ready.connect(
+                lambda success, text: self.stream_display_delay.enqueue(
+                    lane_id,
+                    lambda: on_result(success, text),
+                )
+            )
             worker.finished.connect(worker.deleteLater)
             worker.start()
             return worker
@@ -582,6 +604,7 @@ class MiniPetApp(QApplication):
             'delta': on_delta, 'result': on_result, 'text': '',
         }
         if self._send_external_command(content, 'text', 'chat_window', turn_id=turn_id, surface_id=surface_id):
+            self._append_chat_message('user', content, 'chat_window', backend)
             on_sent(backend)
             return True
         self._chat_window_turn = None
@@ -830,23 +853,35 @@ class MiniPetApp(QApplication):
 
     def _on_claude_code_output(self, text):
         self.claude_code_starting = False
-        self._chat_window_delta('claude_code', (text or '').strip())
         self.claude_code_received_output = True
         if self._pending_claude_code_text and not self._claude_code_pending_sent:
             QTimer.singleShot(0, self._flush_pending_claude_code_text)
         shown = (text or 'Claude Code 正在处理...').strip()
         self._quick_stream_text = shown
-        self._show_reply_card(shown, status='streaming', timeout_ms=60000)
+        self.stream_display_delay.enqueue(
+            'claude-code',
+            lambda: self._show_claude_code_streaming(shown),
+        )
+
+    def _show_claude_code_streaming(self, text):
+        self._chat_window_delta('claude_code', text)
+        self._show_reply_card(text, status='streaming', timeout_ms=60000)
 
     def _on_claude_code_result(self, text):
         self.claude_code_starting = False
         self.claude_code_received_output = True
         reply = (text or self._quick_stream_text or 'Claude Code 没有返回文本。').strip()
-        self._save_external_reply('claude_code', reply)
         self._quick_stream_text = reply
-        self._show_reply_card(reply, status='done', timeout_ms=max(5000, min(25000, len(reply) * 180)))
         self.quick_stream_tts.queue_text('claude-code-reply', reply, terminal=True)
+        self.stream_display_delay.enqueue(
+            'claude-code',
+            lambda: self._show_claude_code_result(reply),
+        )
         self._finish_quick_voice_if_tts_idle()
+
+    def _show_claude_code_result(self, reply):
+        self._save_external_reply('claude_code', reply)
+        self._show_reply_card(reply, status='done', timeout_ms=max(5000, min(25000, len(reply) * 180)))
 
     def _on_claude_code_session_ready(self, session_id):
         known_sessions = list(config.app_config.get('claude_code_known_sessions') or [])
@@ -902,6 +937,7 @@ class MiniPetApp(QApplication):
 
     def _on_claude_code_error(self, text):
         self.claude_code_starting = False
+        self.stream_display_delay.reset('claude-code')
         self._show_reply_card(text or 'Claude Code 调用失败。', status='failed', timeout_ms=8000)
 
     def _on_claude_code_stopped(self):
@@ -914,6 +950,7 @@ class MiniPetApp(QApplication):
         self.claude_code_session = None
 
     def _stop_claude_code_session(self):
+        self.stream_display_delay.reset('claude-code')
         session = self.claude_code_session
         self.claude_code_session = None
         self.claude_code_starting = False
@@ -969,6 +1006,7 @@ class MiniPetApp(QApplication):
         self.quick_chat_source = 'voice_chat' if mode == 'voice' else 'quick_chat'
         self.quick_chat_backend = self._agent_backend()
         self._begin_reply_card_turn()
+        self.stream_display_delay.reset('openclaw')
         self._reset_external_stream_tts()
         self._show_reply_card('正在问 OpenClaw...', status='streaming', timeout_ms=60000)
         self.openclaw_worker = OpenClawWorker(openclaw_input, parent=self)
@@ -980,36 +1018,58 @@ class MiniPetApp(QApplication):
     def _on_openclaw_delta(self, text):
         if not text:
             return
-        self._chat_window_delta('openclaw', text)
         self._quick_stream_text += text
         shown = self._quick_stream_text.strip()
         if not shown:
             return
-        self._show_reply_card(shown, status='streaming', timeout_ms=60000)
         self.external_stream_tts.queue_text('openclaw-reply', shown, terminal=False)
+        self.stream_display_delay.enqueue(
+            'openclaw',
+            lambda: self._show_openclaw_streaming(text, shown),
+        )
+
+    def _show_openclaw_streaming(self, text, shown):
+        self._chat_window_delta('openclaw', text)
+        self._show_reply_card(shown, status='streaming', timeout_ms=60000)
 
     def _on_openclaw_reply(self, success, text):
         self.openclaw_worker = None
         reply = (text or self._quick_stream_text or '').strip()
         if success:
             reply = reply or 'OpenClaw 没有返回文本。'
-            self._save_external_reply('openclaw', reply)
-            self._show_reply_card(reply, status='done', timeout_ms=max(5000, min(25000, len(reply) * 180)))
             self._quick_stream_text = reply
             self.external_stream_tts.queue_text('openclaw-reply', reply, terminal=True)
+            self.stream_display_delay.enqueue(
+                'openclaw',
+                lambda: self._show_openclaw_result(reply),
+            )
             self._finish_external_voice_if_tts_idle()
             return
+        self.stream_display_delay.reset('openclaw')
         self._reset_external_stream_tts()
         self._show_reply_card(reply or '调用 OpenClaw 失败。', status='failed', timeout_ms=8000)
         if self.quick_chat_source == 'voice_chat' and self.pet_voice_active:
             self._finish_voice_turn(delay_ms=800)
 
+    def _show_openclaw_result(self, reply):
+        self._save_external_reply('openclaw', reply)
+        self._show_reply_card(reply, status='done', timeout_ms=max(5000, min(25000, len(reply) * 180)))
+
+    _BACKEND_SOURCE_LABELS = {
+        'builtin': '内置AI',
+        'claude_code': 'Claude',
+        'openclaw': 'OpenClaw',
+        'custom': 'MiniPet',
+    }
+
     def _show_reply_card(self, content, status='streaming', timeout_ms=60000):
+        source_label = self._BACKEND_SOURCE_LABELS.get(self.quick_chat_backend or 'builtin', '')
         event = {
             'surface_id': 'local-quick-reply',
             'content': content,
             'status': status,
             'timeout_ms': timeout_ms,
+            'source_label': source_label,
         }
         x, y = self.pet.reply_card_anchor()
         if self.quick_reply_card_id and self.note.update_reply_card(self.quick_reply_card_id, event, timeout=timeout_ms):
@@ -1149,8 +1209,11 @@ class MiniPetApp(QApplication):
         self._quick_stream_text += text
         shown = self._quick_stream_text.strip()
         if shown:
-            self._show_reply_card(shown, status='streaming', timeout_ms=60000)
             self.quick_stream_tts.queue_text('quick-reply', shown, terminal=False)
+            self.stream_display_delay.enqueue(
+                'builtin',
+                lambda: self._show_reply_card(shown, status='streaming', timeout_ms=60000),
+            )
 
     def _on_quick_chat_reply(self, success, text):
         """处理快速聊天回复：保存历史、展示回复卡片，并按配置触发 TTS。"""
@@ -1163,9 +1226,12 @@ class MiniPetApp(QApplication):
             self._append_chat_message('assistant', reply, self.quick_chat_source or 'quick_chat', self.quick_chat_backend)
             if self.pet.chat_window is not None and self.pet.chat_window.isVisible():
                 self.pet.chat_window.reload_history()
-            self._show_reply_card(reply, status='done', timeout_ms=max(5000, min(25000, len(reply) * 180)))
             self._quick_stream_text = reply
             self.quick_stream_tts.queue_text('quick-reply', reply, terminal=True)
+            self.stream_display_delay.enqueue(
+                'builtin',
+                lambda: self._show_reply_card(reply, status='done', timeout_ms=max(5000, min(25000, len(reply) * 180))),
+            )
             self._finish_quick_voice_if_tts_idle()
         else:
             self._reset_quick_stream_tts()
@@ -1175,6 +1241,7 @@ class MiniPetApp(QApplication):
 
     def _on_quick_stream_tts_started(self, stream_id, text):
         if self.quick_chat_source == 'voice_chat' and self.pet_voice_active:
+            self._pause_wake_word_listener()
             self.pet.update_voice_popup('speaking', '')
 
     def _finish_quick_voice_if_tts_idle(self):
@@ -1185,6 +1252,7 @@ class MiniPetApp(QApplication):
 
     def _on_external_stream_tts_started(self, stream_id, text):
         if self.quick_chat_source == 'voice_chat' and self.pet_voice_active:
+            self._pause_wake_word_listener()
             self.pet.update_voice_popup('speaking', '')
 
     def _finish_external_voice_if_tts_idle(self):
@@ -1194,6 +1262,7 @@ class MiniPetApp(QApplication):
             self._finish_voice_turn(delay_ms=500)
 
     def _reset_quick_stream_tts(self):
+        self.stream_display_delay.reset('builtin')
         self._quick_stream_text = ''
         self.quick_stream_tts.reset()
 
@@ -1237,44 +1306,46 @@ class MiniPetApp(QApplication):
 
     def _handle_surface_show(self, payload):
         card_event = normalize_display_event(SURFACE_SHOW, payload)
-        self._handle_custom_chat_surface(card_event)
-        self._close_reply_card()
-        text = surface_text(card_event)
-        self._queue_external_reply_tts(card_event, text)
-        if is_silent_surface_text(text) and not card_event.get('elements') and not card_event.get('actions') and not card_event.get('controls'):
-            return
-        x, y = self.pet.reply_card_anchor()
-        card_id = self.note.setup_reply_card(card_event, x, y, play_sound=False)
-        surface_id = card_event.get('surface_id')
-        if surface_id:
-            self._surface_cards[surface_id] = card_id
-        self._handle_external_voice_surface(card_event)
-        if surface_id and is_terminal_surface_status(card_event):
-            self._surface_cards.pop(surface_id, None)
+        self._queue_external_reply_tts(card_event, surface_text(card_event))
+        self._queue_surface_display(card_event, is_update=False)
 
     def _handle_surface_update(self, payload):
-        surface_id = payload.get('surface_id')
-        if not surface_id:
+        if not payload.get('surface_id'):
             return
         card_event = normalize_display_event(SURFACE_UPDATE, payload)
+        self._queue_external_reply_tts(card_event, surface_text(card_event))
+        self._queue_surface_display(card_event, is_update=True)
+
+    def _queue_surface_display(self, card_event, is_update):
+        surface_id = card_event.get('surface_id') or '__external_reply__'
+        self.stream_display_delay.enqueue(
+            'surface:' + surface_id,
+            lambda: self._show_surface_event(card_event, is_update),
+        )
+
+    def _show_surface_event(self, card_event, is_update):
         self._handle_custom_chat_surface(card_event)
         self._close_reply_card()
         text = surface_text(card_event)
-        self._queue_external_reply_tts(card_event, text)
         if is_silent_surface_text(text) and not card_event.get('elements') and not card_event.get('actions') and not card_event.get('controls'):
             return
+        surface_id = card_event.get('surface_id')
         timeout = surface_timeout(card_event)
-        card_id = self._surface_cards.get(surface_id)
+        card_id = self._surface_cards.get(surface_id) if is_update else None
         if card_id and self.note.update_reply_card(card_id, card_event, timeout=timeout):
             self._handle_external_voice_surface(card_event)
             if is_terminal_surface_status(card_event):
                 self._surface_cards.pop(surface_id, None)
             return
         x, y = self.pet.reply_card_anchor()
+        if not card_event.get('source_label'):
+            card_event = dict(card_event)
+            card_event['source_label'] = self._BACKEND_SOURCE_LABELS.get(self._agent_backend(), '')
         card_id = self.note.setup_reply_card(card_event, x, y, play_sound=False)
-        self._surface_cards[surface_id] = card_id
+        if surface_id:
+            self._surface_cards[surface_id] = card_id
         self._handle_external_voice_surface(card_event)
-        if is_terminal_surface_status(card_event):
+        if surface_id and is_terminal_surface_status(card_event):
             self._surface_cards.pop(surface_id, None)
 
     def _handle_custom_chat_surface(self, card_event):
@@ -1316,6 +1387,7 @@ class MiniPetApp(QApplication):
         self.external_stream_tts.queue_text(surface_id, text, terminal=terminal)
 
     def _reset_external_stream_tts(self):
+        self.stream_display_delay.reset()
         self.external_stream_tts.reset()
 
     def _handle_external_voice_surface(self, card_event):
@@ -1334,6 +1406,7 @@ class MiniPetApp(QApplication):
         surface_id = payload.get('surface_id')
         if not surface_id:
             return
+        self.stream_display_delay.reset('surface:' + surface_id)
         card_id = self._surface_cards.pop(surface_id, None)
         if card_id:
             self.note.close_reply_card(card_id)
@@ -1366,6 +1439,36 @@ class MiniPetApp(QApplication):
         self.external_stream_tts.reset()
         if self.pet_voice_active and self.pet_voice_waiting_reply:
             self._finish_voice_turn(delay_ms=300)
+
+    def _on_reply_card_quote(self, card_id, message, quoted_text='', user_text=''):
+        """处理卡片内引用回复：把回复追加到原卡片而非新建。"""
+        backend = self._agent_backend()
+        # 存储时带结构化 quote block，聊天窗口 reload 时可渲染飞书风格引用
+        if quoted_text and user_text:
+            display_content = [{'type': 'text', 'text': user_text,
+                                 'quote': quoted_text[:80] + ('...' if len(quoted_text) > 80 else '')}]
+        else:
+            display_content = message
+        self._append_chat_message('user', display_content, 'reply_card_quote', backend)
+        # 让后续 _show_reply_card 复用这张卡片而不是新建
+        self.quick_reply_card_id = card_id
+        self.quick_chat_backend = backend
+        self._quick_stream_text = ''
+        # 更新卡片状态为 streaming，清空旧文字让卡片只显示等待动画
+        self.note.update_reply_card(card_id, {'content': '', 'elements': [], 'status': 'streaming', 'timeout_ms': 60000}, timeout=60000)
+        if backend == 'builtin':
+            self.quick_chat_source = 'quick_chat'
+            self._reset_quick_stream_tts()
+            self.quick_chat_worker = ChatWorker(self._build_quick_chat_messages(), parent=self)
+            self.quick_chat_worker.delta_ready.connect(self._on_quick_chat_delta)
+            self.quick_chat_worker.result_ready.connect(self._on_quick_chat_reply)
+            self.quick_chat_worker.start()
+        elif backend == 'claude_code':
+            self._send_claude_code_prompt(message)
+        elif backend == 'openclaw':
+            self._send_openclaw_prompt(message)
+        else:
+            self._send_external_command(message, 'text', 'reply_card_quote')
 
     def _cancel_current_reply_workers(self):
         for attr, delta_slot, result_slot in (
@@ -1416,6 +1519,7 @@ class MiniPetApp(QApplication):
                 worker.wait(1000)
             setattr(self, worker_name, None)
         self.pet._stop_animation()
+        self._daily_input_ctrl.shutdown()
         if self.events:
             self.events.stop()
             self.events = None

@@ -5,8 +5,8 @@ import hashlib
 
 from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QPlainTextEdit
-from qfluentwidgets import InfoBar, InfoBarPosition, PrimaryPushButton, SettingCard, SettingCardGroup, SwitchSettingCard
+from PySide6.QtWidgets import QHBoxLayout, QPlainTextEdit, QWidget
+from qfluentwidgets import HyperlinkButton, InfoBar, InfoBarPosition, PrimaryPushButton, SettingCard, SettingCardGroup, SwitchSettingCard
 from qfluentwidgets import FluentIcon as FIF
 
 import config
@@ -54,80 +54,60 @@ class TTSPage(MiniPetScrollPage):
         self.preview_worker = None
         self._initializing = True
         cfg = config.tts_config
-        self.apiGroup = SettingCardGroup('火山豆包 TTS', self.scrollWidget)
-        self.enabledCard = SwitchSettingCard(FIF.VOLUME, '聊天回复语音播报', '开启后，宠物的 AI 回复会自动转成语音播放', parent=self.apiGroup)
+        self.apiGroup = SettingCardGroup('火山豆包语音', self.scrollWidget)
+        # 方案A：三个文字超链接
+        self.serviceLink = HyperlinkButton('https://console.volcengine.com/speech/new/setting/activate?_vtm_=a106466.b106468.0_0.0_0.0.44_7656326907147814435&projectName=default.', '服务开通', self.apiGroup)
+        self.experienceLink = HyperlinkButton('https://console.volcengine.com/speech/new/experience/tts?projectName=default', '在线体验', self.apiGroup)
+        self.apiDocLink = HyperlinkButton('https://www.volcengine.com/docs/6561/2528925?lang=zh', 'API 教程', self.apiGroup)
+
+        self.apiGroup.vBoxLayout.removeWidget(self.apiGroup.titleLabel)
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.addWidget(self.apiGroup.titleLabel)
+        title_row.addSpacing(12)
+        title_row.addWidget(self.serviceLink)
+        title_row.addWidget(self.experienceLink)
+        title_row.addWidget(self.apiDocLink)
+        title_row.addStretch(1)
+        self.apiGroup.vBoxLayout.insertLayout(0, title_row)
+
+        self.enabledCard = SwitchSettingCard(FIF.VOLUME, '是否开启语音功能', '开启后，将启用语音合成、语音识别、实时语音聊天功能', parent=self.apiGroup)
         self.enabledCard.setChecked(bool(cfg.get('enabled', False)))
         self.apiKeyCard = LineEditSettingCard(FIF.VPN, 'API Key', '控制台 > API Key 管理中获取的 X-Api-Key', password=True, placeholder='火山引擎 API Key', parent=self.apiGroup)
         self.apiKeyCard.setText(cfg.get('api_key', ''))
-        self.voiceCard = ComboSettingCard(VOICE_OPTIONS, FIF.PEOPLE, '音色', '选择后播放本地音色预览', self.apiGroup)
+        self.voiceCard = ComboSettingCard(VOICE_OPTIONS, FIF.PEOPLE, '日常交流音色', '影响开启语音、结束语音和卡片回复语音，选择时会有音色预览', self.apiGroup)
         self.voiceCard.setCurrentValue(cfg.get('voice_name', config.DEFAULT_TTS_CONFIG['voice_name']))
         self.voiceCard.comboBox.currentTextChanged.connect(self._preview_voice)
-        self.maxCharsCard = LineEditSettingCard(FIF.FONT_SIZE, '最大字数', '过长回复会截断后播放，避免请求过大', placeholder='200', parent=self.apiGroup)
+        self.maxCharsCard = LineEditSettingCard(FIF.FONT_SIZE, '最大字数', '每次回复最大转换成音频的字数', placeholder='200', parent=self.apiGroup)
         self.maxCharsCard.lineEdit.setFixedWidth(120)
         self.maxCharsCard.setText(cfg.get('max_chars', config.DEFAULT_TTS_CONFIG['max_chars']))
-        self.testTextCard = SettingCard(FIF.EDIT, '测试文本', '留空则使用当前音色的默认预览文案', self.apiGroup)
+        self.testTextCard = SettingCard(FIF.EDIT, '测试文本', '留空使用默认文案，生成', self.apiGroup)
         self.testTextEdit = QPlainTextEdit(self.testTextCard)
-        self.testTextEdit.setPlaceholderText('你好呀，我是小月，有什么需要帮助的吗')
+        self.testTextEdit.setPlaceholderText('你好呀，我是xx，有什么需要帮助的吗')
         self.testTextEdit.setPlainText(cfg.get('test_text', ''))
         self._style_editor(self.testTextEdit)
+        self.testBtn = PrimaryPushButton('测试语音', self.testTextCard)
         self.testTextCard.hBoxLayout.addStretch(1)
         self.testTextCard.hBoxLayout.addWidget(self.testTextEdit, 0, Qt.AlignRight)
+        self.testTextCard.hBoxLayout.addSpacing(8)
+        self.testTextCard.hBoxLayout.addWidget(self.testBtn, 0, Qt.AlignRight)
         self.testTextCard.hBoxLayout.addSpacing(16)
-
-        voice_chat_cfg = config.voice_chat_config
-        voice_chat_defaults = config.DEFAULT_VOICE_CHAT_CONFIG
-        wake_cfg = config.wake_word_config
-        wake_defaults = config.DEFAULT_WAKE_WORD_CONFIG
-        self.wakeGroup = SettingCardGroup('本地 AI 语音对话', self.scrollWidget)
-        self.continuousVoiceCard = SwitchSettingCard(FIF.CHAT, '连续对话', '开启后每轮回复结束会自动进入下一次接听；关闭后回到语音球待机', parent=self.wakeGroup)
-        self.continuousVoiceCard.setChecked(bool(voice_chat_cfg.get('continuous', voice_chat_defaults['continuous'])))
-        self.wakeEnabledCard = SwitchSettingCard(FIF.MICROPHONE, '小月小月唤醒', '打开语音球后使用本地 Vosk 模型监听；命中后再打开火山流式 ASR', parent=self.wakeGroup)
-        self.wakeEnabledCard.setChecked(bool(wake_cfg.get('enabled', wake_defaults['enabled'])))
-        self.wakeWordsCard = LineEditSettingCard(FIF.MESSAGE, '唤醒词', '多个词用逗号分隔，例如：小月小月,小月', placeholder='小月小月', parent=self.wakeGroup)
-        self.wakeWordsCard.setText(wake_cfg.get('words', wake_defaults['words']))
+        self.testBtn.clicked.connect(self._test)
 
         doubao_call_cfg = config.doubao_call_config
-        self.doubaoCallGroup = SettingCardGroup('豆包通话', self.scrollWidget)
-        self.doubaoCallSpeakerCard = ComboSettingCard(DOUBAO_CALL_VOICE_OPTIONS, FIF.PEOPLE, '通话音色', '豆包通话语音回复使用的发音人', self.doubaoCallGroup)
+        self.doubaoCallSpeakerCard = ComboSettingCard(DOUBAO_CALL_VOICE_OPTIONS, FIF.PEOPLE, '豆包通话音色', '仅在豆包通话中使用的音色', self.apiGroup)
         self.doubaoCallSpeakerCard.setCurrentValue(doubao_call_cfg.get('speaker', config.DEFAULT_DOUBAO_CALL_CONFIG['speaker']))
 
-        self.linkGroup = SettingCardGroup('相关链接', self.scrollWidget)
-        self.linkCard = SettingCard(FIF.LINK, '火山语音资源', '服务开通、在线体验和 API 教程', self.linkGroup)
-        self.serviceBtn = PrimaryPushButton('服务开通', self.linkCard)
-        self.experienceBtn = PrimaryPushButton('在线体验', self.linkCard)
-        self.apiDocBtn = PrimaryPushButton('API 教程', self.linkCard)
-        self.linkCard.hBoxLayout.addStretch(1)
-        self.linkCard.hBoxLayout.addWidget(self.serviceBtn, 0, Qt.AlignRight)
-        self.linkCard.hBoxLayout.addSpacing(8)
-        self.linkCard.hBoxLayout.addWidget(self.experienceBtn, 0, Qt.AlignRight)
-        self.linkCard.hBoxLayout.addSpacing(8)
-        self.linkCard.hBoxLayout.addWidget(self.apiDocBtn, 0, Qt.AlignRight)
-        self.linkCard.hBoxLayout.addSpacing(16)
-        self.serviceBtn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl('https://console.volcengine.com/speech/new/setting/activate?_vtm_=a106466.b106468.0_0.0_0.0.44_7656326907147814435&projectName=default.')))
-        self.experienceBtn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl('https://console.volcengine.com/speech/new/experience/tts?projectName=default')))
-        self.apiDocBtn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl('https://www.volcengine.com/docs/6561/2528925?lang=zh')))
-
-        self.actionCard = SettingCard(FIF.VOLUME, '测试语音', '播放一段测试语音，文件保存在 data/tts_preview', self.apiGroup)
-        self.testBtn = PrimaryPushButton('测试语音', self.actionCard)
-        self.openPreviewDirBtn = PrimaryPushButton('打开文件夹', self.actionCard)
-        self.actionCard.hBoxLayout.addStretch(1)
-        self.actionCard.hBoxLayout.addWidget(self.openPreviewDirBtn, 0, Qt.AlignRight)
-        self.actionCard.hBoxLayout.addSpacing(8)
-        self.actionCard.hBoxLayout.addWidget(self.testBtn, 0, Qt.AlignRight)
-        self.actionCard.hBoxLayout.addSpacing(16)
-        self.testBtn.clicked.connect(self._test)
-        self.openPreviewDirBtn.clicked.connect(self._open_preview_dir)
-
-        for card in [self.enabledCard, self.apiKeyCard, self.voiceCard, self.maxCharsCard, self.testTextCard, self.actionCard]:
+        for card in [self.enabledCard, self.apiKeyCard, self.voiceCard, self.doubaoCallSpeakerCard, self.maxCharsCard, self.testTextCard]:
             self.apiGroup.addSettingCard(card)
-        for card in [self.continuousVoiceCard, self.wakeEnabledCard, self.wakeWordsCard]:
-            self.wakeGroup.addSettingCard(card)
-        self.doubaoCallGroup.addSettingCard(self.doubaoCallSpeakerCard)
-        self.linkGroup.addSettingCard(self.linkCard)
         self.expandLayout.addWidget(self.apiGroup)
-        self.expandLayout.addWidget(self.wakeGroup)
-        self.expandLayout.addWidget(self.doubaoCallGroup)
-        self.expandLayout.addWidget(self.linkGroup)
+
+        daily_cfg = config.daily_input_config
+        self.dailyGroup = SettingCardGroup('语音输入小助手', self.scrollWidget)
+        self.dailyEnabledCard = SwitchSettingCard(FIF.MICROPHONE, '模拟语音输入法功能', '开启后按鼠标中键开始/停止录音，识别结果自动打字到当前输入框', parent=self.dailyGroup)
+        self.dailyEnabledCard.setChecked(bool(daily_cfg.get('enabled', False)))
+        self.dailyGroup.addSettingCard(self.dailyEnabledCard)
+        self.expandLayout.addWidget(self.dailyGroup)
         self._initializing = False
 
     def _style_editor(self, editor):
@@ -144,7 +124,7 @@ class TTSPage(MiniPetScrollPage):
         if text:
             digest = hashlib.sha1(text.encode('utf-8')).hexdigest()[:12]
             safe_name = '%s_%s' % (safe_name, digest)
-        return config.DATA_DIR / 'tts_preview' / (safe_name + '.pcm')
+        return config.DATA_DIR / 'tts_preview' / (safe_name + '.wav')
 
     def _preview_text(self, voice_value):
         custom_text = self.testTextEdit.toPlainText().strip()
@@ -193,34 +173,26 @@ class TTSPage(MiniPetScrollPage):
             'max_length_to_filter_parenthesis': config.DEFAULT_TTS_CONFIG['max_length_to_filter_parenthesis'],
         }
 
-    def _collect_voice_chat(self):
-        return {
-            'continuous': self.continuousVoiceCard.isChecked(),
-        }
-
-    def _collect_wake_word(self):
-        defaults = config.DEFAULT_WAKE_WORD_CONFIG
-        return {
-            'enabled': self.wakeEnabledCard.isChecked(),
-            'words': self.wakeWordsCard.text().strip() or defaults['words'],
-            'model_dir': defaults['model_dir'],
-            'sample_rate': defaults['sample_rate'],
-            'chunk_ms': defaults['chunk_ms'],
-            'restart_delay_ms': defaults['restart_delay_ms'],
-        }
-
     def _collect_doubao_call(self):
         return {
             'speaker': self.doubaoCallSpeakerCard.currentValue() or config.DEFAULT_DOUBAO_CALL_CONFIG['speaker'],
         }
 
+    def _collect_daily_input(self):
+        return {'enabled': self.dailyEnabledCard.isChecked()}
+
     def _save(self):
         config.save_tts_config(self._collect())
-        config.save_voice_chat_config(self._collect_voice_chat())
-        config.save_wake_word_config(self._collect_wake_word())
         config.save_doubao_call_config(self._collect_doubao_call())
+        config.save_daily_input_config(self._collect_daily_input())
         self.settings_changed.emit()
         InfoBar.success('保存成功', '语音配置已保存', duration=2000, position=InfoBarPosition.BOTTOM, parent=self.window())
+
+    def _export_path(self, voice_value):
+        import datetime
+        safe_voice = ''.join(ch if ch.isalnum() or ch in ('-', '_') else '_' for ch in voice_value)
+        ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        return config.DATA_DIR / 'tts_export' / ('%s_%s.wav' % (safe_voice, ts))
 
     def _test(self):
         cfg = self._collect()
@@ -232,7 +204,11 @@ class TTSPage(MiniPetScrollPage):
         self.testBtn.setText('播放中...')
         voice_value = cfg['voice_name']
         preview_text = self._preview_text(voice_value)
-        self.worker = TtsCacheWorker(preview_text, cfg, self._voice_preview_path(voice_value, preview_text), parent=self)
+        custom_text = self.testTextEdit.toPlainText().strip()
+        preview_path = self._voice_preview_path(voice_value, preview_text)
+        export_path = self._export_path(voice_value) if custom_text else None
+        self._test_export_path = export_path
+        self.worker = TtsCacheWorker(preview_text, cfg, preview_path, export_path=export_path, parent=self)
         self.worker.result_ready.connect(self._on_test_result)
         self.worker.start()
 
@@ -240,8 +216,97 @@ class TTSPage(MiniPetScrollPage):
         self.testBtn.setEnabled(True)
         self.testBtn.setText('测试语音')
         if success:
-            InfoBar.success('测试成功', '语音已播放完成，文件保存在 data/tts_preview', duration=3000, position=InfoBarPosition.BOTTOM, parent=self.window())
+            export_path = getattr(self, '_test_export_path', None)
+            if export_path:
+                InfoBar.success('测试成功', '已保存到 %s' % export_path, duration=5000, position=InfoBarPosition.BOTTOM, parent=self.window())
+            else:
+                InfoBar.success('测试成功', '语音已播放完成，文件保存在 data/tts_preview', duration=3000, position=InfoBarPosition.BOTTOM, parent=self.window())
         else:
             InfoBar.error('测试失败', text[:120], duration=5000, position=InfoBarPosition.BOTTOM, parent=self.window())
 
 
+class WakePage(MiniPetScrollPage):
+    settings_changed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__('唤醒词', parent, save_callback=lambda: self._save())
+        from qfluentwidgets import LineEdit, SwitchButton
+        voice_chat_cfg = config.voice_chat_config
+        voice_chat_defaults = config.DEFAULT_VOICE_CHAT_CONFIG
+        wake_cfg = config.wake_word_config
+        wake_defaults = config.DEFAULT_WAKE_WORD_CONFIG
+
+        self.wakeGroup = SettingCardGroup('唤醒词设置', self.scrollWidget)
+        self.wakeEnabledCard = SettingCard(FIF.MICROPHONE, '唤醒词', '打开语音球后使用本地模型监听；命中后再使用火山模型流式语音识别', self.wakeGroup)
+        self.wakeWordsEdit = LineEdit(self.wakeEnabledCard)
+        self.wakeWordsEdit.setPlaceholderText('小月')
+        self.wakeWordsEdit.setFixedWidth(160)
+        self.wakeWordsEdit.setClearButtonEnabled(True)
+        self.wakeWordsEdit.setText(wake_cfg.get('words', wake_defaults['words']))
+        self.wakeSwitch = SwitchButton(self.wakeEnabledCard)
+        self.wakeSwitch.setChecked(bool(wake_cfg.get('enabled', wake_defaults['enabled'])))
+        self.wakeEnabledCard.hBoxLayout.addStretch(1)
+        self.wakeEnabledCard.hBoxLayout.addWidget(self.wakeWordsEdit, 0, Qt.AlignRight)
+        self.wakeEnabledCard.hBoxLayout.addSpacing(16)
+        self.wakeEnabledCard.hBoxLayout.addWidget(self.wakeSwitch, 0, Qt.AlignRight)
+        self.wakeEnabledCard.hBoxLayout.addSpacing(16)
+
+        self.dialogGroup = SettingCardGroup('连续对话', self.scrollWidget)
+        self.continuousVoiceCard = SwitchSettingCard(FIF.CHAT, '连续对话', '开启后每轮回复结束会自动进入下一次接听；关闭后则等待下一次唤醒', parent=self.dialogGroup)
+        self.continuousVoiceCard.setChecked(bool(voice_chat_cfg.get('continuous', voice_chat_defaults['continuous'])))
+
+        self.wakeGroup.addSettingCard(self.wakeEnabledCard)
+        self.dialogGroup.addSettingCard(self.continuousVoiceCard)
+        self.expandLayout.addWidget(self.wakeGroup)
+        self.expandLayout.addWidget(self.dialogGroup)
+
+    def _collect_voice_chat(self):
+        return {'continuous': self.continuousVoiceCard.isChecked()}
+
+    def _collect_wake_word(self):
+        defaults = config.DEFAULT_WAKE_WORD_CONFIG
+        return {
+            'enabled': self.wakeSwitch.isChecked(),
+            'words': self.wakeWordsEdit.text().strip() or defaults['words'],
+            'model_dir': defaults['model_dir'],
+            'sample_rate': defaults['sample_rate'],
+            'chunk_ms': defaults['chunk_ms'],
+            'restart_delay_ms': defaults['restart_delay_ms'],
+        }
+
+    def _save(self):
+        config.save_voice_chat_config(self._collect_voice_chat())
+        config.save_wake_word_config(self._collect_wake_word())
+        self.settings_changed.emit()
+        InfoBar.success('保存成功', '唤醒词配置已保存', duration=2000, position=InfoBarPosition.BOTTOM, parent=self.window())
+
+
+class DailyInputPage(MiniPetScrollPage):
+    settings_changed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__('日常语音输入', parent, save_callback=lambda: self._save())
+        cfg = config.daily_input_config
+
+        self.mainGroup = SettingCardGroup('日常工作语音输入', self.scrollWidget)
+        self.enabledCard = SwitchSettingCard(
+            FIF.MICROPHONE,
+            '启用鼠标中键语音输入',
+            '开启后按鼠标中键开始/停止录音，识别结果自动打字到当前输入框',
+            parent=self.mainGroup,
+        )
+        self.enabledCard.setChecked(bool(cfg.get('enabled', False)))
+
+        self.noteCard = SettingCard(FIF.INFO, '使用说明', '依赖"语音设置"中配置的火山豆包 API Key', self.mainGroup)
+
+        self.mainGroup.addSettingCard(self.enabledCard)
+        self.mainGroup.addSettingCard(self.noteCard)
+        self.expandLayout.addWidget(self.mainGroup)
+
+    def _collect(self):
+        return {'enabled': self.enabledCard.isChecked()}
+
+    def _save(self):
+        config.save_daily_input_config(self._collect())
+        self.settings_changed.emit()
+        InfoBar.success('保存成功', '日常语音输入配置已保存', duration=2000, position=InfoBarPosition.BOTTOM, parent=self.window())

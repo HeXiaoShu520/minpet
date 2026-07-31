@@ -17,50 +17,22 @@ from clients.event_client import probe_minipet_backend
 from clients.llm_client import ChatWorker
 from clients.openclaw_client import probe_openclaw_gateway
 from widgets.setting_cards import ComboSettingCard, LineEditSettingCard, RangeSettingCard
+from theme import THEME_OPTIONS, THEMES, DEFAULT_THEME
 
 
-REPLY_CARD_STYLE_OPTIONS = [
-    ('aurora', '极光渐变'),
-    ('glass', '玻璃拟态'),
-    ('cream', '奶油暖色'),
-    ('mint', '清新薄荷'),
-    ('dark', '深色半透'),
-]
+STYLE_PREVIEW_QSS = {
+    name: data['preview_qss']
+    for name, data in THEMES.items()
+}
 
-VOICE_ORB_STYLE_OPTIONS = [
-    ('jade', '温润玉石'),
-    ('mint', '薄荷蓝绿'),
-    ('violet', '紫罗兰'),
-    ('sakura', '樱花粉'),
-    ('sunset', '日落橙'),
-    ('mono', '极简灰'),
-]
 
 VOICE_FOLLOW_EFFECT_OPTIONS = [
     ('spring', '弹力绳'),
     ('magnet', '丝滑吸附'),
 ]
 
-STYLE_PREVIEW_QSS = {
-    'reply': {
-        'aurora': 'background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #fffdfa,stop:0.55 #f7fbff,stop:1 #f6f1ff);border:1px solid #e4d7ff;border-radius:12px;',
-        'glass': 'background:rgba(255,255,255,0.72);border:1px solid rgba(255,255,255,0.85);border-radius:12px;',
-        'cream': 'background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #fffaf0,stop:1 #fff2dc);border:1px solid #f5d2a0;border-radius:12px;',
-        'mint': 'background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #f4fffb,stop:1 #e9fff7);border:1px solid #96e1d2;border-radius:12px;',
-        'dark': 'background:#242a3a;border:1px solid #5a6991;border-radius:12px;',
-    },
-    'voice': {
-        'jade': 'background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #f6fff9,stop:0.55 #dff7ec,stop:1 #c8eadc);border:1px solid #8bcdb4;border-radius:14px;',
-        'mint': 'background:#f5f3ff;border:1px solid #a89eff;border-radius:14px;',
-        'violet': 'background:#f8f4ff;border:1px solid #b796ff;border-radius:14px;',
-        'sakura': 'background:#fff6fa;border:1px solid #ffaacd;border-radius:14px;',
-        'sunset': 'background:#fff9f0;border:1px solid #ffb969;border-radius:14px;',
-        'mono': 'background:#f6f7f9;border:1px solid #b9c0cd;border-radius:14px;',
-    },
-}
 
-
-def _attach_style_preview(card, kind):
+def _attach_style_preview(card):
     preview = QLabel(card)
     preview.setFixedSize(92, 32)
     preview.setAlignment(Qt.AlignCenter)
@@ -68,9 +40,10 @@ def _attach_style_preview(card, kind):
 
     def update_preview(value=None):
         value = value or card.currentValue()
-        qss = STYLE_PREVIEW_QSS.get(kind, {}).get(value, '')
-        color = '#f4f6fb' if value == 'dark' else '#263238'
-        text = '回复' if kind == 'reply' else '● 语音'
+        qss = STYLE_PREVIEW_QSS.get(value, '')
+        theme_data = THEMES.get(value, THEMES[DEFAULT_THEME])
+        color = '#f4f6fb' if theme_data['card']['dark'] else '#263238'
+        text = theme_data.get('_label', value)
         preview.setText(text)
         preview.setStyleSheet('QLabel{%s color:%s; font:12px "Microsoft YaHei UI"; font-weight:600;}' % (qss, color))
 
@@ -89,14 +62,13 @@ class BasicPage(MiniPetScrollPage):
         typewriter_defaults = config.DEFAULT_TYPEWRITER_CONFIG
 
         self.visualGroup = SettingCardGroup('视觉样式', self.scrollWidget)
-        self.replyCardStyleCard = ComboSettingCard(REPLY_CARD_STYLE_OPTIONS, FIF.MESSAGE, '回复卡片样式', '选择 AI 回复、本地提示和协议卡片的视觉风格', self.visualGroup)
-        self.replyCardStyleCard.setCurrentValue(config.app_config.get('reply_card_style', 'aurora'))
-        _attach_style_preview(self.replyCardStyleCard, 'reply')
-        self.voiceOrbStyleCard = ComboSettingCard(VOICE_ORB_STYLE_OPTIONS, FIF.VOLUME, '语音球样式', '选择语音悬浮球的颜色风格', self.visualGroup)
-        self.voiceOrbStyleCard.setCurrentValue(config.app_config.get('voice_orb_style', 'jade'))
-        _attach_style_preview(self.voiceOrbStyleCard, 'voice')
+        self.appThemeCard = ComboSettingCard(THEME_OPTIONS, FIF.PALETTE, '整体风格', '统一设置回复卡片、语音球、快捷输入框、菜单、聊天窗口等的视觉风格', self.visualGroup)
+        self.appThemeCard.setCurrentValue(config.app_config.get('app_theme', DEFAULT_THEME))
+        _attach_style_preview(self.appThemeCard)
         self.voiceFollowEffectCard = ComboSettingCard(VOICE_FOLLOW_EFFECT_OPTIONS, FIF.SPEED_HIGH, '语音球跟随效果', '弹力绳有惯性过冲；丝滑吸附更稳、更少跳变', self.visualGroup)
         self.voiceFollowEffectCard.setCurrentValue(config.app_config.get('voice_follow_effect', 'spring'))
+        self.volumeCard = RangeSettingCard(0, 100, 0.01, FIF.VOLUME, '声音大小', '影响语音播报、语音聊天和豆包通话的音量', self.visualGroup)
+        self.volumeCard.setValue(round(float(config.app_config.get('volume', 0.4)) * 100))
 
         self.replyDisplayGroup = SettingCardGroup('回复设置', self.scrollWidget)
         self.typewriterEnabledCard = SwitchSettingCard(FIF.MESSAGE, '打印字效果', '开启后，回复文字会一字一字显示；关闭后直接显示完整回复', parent=self.replyDisplayGroup)
@@ -108,9 +80,9 @@ class BasicPage(MiniPetScrollPage):
         self.typewriterTtsDelayCard = RangeSettingCard(0, 3000, 1, FIF.VOLUME, '语音播报文字延迟', '开启语音播报时，回复文字延迟显示的时间，单位毫秒', self.replyDisplayGroup)
         self.typewriterTtsDelayCard.setValue(int(typewriter_cfg.get('tts_delay_ms', typewriter_defaults['tts_delay_ms'])))
 
-        self.visualGroup.addSettingCard(self.replyCardStyleCard)
-        self.visualGroup.addSettingCard(self.voiceOrbStyleCard)
+        self.visualGroup.addSettingCard(self.appThemeCard)
         self.visualGroup.addSettingCard(self.voiceFollowEffectCard)
+        self.visualGroup.addSettingCard(self.volumeCard)
         for card in [self.typewriterEnabledCard, self.typewriterSpeedCard, self.typewriterMaxDurationCard, self.typewriterTtsDelayCard]:
             self.replyDisplayGroup.addSettingCard(card)
         self.expandLayout.addWidget(self.visualGroup)
@@ -118,9 +90,9 @@ class BasicPage(MiniPetScrollPage):
 
     def _save(self):
         config.app_config.update({
-            'reply_card_style': self.replyCardStyleCard.currentValue() or 'aurora',
-            'voice_orb_style': self.voiceOrbStyleCard.currentValue() or 'jade',
+            'app_theme': self.appThemeCard.currentValue() or DEFAULT_THEME,
             'voice_follow_effect': self.voiceFollowEffectCard.currentValue() or 'spring',
+            'volume': round(float(self.volumeCard.value()), 2),
         })
         config.app_config.pop('voice_follow_level', None)
         config.save_app_config()

@@ -9,7 +9,7 @@ from qfluentwidgets import FluentIcon as FIF
 
 import config
 from base_page import MiniPetScrollPage
-from widgets.setting_cards import AvatarPathSettingCard, ComboSettingCard, LineEditSettingCard
+from widgets.setting_cards import AvatarPathSettingCard, ComboSettingCard, LineEditSettingCard, RangeSettingCard
 
 
 def _icon(name):
@@ -56,6 +56,9 @@ class RolePage(MiniPetScrollPage):
         self.petGroup.addSettingCard(self.petNameCard)
         self.petGroup.addSettingCard(self.petAvatarCard)
         self.petGroup.addSettingCard(self.petCard)
+        self.scaleCard = RangeSettingCard(50, 200, 0.01, _icon('homestar.svg'), '宠物大小', '宠物窗口的缩放比例，重启后生效', self.petGroup)
+        self.scaleCard.setValue(round(float(config.app_config.get('scale', 1.0)) * 100))
+        self.petGroup.addSettingCard(self.scaleCard)
         self.petGroup.addSettingCard(self.roleCard)
         self.expandLayout.addWidget(self.userGroup)
         self.expandLayout.addWidget(self.petGroup)
@@ -93,6 +96,7 @@ class RolePage(MiniPetScrollPage):
             'pet_name': self.petNameCard.text(),
             'pet_avatar': self.petAvatarCard.text(),
             'user_avatar': self.userAvatarCard.text(),
+            'scale': round(float(self.scaleCard.value()), 2),
         })
         config.save_app_config()
         cfg = dict(config.llm_config)

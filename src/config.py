@@ -57,6 +57,7 @@ DEFAULT_APP_CONFIG = {
     'claude_code_project_dir': str(ROOT_DIR),
     'claude_code_reset_token': 0,
     'claude_code_known_sessions': [],
+    'app_theme': 'aurora',
     'reply_card_style': 'aurora',
     'voice_orb_style': 'jade',
     'voice_follow_effect': 'spring',
@@ -95,6 +96,14 @@ DEFAULT_WAKE_WORD_CONFIG = {
     'sample_rate': 16000,
     'chunk_ms': 160,
     'restart_delay_ms': 1200,
+}
+
+DEFAULT_DAILY_INPUT_CONFIG = {
+    'enabled': False,
+}
+
+DAILY_INPUT_ENV_KEYS = {
+    'enabled': 'DAILY_INPUT_ENABLED',
 }
 
 WAKE_WORD_ENV_KEYS = {
@@ -187,6 +196,7 @@ doubao_call_config = dict(DEFAULT_DOUBAO_CALL_CONFIG)
 voice_chat_config = dict(DEFAULT_VOICE_CHAT_CONFIG)
 typewriter_config = dict(DEFAULT_TYPEWRITER_CONFIG)
 wake_word_config = dict(DEFAULT_WAKE_WORD_CONFIG)
+daily_input_config = dict(DEFAULT_DAILY_INPUT_CONFIG)
 
 # 桌宠窗口运行态。历史代码直接从 config 模块读写这些状态，先保留集中入口。
 current_image = None
@@ -455,7 +465,7 @@ def _save_env_config(config_data, env_keys, defaults, section_title, extra_manag
 
 def load():
     """加载所有配置，并初始化当前宠物等运行时状态。"""
-    global app_config, llm_config, tts_config, doubao_call_config, voice_chat_config, typewriter_config, wake_word_config, current_pet
+    global app_config, llm_config, tts_config, doubao_call_config, voice_chat_config, typewriter_config, wake_word_config, daily_input_config, current_pet
     ensure_data_dir()
     pets = get_pet_list()
 
@@ -470,6 +480,10 @@ def load():
     app_config['on_top'] = True
     app_config['allow_drop'] = True
     app_config.pop('voice_follow_level', None)
+    # 将旧的 reply_card_style/voice_orb_style 迁移到统一的 app_theme
+    if not app_config.get('app_theme'):
+        from theme import migrate_legacy_theme
+        migrate_legacy_theme()
     if app_config.get('agent_backend') == 'codex':
         app_config['agent_backend'] = 'builtin'
     for key in ('codex_project_dir', 'codex_reset_token', 'codex_thread_ids'):
@@ -498,6 +512,7 @@ def load():
     voice_chat_config = _load_env_config(DEFAULT_VOICE_CHAT_CONFIG, VOICE_CHAT_ENV_KEYS)
     typewriter_config = _load_env_config(DEFAULT_TYPEWRITER_CONFIG, TYPEWRITER_ENV_KEYS)
     wake_word_config = _load_env_config(DEFAULT_WAKE_WORD_CONFIG, WAKE_WORD_ENV_KEYS)
+    daily_input_config = _load_env_config(DEFAULT_DAILY_INPUT_CONFIG, DAILY_INPUT_ENV_KEYS)
     save_app_config()
 
 
@@ -547,3 +562,10 @@ def save_wake_word_config(config):
     global wake_word_config
     wake_word_config = dict(config)
     _save_env_config(wake_word_config, WAKE_WORD_ENV_KEYS, DEFAULT_WAKE_WORD_CONFIG, '# MiniPet WakeWord settings')
+
+
+def save_daily_input_config(config):
+    """保存日常工作语音输入配置到 .env。"""
+    global daily_input_config
+    daily_input_config = dict(config)
+    _save_env_config(daily_input_config, DAILY_INPUT_ENV_KEYS, DEFAULT_DAILY_INPUT_CONFIG, '# MiniPet DailyInput settings')

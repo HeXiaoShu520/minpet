@@ -160,10 +160,11 @@ class DoubaoCallWindow(QWidget):
             QLabel#StatusLabel{color:#8b8f99;font-size:16px;font-weight:400;}
             QScrollArea#CaptionScroll{background:transparent;border:none;}
             QScrollArea#CaptionScroll QWidget{background:transparent;}
-            QScrollArea#CaptionScroll QScrollBar:vertical{width:6px;background:transparent;margin:4px 0;}
-            QScrollArea#CaptionScroll QScrollBar::handle:vertical{background:#d5d9e0;border-radius:3px;min-height:28px;}
-            QScrollArea#CaptionScroll QScrollBar::handle:vertical:hover{background:#b9c0ca;}
-            QScrollArea#CaptionScroll QScrollBar::add-line:vertical,QScrollArea#CaptionScroll QScrollBar::sub-line:vertical{height:0;background:transparent;}
+            QScrollArea#CaptionScroll QScrollBar:vertical{width:4px;background:transparent;margin:0;}
+            QScrollArea#CaptionScroll QScrollBar::handle:vertical{background:#c8cdd6;border-radius:2px;min-height:24px;}
+            QScrollArea#CaptionScroll QScrollBar::handle:vertical:hover{background:#a0a8b4;}
+            QScrollArea#CaptionScroll QScrollBar::add-line:vertical,QScrollArea#CaptionScroll QScrollBar::sub-line:vertical{height:0;width:0;background:none;border:none;}
+            QScrollArea#CaptionScroll QScrollBar::add-page:vertical,QScrollArea#CaptionScroll QScrollBar::sub-page:vertical{background:none;}
             QLabel#CaptionView{background:transparent;border:none;font-family:"Microsoft YaHei UI", "Microsoft YaHei", sans-serif;font-size:15px;font-weight:400;line-height:1.75;color:#3f4852;padding:0 10px;}
             QPushButton#ToolButton{border:none;border-radius:22px;background:transparent;color:#8a8a8a;}
             QPushButton#ToolButton:hover{background:#f4f5f7;color:#303133;}

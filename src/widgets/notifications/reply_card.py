@@ -3,9 +3,10 @@
 
 from PySide6.QtCore import QEasingCurve, Property, QElapsedTimer, QPropertyAnimation, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap, QTextDocument
-from PySide6.QtWidgets import QApplication, QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton, QVBoxLayout
+from PySide6.QtWidgets import QApplication, QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton, QSizePolicy, QVBoxLayout
 
 import config
+import theme
 from typewriter import Typewriter
 from widgets.notifications.constants import REPLY_CARD_TIMEOUT_MS
 from widgets.notifications.text_format import has_structured_markdown, markdown_to_html
@@ -18,6 +19,33 @@ REPLY_CARD_MAX_WIDTH = REPLY_CARD_WIDTH_LEVELS[-1]
 REPLY_CARD_AVATAR_SIZE = 36
 REPLY_CARD_RESIZE_ANIM_MS = 180
 REPLY_CARD_COUNTDOWN_TICK_MS = 80
+
+
+class SourceChipWidget(QLabel):
+    """渐变色来源标签。"""
+
+    _CHIP_CSS = {
+        '内置AI':  ('qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #4096ff,stop:1 #69b1ff)', '#4096ff'),
+        'Claude':  ('qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #00b96b,stop:1 #52c41a)', '#00b96b'),
+        'MiniPet': ('qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #fa8c16,stop:1 #ffc53d)', '#fa8c16'),
+        'OpenClaw':('qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #722ed1,stop:1 #9254de)', '#722ed1'),
+    }
+
+    def __init__(self, text, parent=None):
+        super().__init__(text, parent)
+        gradient, border = self._CHIP_CSS.get(text, ('qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #888,stop:1 #aaa)', '#888'))
+        self.setStyleSheet(
+            'QLabel {'
+            '  background: %s;'
+            '  color: white;'
+            '  border-radius: 10px;'
+            '  border: 1px solid rgba(255,255,255,80);'
+            '  padding: 1px 10px;'
+            '  font-weight: 700;'
+            '}' % gradient
+        )
+        self.setAlignment(Qt.AlignCenter)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
 
 class CountdownAvatarLabel(QLabel):
@@ -139,21 +167,16 @@ class CopyableLabel(QLabel):
         self._copy_button.show()
 
 
-def _reply_card_style_qss(style):
-    card = {
-        'glass': 'background: rgba(255,255,255,218); border: 1px solid rgba(255,255,255,210);',
-        'cream': 'background: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #fffaf0,stop:1 #fff2dc); border: 1px solid rgba(245,210,160,220);',
-        'mint': 'background: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #f4fffb,stop:1 #e9fff7); border: 1px solid rgba(150,225,210,220);',
-        'dark': 'background: rgba(36,42,58,238); border: 1px solid rgba(90,105,145,220);',
-        'aurora': 'background: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #fffdfa,stop:0.54 #f7fbff,stop:1 #f6f1ff); border: 1px solid rgba(228,215,255,210);',
-    }.get(style, '')
-    dark = style == 'dark'
-    title = '#f3f6ff' if dark else '#202436'
-    body = '#d9e0f2' if dark else '#3a4054'
-    meta = '#9faad0' if dark else '#8b93a7'
-    box_bg = 'rgba(255,255,255,35)' if dark else '#ffffff'
+def _reply_card_style_qss(style=None):
+    t = theme.get_theme(style) if style else theme.current_theme()
+    c = t['card']
+    card_css = 'background: %s; border: 1px solid %s;' % (c['bg'], c['border'])
+    title = c['title']
+    body = c['body']
+    meta = c['meta']
+    box_bg = c['box_bg']
     return f'''
-            QFrame#ReplyCard {{ border-radius: 22px; {card} }}
+            QFrame#ReplyCard {{ border-radius: 22px; {card_css} }}
             QFrame#ReplyCardSectionBox {{ border: 1px solid rgba(222,231,255,180); border-radius: 14px; background: {box_bg}; }}
             QFrame#ReplyCardHr {{ border: none; border-top: 1px solid rgba(180,190,215,130); background: transparent; max-height: 1px; }}
             QLabel {{ border: none; background: transparent; font-family: "Microsoft YaHei UI", "Microsoft YaHei"; }}
@@ -169,6 +192,7 @@ def _reply_card_style_qss(style):
             QPushButton#PrimaryAction {{ border: 1px solid #7ebcff; background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #5aa8ff,stop:1 #8b7cff); color: white; font-weight: 700; }}
             QPushButton#DangerAction {{ background: #fff1f0; color: #d93026; border-color: #ffd1cc; }}
             QPushButton#QuietAction {{ background: transparent; color: {meta}; border-color: transparent; }}
+            QLabel#SourceChip {{ border-radius: 8px; padding: 1px 7px; font-size: 11px; font-weight: 700; }}
         '''
 
 
@@ -177,6 +201,7 @@ class ReplyCard(ReplyCardWindow):
 
     action_clicked = Signal(dict, dict)
     layout_changed = Signal()
+    quote_reply_submitted = Signal(str, str, str, str)  # card_id, full_message, quoted_text, user_text
 
     def __init__(self, card_id, event, timeout=REPLY_CARD_TIMEOUT_MS, parent=None):
         super().__init__(card_id, parent, fade_in=True, initial_opacity=0.0)
@@ -198,7 +223,7 @@ class ReplyCard(ReplyCardWindow):
         self._content_resize_pending = False
         self._timeout_ms = 0
         self._countdown_elapsed = QElapsedTimer()
-        self.setStyleSheet(_reply_card_style_qss(config.app_config.get('reply_card_style', 'aurora')))
+        self.setStyleSheet(_reply_card_style_qss())
         # 顶层透明窗口叠加 QGraphicsDropShadowEffect 在 Windows 多屏/缩放环境下
         # 容易产生负 dirty rect，触发 UpdateLayeredWindowIndirect 参数错误。
         # 卡片本身已有边框和半透明背景，这里不再给顶层窗口加 Qt 阴影。
@@ -225,6 +250,7 @@ class ReplyCard(ReplyCardWindow):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(card)
         self.adjustSize()
+        self._clamp_height()
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.request_close)
@@ -265,6 +291,13 @@ class ReplyCard(ReplyCardWindow):
         self._content_resize_pending = True
         QTimer.singleShot(0, self._resize_to_current_content)
 
+    def _clamp_height(self):
+        screen = QApplication.screenAt(self.pos()) or QApplication.primaryScreen()
+        if screen is None:
+            return
+        max_h = int(screen.availableGeometry().height() * 0.8)
+        self.setMaximumHeight(max_h)
+
     def _resize_to_current_content(self):
         self._content_resize_pending = False
         if self.closing:
@@ -277,6 +310,7 @@ class ReplyCard(ReplyCardWindow):
         if layout is not None:
             layout.activate()
         self.adjustSize()
+        self._clamp_height()
         if self.size() != old_size:
             self._move_to_resize_anchor(anchor_center_x, anchor_bottom_y)
             self.layout_changed.emit()
@@ -336,6 +370,7 @@ class ReplyCard(ReplyCardWindow):
         self.resize(width, self.height())
         self._sync_content_widths()
         self.adjustSize()
+        self._clamp_height()
         self._move_to_resize_anchor(anchor_center_x, anchor_bottom_y)
         self._refresh_topmost_soon()
 
@@ -439,6 +474,15 @@ class ReplyCard(ReplyCardWindow):
         title_row.addWidget(self.title_label, 0, Qt.AlignVCenter)
         title_row.addWidget(self.status_label, 0, Qt.AlignVCenter)
         title_row.addStretch(1)
+        source_label_text = str(self.event_data.get('source_label') or '')
+        if source_label_text:
+            from PySide6.QtGui import QFont as _QFont
+            self.source_chip = SourceChipWidget(source_label_text, card)
+            f = _QFont(self.font().family(), 10, _QFont.Bold)
+            self.source_chip.setFont(f)
+            title_row.addWidget(self.source_chip, 0, Qt.AlignVCenter)
+        else:
+            self.source_chip = None
         header.addLayout(title_row, 1)
         self.layout_box.addLayout(header)
         self._refresh_title_meta()
@@ -542,6 +586,7 @@ class ReplyCard(ReplyCardWindow):
             self._animate_card_width_to(new_width, anchor_center_x, anchor_bottom_y)
         else:
             self.adjustSize()
+            self._clamp_height()
             self._move_to_resize_anchor(anchor_center_x, anchor_bottom_y)
             self._refresh_topmost_soon()
 
@@ -763,6 +808,82 @@ class ReplyCard(ReplyCardWindow):
             event['values'] = values
         self.action_clicked.emit(event, action)
         self.request_close()
+
+    def _on_double_click(self):
+        if hasattr(self, '_quote_area') and self._quote_area is not None:
+            self._collapse_quote_area()
+        else:
+            self._expand_quote_area()
+
+    def _expand_quote_area(self):
+        from PySide6.QtWidgets import QPlainTextEdit
+        from PySide6.QtGui import QKeySequence, QShortcut, QFont as _QFont
+        self._make_permanent()
+        card = None
+        for child in self.children():
+            if hasattr(child, 'objectName') and child.objectName() == 'ReplyCard':
+                card = child
+                break
+        if card is None:
+            card = self
+        area = QFrame(card)
+        area.setObjectName('QuoteInputArea')
+        area.setStyleSheet('QFrame#QuoteInputArea { background: transparent; border: none; }')
+        area_layout = QVBoxLayout(area)
+        area_layout.setContentsMargins(0, 4, 0, 0)
+        area_layout.setSpacing(5)
+        hr = QFrame(area)
+        hr.setObjectName('ReplyCardHr')
+        hr.setFixedHeight(1)
+        area_layout.addWidget(hr)
+        edit = QPlainTextEdit(area)
+        edit.setObjectName('QuoteInputEdit')
+        edit.setPlaceholderText('输入内容…')
+        edit.setMaximumHeight(72)
+        edit.setStyleSheet(
+            'QPlainTextEdit#QuoteInputEdit { border: 1px solid rgba(218,226,238,220); border-radius: 9px;'
+            ' background: rgba(255,255,255,210); padding: 6px 8px; font: 13px "Microsoft YaHei UI"; }'
+        )
+        area_layout.addWidget(edit)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        cancel_btn = QPushButton('取消', area)
+        cancel_btn.setObjectName('QuietAction')
+        cancel_btn.clicked.connect(self._collapse_quote_area)
+        btn_row.addWidget(cancel_btn)
+        send_btn = QPushButton('发送', area)
+        send_btn.setObjectName('PrimaryAction')
+        send_btn.clicked.connect(self._send_quote_reply)
+        btn_row.addWidget(send_btn)
+        area_layout.addLayout(btn_row)
+        sc = QShortcut(QKeySequence('Return'), edit)
+        sc.activated.connect(self._send_quote_reply)
+        self.layout_box.addWidget(area)
+        self._quote_area = area
+        self._quote_edit = edit
+        self._schedule_content_resize()
+        edit.setFocus()
+
+    def _collapse_quote_area(self):
+        if hasattr(self, '_quote_area') and self._quote_area is not None:
+            self._quote_area.deleteLater()
+            self._quote_area = None
+            self._quote_edit = None
+            self._schedule_content_resize()
+
+    def _send_quote_reply(self):
+        if not hasattr(self, '_quote_edit') or self._quote_edit is None:
+            return
+        user_text = self._quote_edit.toPlainText().strip()
+        if not user_text:
+            return
+        quoted = (self._primary_text or '').replace('\n', ' ').strip()
+        summary = quoted[:60] + ('...' if len(quoted) > 60 else '')
+        # 发给 LLM 的拼接文本
+        full_message = '对方引用了"%s"，他的输入是：%s' % (summary, user_text)
+        self._collapse_quote_area()
+        # 传递引用原文用于展示
+        self.quote_reply_submitted.emit(self.card_id, full_message, quoted, user_text)
 
     def _before_close_event(self):
         self.countdown_timer.stop()

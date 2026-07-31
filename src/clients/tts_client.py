@@ -18,6 +18,7 @@ import struct
 import threading
 import time
 import uuid
+import wave
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
@@ -302,17 +303,26 @@ def _speak(text, cfg):
         player.close()
 
 
-def _synthesize_to_file(text, cfg, file_path):
+def _write_wav(file_path, pcm_chunks):
     file_path = Path(file_path)
     file_path.parent.mkdir(parents=True, exist_ok=True)
-    has_audio = False
-    with file_path.open('wb') as f:
-        for sentence in split_sentences(text):
-            for payload in _request_audio_chunks(sentence, cfg):
-                has_audio = True
-                f.write(payload)
-    if not has_audio:
+    with wave.open(str(file_path), 'wb') as wf:
+        wf.setnchannels(CHANNELS)
+        wf.setsampwidth(SAMPLE_WIDTH)
+        wf.setframerate(SAMPLE_RATE)
+        for chunk in pcm_chunks:
+            wf.writeframes(chunk)
+
+
+def _synthesize_to_file(text, cfg, file_path):
+    file_path = Path(file_path)
+    chunks = []
+    for sentence in split_sentences(text):
+        for payload in _request_audio_chunks(sentence, cfg):
+            chunks.append(payload)
+    if not chunks:
         raise TtsPlaybackError('TTS: no audio received')
+    _write_wav(file_path, chunks)
 
 
 def synthesize_to_file(text, cfg, file_path):
@@ -328,12 +338,20 @@ def play_pcm_file(file_path):
     with _active_lock:
         _active_player = player
     try:
-        with file_path.open('rb') as f:
-            while True:
-                chunk = f.read(BUFFER_SIZE)
-                if not chunk:
-                    break
-                player.write(chunk)
+        if file_path.suffix.lower() == '.wav':
+            with wave.open(str(file_path), 'rb') as wf:
+                while True:
+                    chunk = wf.readframes(BUFFER_SIZE)
+                    if not chunk:
+                        break
+                    player.write(chunk)
+        else:
+            with file_path.open('rb') as f:
+                while True:
+                    chunk = f.read(BUFFER_SIZE)
+                    if not chunk:
+                        break
+                    player.write(chunk)
         player.wait_done()
     finally:
         with _active_lock:
@@ -392,18 +410,23 @@ class TtsWorker(QThread):
 class TtsCacheWorker(QThread):
     result_ready = Signal(bool, str)
 
-    def __init__(self, text, cfg, file_path, parent=None):
+    def __init__(self, text, cfg, file_path, export_path=None, parent=None):
         super().__init__(parent)
         self.text = text
         self.cfg = dict(cfg)
         self.file_path = Path(file_path)
+        self.export_path = Path(export_path) if export_path else None
 
     def run(self):
         try:
             stop_tts()
             synthesize_to_file(self.text, self.cfg, self.file_path)
+            if self.export_path:
+                import shutil
+                self.export_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(self.file_path, self.export_path)
             play_pcm_file(self.file_path)
-            self.result_ready.emit(True, str(self.file_path))
+            self.result_ready.emit(True, str(self.export_path or self.file_path))
         except Exception as e:
             if self.file_path.exists() and self.file_path.stat().st_size == 0:
                 self.file_path.unlink()

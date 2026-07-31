@@ -11,9 +11,28 @@ from PySide6.QtMultimedia import QSoundEffect
 from PySide6.QtWidgets import QApplication, QFrame
 
 import config
-
+import theme as _theme
 
 EASTER_POPUP_GAP = 16
+
+
+def _parse_theme_color(css_value, fallback):
+    """从 CSS 颜色值提取 RGBA 分量，失败时返回 fallback tuple。"""
+    import re
+    if isinstance(css_value, (tuple, list)):
+        return tuple(css_value)
+    s = str(css_value).strip()
+    m = re.match(r'rgba?\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)', s)
+    if m:
+        r, g, b = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        a = int(float(m.group(4)) * (1 if float(m.group(4)) <= 1 else 1)) if m.group(4) else 255
+        a = int(float(m.group(4)) * 255) if m.group(4) and float(m.group(4)) <= 1 else (int(m.group(4)) if m.group(4) else 255)
+        return (r, g, b, a)
+    if s.startswith('#'):
+        h = s.lstrip('#')
+        if len(h) == 6:
+            return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), 230)
+    return fallback
 
 
 def easter_popup_pos(x, y, size, gap=EASTER_POPUP_GAP):
@@ -165,7 +184,12 @@ class EasterGamePopup(QFrame):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.RightButton:
-            self.close()
+            now = time.time()
+            if now - getattr(self, '_last_right_click_time', 0) < 0.4:
+                self.close()
+                self._last_right_click_time = 0
+            else:
+                self._last_right_click_time = now
             event.accept()
             return
         if event.button() == Qt.LeftButton and self.childAt(event.pos()) is None:
@@ -195,16 +219,22 @@ class EasterGamePopup(QFrame):
         if not self.dragging:
             self.move(easter_popup_pos(self.anchor_x, self.anchor_y, self.size()))
 
-    def _draw_card(self, painter, bg=QColor(255, 250, 238, 246), border=QColor(225, 205, 165, 230)):
+    def _draw_card(self, painter, bg=None, border=None):
+        t = _theme.current_theme()
+        if bg is None:
+            bg = QColor(*_parse_theme_color(t['card']['bg'], (255, 250, 238, 246)))
+        if border is None:
+            border = QColor(*_parse_theme_color(t['card']['border'], (225, 205, 165, 230)))
+        fg = QColor(t['easter_fg'])
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(80, 54, 24, 35))
+        painter.setBrush(QColor(0, 0, 0, 30))
         painter.drawRoundedRect(18, 20, self.width() - 36, self.height() - 30, 22, 22)
         painter.setBrush(bg)
         painter.setPen(QPen(border, 1.5))
         painter.drawRoundedRect(14, 14, self.width() - 28, self.height() - 32, 22, 22)
         painter.setFont(QFont('Microsoft YaHei UI', 13, QFont.Bold))
-        painter.setPen(QColor(92, 59, 24, 230))
+        painter.setPen(fg)
         painter.drawText(0, 26, self.width(), 26, Qt.AlignCenter, self.title)
 
     def closeEvent(self, event):

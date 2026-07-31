@@ -24,6 +24,7 @@ import config
 from clients.llm_client import ChatWorker
 from clients.stream_tts import StreamTtsQueue
 from clients.tts_client import stop_tts
+from widgets.notifications.reply_card import SourceChipWidget
 
 try:
     from PySide6.QtTextEdit import QTextEdit
@@ -130,10 +131,14 @@ class ChatBridge(QWebChannel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._card_callback = None
+        self._quote_callback = None
         self.registerObject('bridge', self)
 
     def set_card_callback(self, cb):
         self._card_callback = cb
+
+    def set_quote_callback(self, cb):
+        self._quote_callback = cb
 
     # JS 可调用的槽
     from PySide6.QtCore import Slot
@@ -145,6 +150,11 @@ class ChatBridge(QWebChannel):
     @Slot(str)
     def imagePasted(self, data_url):
         pass  # 留给扩展用
+
+    @Slot(str)
+    def quoteActivated(self, quoted_text):
+        if self._quote_callback:
+            self._quote_callback(quoted_text)
 
 
 class ChatWindow(QWidget):
@@ -185,7 +195,6 @@ class ChatWindow(QWidget):
         root.setSpacing(0)
         self.setStyleSheet('QWidget{font-family:Microsoft YaHei, Segoe UI, sans-serif;}')
 
-        # 头部（不变）
         header = QWidget()
         header.setFixedHeight(54)
         header.setStyleSheet('QWidget{background:#ffffff;border-bottom:1px solid #e5e7eb;}')
@@ -197,10 +206,9 @@ class ChatWindow(QWidget):
         title_box.setSpacing(8)
         self.title_label = TitleLabel(self.pet_name or '宠物')
         self.title_label.setFont(QFont(self.title_label.font().family(), 13, QFont.DemiBold))
-        self.backend_badge = QLabel()
-        self.backend_badge.setStyleSheet('QLabel{background:#e8eef1;color:#53646c;border-radius:5px;padding:2px 6px;font-size:12px;}')
+        self.backend_badge = None
+        self._title_box = title_box
         title_box.addWidget(self.title_label)
-        title_box.addWidget(self.backend_badge, 0, Qt.AlignVCenter)
         self.set_backend(self.backend)
         h_layout.addWidget(self.avatar_widget)
         h_layout.addLayout(title_box)
@@ -236,6 +244,35 @@ class ChatWindow(QWidget):
         self.preview_row.setContentsMargins(0, 0, 0, 0)
         self.preview_row.setSpacing(6)
         input_layout.addLayout(self.preview_row)
+
+        # 引用预览栏（默认隐藏）
+        self.quote_bar = QWidget(input_bar)
+        self.quote_bar.setVisible(False)
+        self.quote_bar.setStyleSheet(
+            'QWidget{background:#eef4ff;border-left:3px solid #4080ff;border-radius:6px;padding:0px;}'
+        )
+        quote_bar_layout = QHBoxLayout(self.quote_bar)
+        quote_bar_layout.setContentsMargins(10, 4, 6, 4)
+        quote_bar_layout.setSpacing(6)
+        self.quote_label = QLabel('', self.quote_bar)
+        self.quote_label.setStyleSheet(
+            'QLabel{color:#4060cc;font-size:12px;background:transparent;border:none;border-left:none;}'
+        )
+        self.quote_label.setWordWrap(False)
+        from PySide6.QtWidgets import QPushButton as _QPushButton
+        quote_close_btn = _QPushButton('×', self.quote_bar)
+        quote_close_btn.setFixedSize(20, 20)
+        quote_close_btn.setStyleSheet(
+            'QPushButton{background:transparent;border:none;color:#8090bb;font-size:14px;}'
+            'QPushButton:hover{color:#1677ff;}'
+        )
+        quote_close_btn.clicked.connect(self._clear_quote)
+        quote_bar_layout.addWidget(self.quote_label, 1)
+        quote_bar_layout.addWidget(quote_close_btn, 0)
+        input_layout.addWidget(self.quote_bar)
+        self._quoted_text = ''
+        self.bridge.set_quote_callback(self._on_quote_activated)
+
         self.input = ChatInput(input_bar)
         self.input.image_pasted.connect(self._add_pending_image)
         self.input.setStyleSheet(
@@ -263,14 +300,40 @@ class ChatWindow(QWidget):
 
     def set_backend(self, backend):
         self.backend = backend or 'builtin'
-        labels = {
-            'builtin': '内置模型',
-            'custom': '自定义智能体',
-            'openclaw': 'OpenClaw',
-            'claude_code': 'Claude Code',
+        _BACKEND_LABEL = {
+            'builtin':    '内置AI',
+            'claude_code':'Claude',
+            'openclaw':   'OpenClaw',
+            'custom':     'MiniPet',
         }
-        if hasattr(self, 'backend_badge'):
-            self.backend_badge.setText(labels.get(self.backend, self.backend))
+        if not hasattr(self, '_title_box'):
+            return
+        if self.backend_badge is not None:
+            self.backend_badge.setParent(None)
+            self.backend_badge.deleteLater()
+            self.backend_badge = None
+        text = _BACKEND_LABEL.get(self.backend, self.backend)
+        chip = SourceChipWidget(text)
+        f = chip.font()
+        f.setPointSize(9)
+        f.setBold(True)
+        chip.setFont(f)
+        self.backend_badge = chip
+        self._title_box.addWidget(chip, 0, Qt.AlignVCenter)
+
+    def _on_quote_activated(self, quoted_text):
+        self._quoted_text = quoted_text.strip()
+        if self._quoted_text:
+            summary = self._quoted_text[:80] + ('...' if len(self._quoted_text) > 80 else '')
+            self.quote_label.setText('引用：' + summary)
+            self.quote_bar.setVisible(True)
+            self.input.setFocus()
+
+    def _clear_quote(self):
+        self._quoted_text = ''
+        self.quote_bar.setVisible(False)
+        self.quote_label.setText('')
+        self._js('Chat.clearQuote()')
 
     def _js(self, code):
         if self._web_ready:
@@ -309,7 +372,10 @@ class ChatWindow(QWidget):
             for b in content:
                 t = b.get('type') or b.get('tag')
                 if t == 'text':
-                    blocks.append({'type': 'text', 'text': b.get('text', '')})
+                    blk = {'type': 'text', 'text': b.get('text', '')}
+                    if b.get('quote'):
+                        blk['quote'] = b['quote']
+                    blocks.append(blk)
                 elif t == 'image':
                     src = b.get('src') or b.get('path') or b.get('image_key') or ''
                     blocks.append({'type': 'image', 'src': src, 'alt': b.get('alt', '图片')})
@@ -334,7 +400,7 @@ class ChatWindow(QWidget):
             'id': msg_id,
             'role': 'assistant',
             'name': self.pet_name or '宠物',
-            'backend': self.backend_badge.text(),
+            'backend': self.backend_badge.text() if self.backend_badge is not None else '',
             'avatar': avatar_url,
         }, ensure_ascii=False))
 
@@ -365,22 +431,33 @@ class ChatWindow(QWidget):
         thumb.setPixmap(QPixmap.fromImage(img).scaled(46, 46, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         self.preview_row.addWidget(thumb)
 
-    def _build_user_content(self, text):
-        if not self.pending_images:
+    def _build_user_content(self, text, quote=''):
+        if not self.pending_images and not quote:
             return text
         blocks = []
         if text:
-            blocks.append({'type': 'text', 'text': text})
+            block = {'type': 'text', 'text': text}
+            if quote:
+                block['quote'] = quote[:80] + ('...' if len(quote) > 80 else '')
+            blocks.append(block)
         for img in self.pending_images:
             blocks.append({'type': 'image', 'src': img, 'alt': '图片'})
-        return blocks
+        return blocks or text
 
     def _send(self):
         """发送用户输入，启动一条流式 assistant 消息。"""
         text = self.input.toPlainText().strip()
         if (not text and not self.pending_images) or self.worker is not None:
             return
-        content = self._build_user_content(text)
+        quoted = self._quoted_text
+        # 发给 LLM 的文本（拼接格式，保持 AI 理解上下文）
+        if quoted and text:
+            summary = quoted[:60] + ('...' if len(quoted) > 60 else '')
+            send_text = '对方引用了"%s"，他的输入是：%s' % (summary, text)
+        else:
+            send_text = text
+        content = self._build_user_content(send_text, quote=quoted if quoted and text else '')
+        self._clear_quote()
         self.input.clear()
         self.pending_images = []
         while self.preview_row.count():
@@ -390,13 +467,12 @@ class ChatWindow(QWidget):
         self.input.setPlaceholderText('发送给宠物')
         # 开始流式回复卡片
         stream_id = str(uuid.uuid4())
-        self._start_stream(stream_id)
         self._reset_stream_tts()
         self.input.setEnabled(False)
         if self.send_callback:
             self.worker = self.send_callback(
                 content,
-                lambda backend: self._save_sent_user(content, backend),
+                lambda backend: self._show_sent_user_then_stream(content, backend, stream_id),
                 lambda d: self._on_delta(stream_id, d),
                 lambda ok, t: self._on_reply(stream_id, ok, t),
             )
@@ -404,10 +480,22 @@ class ChatWindow(QWidget):
                 self._on_reply(stream_id, False, '当前后端发送失败。')
             return
         self._save_sent_user(content, self.backend)
+        self._start_stream(stream_id)
         self.worker = ChatWorker(self._build_messages(), parent=self)
         self.worker.delta_ready.connect(lambda d: self._on_delta(stream_id, d))
         self.worker.result_ready.connect(lambda ok, t: self._on_reply(stream_id, ok, t))
         self.worker.start()
+
+    def _show_sent_user_then_stream(self, content, backend, stream_id):
+        self.backend = backend or self.backend
+        self._stream_backend = self.backend
+        self._push_message('user', content)
+        self._start_stream(stream_id)
+
+    def _show_sent_user(self, content, backend):
+        self.backend = backend or self.backend
+        self._stream_backend = self.backend
+        self._push_message('user', content)
 
     def _save_sent_user(self, content, backend):
         self.backend = backend or self.backend

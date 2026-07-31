@@ -10,11 +10,46 @@ from PySide6.QtWidgets import QApplication, QFrame, QGridLayout, QHBoxLayout, QL
 from qfluentwidgets import FluentIcon as FIF
 
 import config
+import theme as _theme
 from widgets.ui_utils import clamp_popup_pos
 
 
 def build_pet_context_menu(owner, include_actions=False):
     menu = QMenu(owner)
+    t = _theme.current_theme()
+    menu.setStyleSheet('''
+        QMenu {
+            background: %(bg)s;
+            border: 1px solid %(border)s;
+            border-radius: 10px;
+            padding: 4px 0;
+            font-family: "Microsoft YaHei UI", "Microsoft YaHei";
+            font-size: 13px;
+        }
+        QMenu::item {
+            padding: 6px 20px 6px 14px;
+            color: %(text)s;
+            border-radius: 6px;
+            margin: 1px 4px;
+        }
+        QMenu::item:selected {
+            background: %(btn_hover)s;
+            color: %(primary)s;
+        }
+        QMenu::item:disabled { color: %(disabled)s; }
+        QMenu::separator {
+            height: 1px;
+            background: %(border)s;
+            margin: 3px 10px;
+        }
+    ''' % {
+        'bg': t['menu_bg'],
+        'border': t['menu_border'],
+        'text': t['easter_fg'],
+        'btn_hover': t['menu_btn_hover'],
+        'primary': t['menu_primary'],
+        'disabled': '#a0a8b4',
+    })
     icon_dir = config.RES_DIR / 'icons'
     system_icon_dir = icon_dir / 'system'
     if config.current_pet:
@@ -71,22 +106,29 @@ class PetDropIntentPopup(QFrame):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.NoDropShadowWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setWindowOpacity(0.0)
+        t = _theme.current_theme()
         self.setStyleSheet('''
             QFrame#DropCard {
-                border: 1px solid rgba(210, 216, 226, 220);
+                border: 1px solid %(border)s;
                 border-radius: 16px;
-                background: rgba(255, 255, 255, 248);
+                background: %(bg)s;
             }
             QLabel { border: none; background: transparent; color: #1f2328; font-family: "Microsoft YaHei UI", "Microsoft YaHei"; }
             QLabel#DropTitle { font-size: 14px; font-weight: 700; }
             QLabel#DropDesc { color: #68707d; font-size: 12px; }
-            QPushButton { border: none; border-radius: 12px; background: #f4f7fb; color: #1f2328; padding: 7px 10px; }
-            QPushButton:hover { background: #e8f1ff; }
-            QPushButton#PrimaryButton { background: #1677ff; color: white; }
-            QPushButton#PrimaryButton:hover { background: #4096ff; }
+            QPushButton { border: none; border-radius: 12px; background: %(btn_bg)s; color: #1f2328; padding: 7px 10px; }
+            QPushButton:hover { background: %(btn_hover)s; }
+            QPushButton#PrimaryButton { background: %(primary)s; color: white; }
+            QPushButton#PrimaryButton:hover { background: %(primary)s; opacity: 0.85; }
             QPushButton#QuietButton { background: transparent; color: #8b8f99; }
-            QPushButton#QuietButton:hover { background: #f4f4f5; color: #4b5563; }
-        ''')
+            QPushButton#QuietButton:hover { background: %(btn_bg)s; color: #4b5563; }
+        ''' % {
+            'bg': t['menu_bg'],
+            'border': t['menu_border'],
+            'btn_bg': t['menu_btn_bg'],
+            'btn_hover': t['menu_btn_hover'],
+            'primary': t['menu_primary'],
+        })
         card = QFrame(self)
         card.setObjectName('DropCard')
         root = QVBoxLayout(card)
@@ -348,7 +390,12 @@ class PetEasterMenu(QFrame):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.RightButton:
-            self._cancel_by_right_click()
+            now = time.time()
+            if now - getattr(self, '_last_right_click_time', 0) < 0.4:
+                self._cancel_by_right_click()
+                self._last_right_click_time = 0
+            else:
+                self._last_right_click_time = now
             event.accept()
             return
         super().mousePressEvent(event)
@@ -357,8 +404,13 @@ class PetEasterMenu(QFrame):
         if event.type() == QEvent.MouseButtonPress:
             pos = QCursor.pos()
             if event.button() == Qt.RightButton:
-                # 右键点在小铺外面也只是取消显示，不继续传给桌宠。
-                self._cancel_by_right_click()
+                # 右键双击小铺外面才取消显示，不继续传给桌宠。
+                now = time.time()
+                if now - getattr(self, '_last_right_click_time', 0) < 0.4:
+                    self._cancel_by_right_click()
+                    self._last_right_click_time = 0
+                else:
+                    self._last_right_click_time = now
                 return True
             if not self.geometry().contains(pos):
                 self.close()
@@ -389,11 +441,12 @@ class PetQuickMenu(QFrame):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.NoDropShadowWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setWindowOpacity(0.0)
+        t = _theme.current_theme()
         self.setStyleSheet('''
             QFrame#QuickMenuCard {
-                border: 1px solid rgba(210,216,226,235);
+                border: 1px solid %(border)s;
                 border-radius: 17px;
-                background: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 rgba(255,255,255,248),stop:1 rgba(246,250,255,242));
+                background: %(bg)s;
             }
             QPushButton {
                 border: none;
@@ -401,12 +454,17 @@ class PetQuickMenu(QFrame):
                 background: transparent;
                 padding: 5px;
             }
-            QPushButton:hover { background: #eef6ff; }
-            QPushButton:pressed { background: #dbeeff; }
-            QPushButton#VoiceChatBtn:checked { background: #dff8ee; border: 1px solid #8bd8bc; }
-            QPushButton#VoiceChatBtn:hover { background: #edf7ff; }
-            QPushButton#VoiceChatBtn:checked:hover { background: #d3f2e7; }
-        ''')
+            QPushButton:hover { background: %(btn_hover)s; }
+            QPushButton:pressed { background: %(btn_bg)s; }
+            QPushButton#VoiceChatBtn:checked { background: %(btn_bg)s; border: 1px solid %(border)s; }
+            QPushButton#VoiceChatBtn:hover { background: %(btn_hover)s; }
+            QPushButton#VoiceChatBtn:checked:hover { background: %(btn_bg)s; }
+        ''' % {
+            'bg': t['menu_bg'],
+            'border': t['menu_border'],
+            'btn_bg': t['menu_btn_bg'],
+            'btn_hover': t['menu_btn_hover'],
+        })
         card = QFrame(self)
         card.setObjectName('QuickMenuCard')
         row = QHBoxLayout(card)

@@ -8,6 +8,7 @@ from PySide6.QtGui import QBrush, QColor, QFontMetrics, QPainter, QPen, QRadialG
 from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QWidget
 
 import config
+import theme
 from widgets.ui_utils import clamp_popup_pos
 
 
@@ -32,7 +33,7 @@ class VoiceOrbWidget(QWidget):
         self.phase = 0
         self.text = ''
         self.min_orb_width = 40
-        self.max_orb_width = 260
+        self.max_orb_width = 420
         self.orb_height = 40
         self.icon_area_width = 40
         self.text_right_padding = 12
@@ -78,7 +79,7 @@ class VoiceOrbWidget(QWidget):
         # 推进所有涟漪，progress 0.0→1.0
         self._ripples = [p + 0.022 for p in self._ripples if p + 0.022 < 1.0]
         # listening/speaking/wakeup 状态每隔一定 tick 生成新涟漪，最多同时 3 个
-        if self.state in ('listening', 'speaking', 'wakeup'):
+        if self.state in ('listening', 'speaking', 'wakeup', 'typing'):
             self._ripple_tick += 1
             interval = 28 if self.state == 'wakeup' else (22 if self.state == 'listening' else 18)
             if self._ripple_tick >= interval and len(self._ripples) < 3:
@@ -124,6 +125,8 @@ class VoiceOrbWidget(QWidget):
             self._paint_thinking(painter, icon_rect)
         elif self.state == 'speaking':
             self._paint_speaking(painter, icon_rect)
+        elif self.state == 'typing':
+            self._paint_typing(painter, icon_rect)
         elif self.state == 'error':
             self._paint_status_dot(painter, icon_rect, QColor(255, 90, 80, 220))
         else:
@@ -131,17 +134,12 @@ class VoiceOrbWidget(QWidget):
         self._paint_text(painter)
 
     def _paint_material_glow(self, painter, pill):
-        style = config.app_config.get('voice_orb_style', 'jade')
-        settings = {
-            'jade': (QColor(255, 255, 246, 135), QColor(210, 246, 226, 62), QColor(120, 205, 170, 18), QColor(94, 175, 145, 42)),
-            'glass': (QColor(255, 255, 255, 120), QColor(210, 235, 255, 54), QColor(120, 170, 220, 18), QColor(120, 170, 220, 48)),
-            'sakura': (QColor(255, 255, 255, 112), QColor(255, 215, 230, 58), QColor(255, 145, 185, 18), QColor(255, 150, 190, 38)),
-            'sunset': (QColor(255, 250, 220, 118), QColor(255, 210, 125, 58), QColor(255, 120, 80, 20), QColor(230, 135, 70, 40)),
-            'mono': (QColor(255, 255, 255, 85), QColor(210, 216, 226, 36), QColor(120, 130, 145, 12), QColor(130, 140, 155, 28)),
-            'violet': (QColor(255, 255, 255, 98), QColor(225, 205, 255, 52), QColor(150, 115, 255, 18), QColor(155, 130, 230, 34)),
-            'mint': (QColor(255, 255, 255, 98), QColor(215, 245, 235, 52), QColor(90, 205, 170, 18), QColor(90, 180, 155, 34)),
-        }
-        c0, c1, c2, inner = settings.get(style, settings['mint'])
+        t = theme.current_theme()
+        glow_colors = t.get('orb_glow', ((255, 255, 255, 112), (215, 245, 235, 52)))
+        c0 = QColor(*glow_colors[0])
+        c1 = QColor(*glow_colors[1])
+        c2 = QColor(c1.red(), c1.green(), c1.blue(), 18)
+        inner = QColor(c1.red(), c1.green(), c1.blue(), 40)
         glow = QRadialGradient(QPointF(pill.left() + pill.width() * 0.28, pill.top() + pill.height() * 0.26), max(pill.width(), pill.height()) * 0.78)
         glow.setColorAt(0.0, c0)
         glow.setColorAt(0.45, c1)
@@ -150,14 +148,14 @@ class VoiceOrbWidget(QWidget):
         painter.setBrush(QBrush(glow))
         painter.drawRoundedRect(pill.adjusted(2, 2, -2, -2), pill.height() / 2, pill.height() / 2)
 
-        painter.setPen(QPen(QColor(255, 255, 255, 86 if style != 'mono' else 58), 1.2))
+        painter.setPen(QPen(QColor(255, 255, 255, 86), 1.2))
         painter.setBrush(Qt.NoBrush)
         painter.drawArc(pill.adjusted(7, 6, -7, -7), 42 * 16, 92 * 16)
         painter.setPen(QPen(inner, 1))
         painter.drawRoundedRect(pill.adjusted(3, 3, -3, -3), pill.height() / 2 - 3, pill.height() / 2 - 3)
 
     def _palette(self):
-        return VOICE_ORB_PALETTES.get(config.app_config.get('voice_orb_style', 'jade'), VOICE_ORB_PALETTES['jade'])
+        return theme.current_theme()['orb']
 
     def _color(self, key, alpha=None):
         values = self._palette()[key]
@@ -170,6 +168,8 @@ class VoiceOrbWidget(QWidget):
     def _background_colors(self):
         if self.state == 'error':
             return QColor(255, 244, 244, 245), QColor(255, 150, 140, 235)
+        if self.state == 'typing':
+            return self._color('bg'), QColor(255, 130, 110, 235)
         if self.state == 'idle':
             return self._color('bg'), self._color('border')
         if self.state == 'wakeup':
@@ -252,6 +252,23 @@ class VoiceOrbWidget(QWidget):
         painter.drawEllipse(QRectF(center.x() - 2.8, center.y() - 2.8, 5.6, 5.6))
         painter.setBrush(QBrush(QColor(255, 255, 246, 170)))
         painter.drawEllipse(QRectF(center.x() - 3.5, center.y() - 5.0, 3.2, 3.2))
+
+    def _paint_typing(self, painter, rect):
+        center_y = rect.center().y()
+        bar_count = 3
+        bar_w = 3.5
+        gap = 3.5
+        total_w = bar_count * bar_w + (bar_count - 1) * gap
+        start_x = rect.center().x() - total_w / 2
+        painter.setPen(Qt.NoPen)
+        for i in range(bar_count):
+            wave = (math.sin((self.phase + i * 3) * 0.65) + 1) / 2
+            height = 6 + wave * 12
+            alpha = 180 + int(wave * 55)
+            painter.setBrush(QBrush(QColor(255, 85, 75, alpha)))
+            x = start_x + i * (bar_w + gap)
+            y = center_y - height / 2
+            painter.drawRoundedRect(QRectF(x, y, bar_w, height), 1.8, 1.8)
 
     def _paint_status_dot(self, painter, rect, color):
         painter.setPen(Qt.NoPen)
@@ -451,6 +468,7 @@ class PetVoicePopup(QFrame):
             'wakeup': '等待唤醒词',
             'idle': '语音聊天已结束',
             'error': '语音聊天出错',
+            'typing': '语音输入中',
         }
         tip = tips.get(state, '语音聊天')
         if text:

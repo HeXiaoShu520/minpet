@@ -75,7 +75,13 @@ body:hover ::-webkit-scrollbar-thumb{background:rgba(120,128,140,0.35);}
   66%{content:"···";}
 }
 
-/* 灯箱 */
+/* 引用块 */
+.quote-block{border-left:3px solid #93b8ff;background:#f0f4ff;border-radius:0 6px 6px 0;padding:5px 10px;margin-bottom:6px;font-size:12px;color:#5570a0;line-height:1.45;max-height:52px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}
+.user-bubble .quote-block{border-left-color:#6a9eff;background:rgba(255,255,255,0.45);color:#3a5080;}
+/* 右键菜单 */
+#chat-ctx-menu{position:fixed;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);padding:4px 0;z-index:9999;min-width:110px;font:13px "Microsoft YaHei UI",sans-serif;}
+.ctx-item{padding:8px 16px;cursor:pointer;color:#333;white-space:nowrap;}
+.ctx-item:hover{background:#f0f4ff;color:#1677ff;}
 #lightbox{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9999;align-items:center;justify-content:center;cursor:zoom-out;}
 #lightbox.open{display:flex;}
 #lightbox-img{max-width:90vw;max-height:90vh;border-radius:6px;object-fit:contain;}

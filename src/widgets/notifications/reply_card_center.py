@@ -19,6 +19,7 @@ class ReplyCardCenter(QWidget):
 
     reply_card_action_clicked = Signal(dict, dict)
     reply_card_interrupted = Signal(str)
+    reply_card_quote_submitted = Signal(str, str, str, str)  # card_id, full_message, quoted_text, user_text
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -82,6 +83,7 @@ class ReplyCardCenter(QWidget):
         card = ReplyCard(card_id, event, timeout)
         card.action_clicked.connect(self.reply_card_action_clicked)
         card.interrupted.connect(self.reply_card_interrupted)
+        card.quote_reply_submitted.connect(self.reply_card_quote_submitted)
         card.layout_changed.connect(lambda cid=card_id: self._reflow_reply_cards(animate=True, skip_id=cid))
         card.closed.connect(self._remove_reply_card)
         self._register_reply_card(card_id, card, x, y)

@@ -44,7 +44,7 @@ def main():
         cfg['voice_name'] = voice_name
         voice_dir = output_root / safe_voice_name(voice_name)
         for key, text in WAKE_ACK_ITEMS:
-            output_path = voice_dir / (key + '.pcm')
+            output_path = voice_dir / (key + '.wav')
             if output_path.is_file() and output_path.stat().st_size > 0:
                 print('skip', voice_label, key, output_path)
                 continue

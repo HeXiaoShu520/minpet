@@ -66,7 +66,12 @@ class FortuneStickPopup(QFrame):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.RightButton:
-            self.close()
+            now = time.time()
+            if now - getattr(self, '_last_right_click_time', 0) < 0.4:
+                self.close()
+                self._last_right_click_time = 0
+            else:
+                self._last_right_click_time = now
             event.accept()
             return
         if event.button() == Qt.LeftButton:

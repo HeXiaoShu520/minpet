@@ -14,6 +14,7 @@ from PySide6.QtGui import QDesktopServices, QKeyEvent, QPixmap
 from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
 from widgets.ui_utils import clamp_popup_pos
+import theme as _theme
 
 
 class ImageAttachmentChip(QFrame):
@@ -79,30 +80,36 @@ class PetInputPopup(QFrame):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.NoDropShadowWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setWindowOpacity(0.0)
+        t = _theme.current_theme()
         self.setStyleSheet('''
             QFrame#InputCard {
-                border: 1px solid rgba(210,216,226,235);
+                border: 1px solid %(border)s;
                 border-radius: 17px;
-                background: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 rgba(255,255,255,248),stop:1 rgba(246,250,255,242));
+                background: %(bg)s;
             }
             QLabel#InputDot {
                 border: none;
                 border-radius: 5px;
-                background: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #8fd3ff,stop:1 #c7a8ff);
+                background: %(dot)s;
             }
             QLineEdit {
                 border: none;
                 border-radius: 0;
                 padding: 0;
                 background: transparent;
-                color: #1f2328;
+                color: %(text)s;
                 font-family: "Microsoft YaHei UI", "Microsoft YaHei";
                 font-size: 13px;
                 selection-background-color: #dbeeff;
             }
             QLineEdit:focus { background: transparent; }
             QLineEdit::placeholder { color: #8b93a7; }
-        ''')
+        ''' % {
+            'bg': t['input_card_bg'],
+            'border': t['input_card_border'],
+            'dot': t['input_dot'],
+            'text': t['input_text'],
+        })
         self.card = QFrame(self)
         self.card.setObjectName('InputCard')
         self.card.setMinimumHeight(38)

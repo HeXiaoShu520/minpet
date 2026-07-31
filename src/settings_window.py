@@ -9,7 +9,7 @@ from qfluentwidgets import FluentIcon as FIF
 import config
 from windows.settings.basic_pages import AgentPage, BasicPage
 from windows.settings.role_page import RolePage
-from windows.settings.voice_pages import TTSPage
+from windows.settings.voice_pages import TTSPage, WakePage
 
 
 def _icon(name):
@@ -35,15 +35,19 @@ class SettingsWindow(FluentWindow):
         self.role.setObjectName('RolePage')
         self.tts = TTSPage(self)
         self.tts.setObjectName('TTSPage')
+        self.wake = WakePage(self)
+        self.wake.setObjectName('WakePage')
         self.basic.settings_changed.connect(self.settings_changed)
         self.agent.settings_changed.connect(self.settings_changed)
         self.role.settings_changed.connect(self.settings_changed)
         self.tts.settings_changed.connect(self.settings_changed)
+        self.wake.settings_changed.connect(self.settings_changed)
         self.role.pet_changed.connect(self.pet_changed)
         self.addSubInterface(self.basic, FIF.SETTING, '基础')
         self.addSubInterface(self.agent, FIF.ROBOT, '智能体')
         self.addSubInterface(self.role, _icon('character.svg'), '角色')
         self.addSubInterface(self.tts, FIF.VOLUME, '语音')
+        self.addSubInterface(self.wake, FIF.MICROPHONE, '唤醒词')
         self.navigationInterface.setExpandWidth(180)
         self.navigationInterface.setMinimumExpandWidth(180)
         self.navigationInterface.setCollapsible(False)

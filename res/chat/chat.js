@@ -8,6 +8,7 @@ const Chat = (() => {
   let streamBubble = null; // 当前流式气泡的 content div
   let streamId = null;
   let streamText = '';
+  let _ctxMenu = null;
 
   /* ─── 初始化 QWebChannel ─── */
   function init() {
@@ -95,12 +96,6 @@ const Chat = (() => {
     const nameEl = document.createElement('div');
     nameEl.className = 'msg-name';
     nameEl.textContent = msg.name || (isUser ? '我' : '宠物');
-    if (!isUser && msg.backend) {
-      const badge = document.createElement('span');
-      badge.textContent = msg.backend;
-      badge.style.cssText = 'margin-left:6px;background:#e8eef1;color:#53646c;border-radius:5px;padding:1px 5px;font-size:11px;font-weight:400;';
-      nameEl.appendChild(badge);
-    }
     body.appendChild(nameEl);
 
     const blocks = msg.content || [];
@@ -155,11 +150,21 @@ const Chat = (() => {
     if (t === 'text') {
       const bubble = document.createElement('div');
       bubble.className = 'bubble ' + (isUser ? 'user-bubble' : 'pet-bubble');
+      // 引用块（飞书风格）
+      if (block.quote) {
+        const qb = document.createElement('div');
+        qb.className = 'quote-block';
+        qb.textContent = block.quote;
+        bubble.appendChild(qb);
+      }
       const content = document.createElement('div');
       content.className = 'bubble-content';
       content.innerHTML = marked.parse(block.text || ' ');
       _bindCodeCopy(content);
       bubble.appendChild(content);
+      if (!isUser) {
+        bubble.addEventListener('contextmenu', e => { e.preventDefault(); _showCtxMenu(e, bubble); });
+      }
       return bubble;
     }
     if (t === 'image') {
@@ -243,6 +248,41 @@ const Chat = (() => {
     });
   }
 
+  /* ─── 右键引用菜单 ─── */
+  function _hideCtxMenu() {
+    if (_ctxMenu) { _ctxMenu.remove(); _ctxMenu = null; }
+  }
+
+  function _extractBubbleText(bubble) {
+    const content = bubble.querySelector('.bubble-content');
+    const el = content || bubble;
+    return (el.textContent || '').trim().slice(0, 200);
+  }
+
+  function _showCtxMenu(e, bubble) {
+    _hideCtxMenu();
+    const menu = document.createElement('div');
+    menu.id = 'chat-ctx-menu';
+    const item = document.createElement('div');
+    item.className = 'ctx-item';
+    item.textContent = '引用回复';
+    item.onclick = () => {
+      const text = _extractBubbleText(bubble);
+      _hideCtxMenu();
+      if (bridge && text) bridge.quoteActivated(text);
+    };
+    menu.appendChild(item);
+    menu.style.left = e.clientX + 'px';
+    menu.style.top = e.clientY + 'px';
+    document.body.appendChild(menu);
+    _ctxMenu = menu;
+    document.addEventListener('click', _hideCtxMenu, { once: true });
+  }
+
+  function clearQuote() {
+    // Python 清除引用时调用，JS 侧预留
+  }
+
   /* ─── 灯箱 ─── */
   function openLightbox(src) {
     document.getElementById('lightbox-img').src = src;
@@ -264,5 +304,5 @@ const Chat = (() => {
   // 自动初始化
   document.addEventListener('DOMContentLoaded', init);
 
-  return { appendMessage, startStream, appendDelta, endStream, scrollToBottom, clear, openLightbox, closeLightbox };
+  return { appendMessage, startStream, appendDelta, endStream, scrollToBottom, clear, openLightbox, closeLightbox, clearQuote };
 })();
