@@ -9,16 +9,20 @@
 - 与 ChatStore/MiniPetApp 共享历史消息。
 """
 
+import ctypes
 import json
+import sys
 import uuid
 
-from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QSize, Qt, QUrl, Signal
+if sys.platform == 'win32':
+    from ctypes.wintypes import MSG, POINT
+
+from PySide6.QtCore import QByteArray, QBuffer, QEvent, QIODevice, QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QFont, QIcon, QKeyEvent, QPixmap
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QVBoxLayout, QWidget)
 from qfluentwidgets import TitleLabel, TransparentToolButton
-from qframelesswindow import FramelessWindow, StandardTitleBar
 from qfluentwidgets import FluentIcon as FIF
 
 import config
@@ -26,6 +30,7 @@ from clients.llm_client import ChatWorker
 from clients.stream_tts import StreamTtsQueue
 from clients.tts_client import stop_tts
 from widgets.notifications.reply_card import SourceChipWidget
+from windows.win32_frameless import WM_NCHITTEST, hit_test
 
 try:
     from PySide6.QtTextEdit import QTextEdit
@@ -161,7 +166,7 @@ class ChatBridge(QWebChannel):
             self._quote_callback(quoted_text)
 
 
-class ChatWindow(FramelessWindow):
+class ChatWindow(QWidget):
     """完整文本聊天窗口。
 
     这个窗口把 Qt 输入区和 WebEngine 消息区组合在一起。history 由外层
@@ -188,24 +193,44 @@ class ChatWindow(FramelessWindow):
         self._pending_js = []
         self.setWindowTitle('与宠物聊天')
         self.setWindowIcon(QIcon(str(config.avatar_path('pet'))))
-        self.setTitleBar(StandardTitleBar(self))
-        self.titleBar.setStyleSheet('StandardTitleBar{background:#ffffff;border-bottom:1px solid #e5e7eb;}')
-        self.resize(720, 620)
-        self.setMinimumSize(QSize(520, 460))
+        self.resize(720, 652)
+        self.setMinimumSize(QSize(520, 492))
+        flags = Qt.Window
+        if sys.platform == 'win32':
+            flags |= Qt.FramelessWindowHint
+        self.setWindowFlags(flags)
         self._init_ui()
 
     def _init_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, self.titleBar.height(), 0, 0)
+        root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         self.setStyleSheet('QWidget{font-family:Microsoft YaHei, Segoe UI, sans-serif;}')
 
-        header = QWidget()
-        header.setFixedHeight(54)
-        header.setStyleSheet('QWidget{background:#ffffff;border-bottom:1px solid #e5e7eb;}')
-        h_layout = QHBoxLayout(header)
+        if sys.platform == 'win32':
+            self.title_bar = QWidget()
+            self.title_bar.setFixedHeight(32)
+            self.title_bar.setStyleSheet('QWidget{background:#ffffff;border-bottom:1px solid #eef0f3;}')
+            title_layout = QHBoxLayout(self.title_bar)
+            title_layout.setContentsMargins(10, 0, 0, 0)
+            title_layout.setSpacing(6)
+            title_icon = QLabel(self.title_bar)
+            title_icon.setPixmap(_scaled_pixmap(QPixmap(str(config.avatar_path('pet'))), 16, 16))
+            title_icon.setFixedSize(16, 16)
+            title_label = QLabel('与宠物聊天', self.title_bar)
+            title_label.setStyleSheet('QLabel{color:#202124;font-size:12px;background:transparent;border:none;}')
+            title_layout.addWidget(title_icon)
+            title_layout.addWidget(title_label)
+            title_layout.addStretch(1)
+            self._add_window_controls(title_layout)
+            root.addWidget(self.title_bar)
+
+        self.header = QWidget()
+        self.header.setFixedHeight(54)
+        self.header.setStyleSheet('QWidget{background:#ffffff;border-bottom:1px solid #e5e7eb;}')
+        h_layout = QHBoxLayout(self.header)
         h_layout.setContentsMargins(18, 0, 12, 0)
-        self.avatar_widget = Avatar(config.avatar_path('pet'), self.pet_name or '宠', False, header, size=34, icon_size=27)
+        self.avatar_widget = Avatar(config.avatar_path('pet'), self.pet_name or '宠', False, self.header, size=34, icon_size=27)
         title_box = QHBoxLayout()
         title_box.setContentsMargins(0, 0, 0, 0)
         title_box.setSpacing(8)
@@ -218,11 +243,11 @@ class ChatWindow(FramelessWindow):
         h_layout.addWidget(self.avatar_widget)
         h_layout.addLayout(title_box)
         h_layout.addStretch(1)
-        clear_btn = TransparentToolButton(FIF.DELETE, header)
-        clear_btn.setToolTip('清空对话')
-        clear_btn.clicked.connect(self._clear)
-        h_layout.addWidget(clear_btn)
-        root.addWidget(header)
+        self.clear_btn = TransparentToolButton(FIF.DELETE, self.header)
+        self.clear_btn.setToolTip('清空对话')
+        self.clear_btn.clicked.connect(self._clear)
+        h_layout.addWidget(self.clear_btn)
+        root.addWidget(self.header)
 
         # WebEngine 消息区
         self.web = QWebEngineView()
@@ -286,6 +311,70 @@ class ChatWindow(FramelessWindow):
         )
         input_layout.addWidget(self.input)
         root.addWidget(input_bar)
+
+    def _add_window_controls(self, layout):
+        self.minimize_btn = TransparentToolButton(FIF.MINIMIZE, self.title_bar)
+        self.maximize_btn = TransparentToolButton(FIF.FULL_SCREEN, self.title_bar)
+        self.close_btn = TransparentToolButton(FIF.CLOSE, self.title_bar)
+        for button in (self.minimize_btn, self.maximize_btn, self.close_btn):
+            button.setFixedSize(32, 32)
+            layout.addWidget(button)
+        self.minimize_btn.setToolTip('最小化')
+        self.maximize_btn.clicked.connect(self._toggle_maximized)
+        self.close_btn.setToolTip('关闭')
+        self.close_btn.setStyleSheet(
+            'QToolButton:hover{background:#e81123;color:#ffffff;border:none;}'
+        )
+        self.minimize_btn.clicked.connect(self.showMinimized)
+        self.close_btn.clicked.connect(self.close)
+        self._sync_maximize_button()
+
+    def _toggle_maximized(self):
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+
+    def _sync_maximize_button(self):
+        if not hasattr(self, 'maximize_btn'):
+            return
+        self.maximize_btn.setToolTip('还原' if self.isMaximized() else '最大化')
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.WindowStateChange:
+            self._sync_maximize_button()
+
+    def _interactive_title_rects(self):
+        widgets = []
+        for name in ('minimize_btn', 'maximize_btn', 'close_btn'):
+            button = getattr(self, name, None)
+            if button is not None:
+                widgets.append(button)
+        rects = []
+        for widget in widgets:
+            pos = widget.mapTo(self, widget.rect().topLeft())
+            rects.append((pos.x(), pos.y(), widget.width(), widget.height()))
+        return rects
+
+    def nativeEvent(self, event_type, message):
+        if sys.platform != 'win32':
+            return super().nativeEvent(event_type, message)
+        msg = MSG.from_address(message.__int__())
+        if msg.message == WM_NCHITTEST:
+            point = POINT()
+            if ctypes.windll.user32.GetCursorPos(ctypes.byref(point)):
+                ctypes.windll.user32.ScreenToClient(int(self.winId()), ctypes.byref(point))
+                get_dpi = getattr(ctypes.windll.user32, 'GetDpiForWindow', None)
+                dpi = get_dpi(int(self.winId())) if get_dpi is not None else 96
+                scale = (dpi or 96) / 96.0
+                result = hit_test(
+                    round(point.x / scale), round(point.y / scale), self.width(), self.height(),
+                    self.title_bar.height(), max(6, round(8 * scale)) / scale,
+                    self._interactive_title_rects(), self.isMaximized(),
+                )
+                return True, result
+        return super().nativeEvent(event_type, message)
 
     # ─── WebEngine 就绪后批量执行待办 JS ───
 
