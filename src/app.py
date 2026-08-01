@@ -9,6 +9,7 @@ MiniPetApp 是整个桌宠程序的协调层，负责把桌宠窗口、设置窗
 
 import base64
 import json
+import math
 import mimetypes
 import random
 import signal
@@ -856,33 +857,57 @@ class MiniPetApp(QApplication):
         if self._agent_backend() == 'claude_code' and self.claude_code_session is not None and not self.claude_code_received_output:
             self._show_reply_card('Claude Code 已启动并收到输入，但暂时没有输出。可能是 CLI 在等待终端交互或 PATH/权限环境不完整。', status='streaming', timeout_ms=10000)
 
+    @staticmethod
+    def _claude_code_metric_number(value, integer=False):
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(number) or number < 0:
+            return None
+        return int(number) if integer else number
+
+    def _claude_code_result_usage(self, info):
+        usage = info.get('usage') if isinstance(info.get('usage'), dict) else {}
+        result = {}
+        turns = self._claude_code_metric_number(info.get('num_turns'), integer=True)
+        if turns is not None:
+            result['turns'] = turns
+        duration_ms = self._claude_code_metric_number(info.get('duration_ms'))
+        if duration_ms is not None:
+            result['duration_ms'] = duration_ms
+        else:
+            duration_api_ms = self._claude_code_metric_number(info.get('duration_api_ms'))
+            if duration_api_ms is not None:
+                result['duration_api_ms'] = duration_api_ms
+        for source_key, target_key in (('input_tokens', 'input_tokens'), ('output_tokens', 'output_tokens')):
+            value = self._claude_code_metric_number(usage.get(source_key), integer=True)
+            if value is not None:
+                result[target_key] = value
+        cache_tokens = sum(
+            value for value in (
+                self._claude_code_metric_number(usage.get('cache_read_input_tokens'), integer=True),
+                self._claude_code_metric_number(usage.get('cache_creation_input_tokens'), integer=True),
+            ) if value is not None
+        )
+        if cache_tokens:
+            result['cache_tokens'] = cache_tokens
+        cost = self._claude_code_metric_number(info.get('total_cost_usd', info.get('cost_usd')))
+        if cost is not None:
+            result['cost_usd'] = cost
+        return result
+
     def _on_claude_code_progress(self, info):
         if not isinstance(info, dict):
             return
         kind = info.get('kind')
         if kind == 'tool':
             progress = '正在调用工具：%s' % info.get('name', '工具') if info.get('state') == 'running' else '工具执行完成'
+            self._show_reply_card(self._quick_stream_text or '', status='streaming', timeout_ms=60000, progress=progress)
         elif kind == 'result':
-            parts = []
-            if info.get('num_turns') is not None:
-                parts.append('%s 轮' % info['num_turns'])
-            if info.get('duration_ms') is not None:
-                parts.append('耗时 %.1fs' % (float(info['duration_ms']) / 1000))
-            usage = info.get('usage') or {}
-            if usage.get('input_tokens') is not None:
-                parts.append('输入 %s token' % usage['input_tokens'])
-            if usage.get('output_tokens') is not None:
-                parts.append('输出 %s token' % usage['output_tokens'])
-            if usage.get('cache_read_input_tokens') is not None:
-                parts.append('缓存 %s token' % usage['cache_read_input_tokens'])
-            cost = info.get('total_cost_usd', info.get('cost_usd'))
-            if cost is not None:
-                parts.append('$%.4f' % float(cost))
-            progress = ' · '.join(parts)
-        else:
-            return
-        if progress:
-            self._show_reply_card(self._quick_stream_text or '', status='streaming' if kind != 'result' else 'done', timeout_ms=60000, progress=progress)
+            result_usage = self._claude_code_result_usage(info)
+            if result_usage:
+                self._show_reply_card(self._quick_stream_text or '', status='done', timeout_ms=60000, progress='', result_usage=result_usage)
 
     def _on_claude_code_output(self, text):
         self.claude_code_starting = False
@@ -1099,7 +1124,7 @@ class MiniPetApp(QApplication):
         'custom': 'MiniPet',
     }
 
-    def _show_reply_card(self, content, status='streaming', timeout_ms=60000, progress=None):
+    def _show_reply_card(self, content, status='streaming', timeout_ms=60000, progress=None, result_usage=None):
         source_label = self._BACKEND_SOURCE_LABELS.get(self.quick_chat_backend or 'builtin', '')
         event = {
             'surface_id': 'local-quick-reply',
@@ -1110,6 +1135,8 @@ class MiniPetApp(QApplication):
         }
         if progress is not None:
             event['progress'] = progress
+        if result_usage is not None:
+            event['result_usage'] = result_usage
         x, y = self.pet.reply_card_anchor()
         if self.quick_reply_card_id and self.note.update_reply_card(self.quick_reply_card_id, event, timeout=timeout_ms):
             return

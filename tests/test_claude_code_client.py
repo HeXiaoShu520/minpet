@@ -70,6 +70,44 @@ class ClaudeCodeSessionTest(unittest.TestCase):
         self.assertFalse(session._fail_startup('EOF'))
         self.assertEqual([], calls['mismatch'])
 
+    def test_result_progress_preserves_usage_and_cost(self):
+        session, _ = self.make_session()
+        progress = []
+        session.progress_ready.connect(progress.append)
+
+        session._handle_json_line(json.dumps({
+            'type': 'result',
+            'result': 'done',
+            'duration_ms': 3326,
+            'duration_api_ms': 3220,
+            'num_turns': 1,
+            'total_cost_usd': 0.034236,
+            'usage': {
+                'input_tokens': 4703,
+                'output_tokens': 9,
+                'cache_read_input_tokens': 20992,
+                'cache_creation_input_tokens': 128,
+            },
+        }))
+
+        self.assertEqual(1, len(progress))
+        self.assertEqual('result', progress[0]['kind'])
+        self.assertEqual(3326, progress[0]['duration_ms'])
+        self.assertEqual(1, progress[0]['num_turns'])
+        self.assertEqual(0.034236, progress[0]['total_cost_usd'])
+        self.assertEqual(20992, progress[0]['usage']['cache_read_input_tokens'])
+        self.assertEqual(128, progress[0]['usage']['cache_creation_input_tokens'])
+
+    def test_result_progress_keeps_cost_usd_fallback(self):
+        session, _ = self.make_session()
+        progress = []
+        session.progress_ready.connect(progress.append)
+
+        session._handle_json_line(json.dumps({'type': 'result', 'cost_usd': 0.01, 'usage': {}}))
+
+        self.assertEqual('result', progress[0]['kind'])
+        self.assertEqual(0.01, progress[0]['cost_usd'])
+
 
 if __name__ == '__main__':
     unittest.main()

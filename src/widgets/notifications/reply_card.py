@@ -214,8 +214,10 @@ def _reply_card_style_qss(style=None):
             QLabel#ReplyCardTitle {{ color: {title}; font-size: 16px; font-weight: 700; }}
             QLabel#ReplyCardAvatar {{ border-radius: 18px; background: #e8f2ff; }}
             QLabel#ReplyCardStatus {{ color: {meta}; font-size: 12px; font-weight: 700; }}
-            QLabel#ReplyCardMeta, QLabel#ReplyCardControlLabel, QLabel#ReplyCardOptionDescription {{ color: {meta}; font-size: 12px; }}
+            QLabel#ReplyCardMeta, QLabel#ReplyCardControlLabel, QLabel#ReplyCardOptionDescription, QLabel#ReplyCardUsageName {{ color: {meta}; font-size: 11px; }}
             QLabel#ReplyCardSummary, QLabel#ReplyCardElement {{ color: {body}; font-size: 13px; line-height: 1.45; }}
+            QFrame#ReplyCardUsageBox {{ border: 1px solid rgba(180,190,215,130); border-radius: 9px; background: {box_bg}; }}
+            QLabel#ReplyCardUsageValue {{ color: {body}; font-size: 12px; font-weight: 700; }}
             QRadioButton, QCheckBox {{ color: {body}; font: 13px "Microsoft YaHei UI"; background: transparent; border: none; }}
             QLineEdit {{ border: 1px solid rgba(218,226,238,220); border-radius: 9px; background: rgba(255,255,255,210); color: {body}; padding: 6px 8px; font: 13px "Microsoft YaHei UI"; }}
             QPushButton {{ border: 1px solid rgba(218,226,238,220); border-radius: 13px; background: rgba(255,255,255,190); color: #3a4054; font: 13px "Microsoft YaHei UI"; padding: 7px 12px; }}
@@ -315,6 +317,8 @@ class ReplyCard(ReplyCardWindow):
     def _sync_content_widths(self):
         for label in self.findChildren(QLabel, 'ReplyCardElement'):
             label.setFixedWidth(self._content_width)
+        for box in self.findChildren(QFrame, 'ReplyCardUsageBox'):
+            box.setFixedWidth(self._content_width)
 
     def _schedule_content_resize(self):
         if self.closing or self._content_resize_pending:
@@ -443,6 +447,8 @@ class ReplyCard(ReplyCardWindow):
         elements = event.get('elements') or []
         text = self._event_text_for_width(event)
         length = self._weighted_text_length(text)
+        if isinstance(event.get('result_usage'), dict) and event['result_usage']:
+            return max(368, self._normalized_card_width(REPLY_CARD_DEFAULT_WIDTH))
         if has_structured_markdown(text) and length > 90:
             return 456
         if controls:
@@ -572,6 +578,12 @@ class ReplyCard(ReplyCardWindow):
     def _primary_text_value(self):
         return self.event_data.get('summary') or self.event_data.get('content') or self.event_data.get('message') or ''
 
+    def _normalized_result_usage(self):
+        usage = self.event_data.get('result_usage')
+        if not isinstance(usage, dict):
+            return {}
+        return {key: value for key, value in usage.items() if value is not None}
+
     def _normalized_elements(self):
         elements = self.event_data.get('elements') or []
         normalized = elements if isinstance(elements, list) else []
@@ -581,10 +593,13 @@ class ReplyCard(ReplyCardWindow):
         progress = str(self.event_data.get('progress') or '').strip()
         if progress:
             normalized.append({'type': 'text', 'content': progress})
+        result_usage = self._normalized_result_usage()
+        if result_usage:
+            normalized.append({'type': 'result_usage', 'data': result_usage})
         return normalized
 
     def _structure_signature(self):
-        return (repr(self.event_data.get('elements') or []), repr(self.event_data.get('progress') or ''), repr(self.event_data.get('controls') or []), repr(self.event_data.get('actions') or []))
+        return (repr(self.event_data.get('elements') or []), repr(self.event_data.get('progress') or ''), repr(self._normalized_result_usage()), repr(self.event_data.get('controls') or []), repr(self.event_data.get('actions') or []))
 
     def update_card(self, event, timeout=None):
         if self.closing:
@@ -678,11 +693,91 @@ class ReplyCard(ReplyCardWindow):
             self.avatar_label.set_progress(0.0)
         self.status_timer.stop()
 
+    @staticmethod
+    def _format_usage_number(value):
+        try:
+            return f'{int(value):,}'
+        except (TypeError, ValueError):
+            return ''
+
+    @staticmethod
+    def _format_usage_duration(milliseconds):
+        try:
+            seconds = float(milliseconds) / 1000
+        except (TypeError, ValueError):
+            return ''
+        if seconds < 1:
+            return f'{int(milliseconds)} ms'
+        if seconds < 60:
+            return f'{seconds:.1f} s'
+        minutes, seconds = divmod(int(seconds), 60)
+        return f'{minutes} 分 {seconds} 秒'
+
+    @staticmethod
+    def _format_usage_cost(cost):
+        try:
+            value = float(cost)
+        except (TypeError, ValueError):
+            return ''
+        if value and value < 0.0001:
+            return f'${value:.6f}'
+        return f'${value:.4f}'
+
+    def _add_result_usage(self, layout, card, usage):
+        rows = []
+        overview = []
+        if usage.get('turns') is not None:
+            overview.append(('轮数', f"{self._format_usage_number(usage['turns'])} 轮"))
+        if usage.get('duration_ms') is not None:
+            overview.append(('总耗时', self._format_usage_duration(usage['duration_ms'])))
+        elif usage.get('duration_api_ms') is not None:
+            overview.append(('API 耗时', self._format_usage_duration(usage['duration_api_ms'])))
+        if usage.get('cost_usd') is not None:
+            overview.append(('费用', self._format_usage_cost(usage['cost_usd'])))
+        tokens = []
+        for key, label in (('input_tokens', '输入'), ('output_tokens', '输出'), ('cache_tokens', '缓存')):
+            if usage.get(key) is not None:
+                tokens.append((label, self._format_usage_number(usage[key])))
+        if overview:
+            rows.append(overview)
+        if tokens:
+            rows.append(tokens)
+        if not rows:
+            return
+        box = QFrame(card)
+        box.setObjectName('ReplyCardUsageBox')
+        box.setFixedWidth(self._content_width)
+        box_layout = QVBoxLayout(box)
+        box_layout.setContentsMargins(8, 6, 8, 6)
+        box_layout.setSpacing(4)
+        for row in rows:
+            row_layout = QHBoxLayout()
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(10)
+            for name, value in row:
+                metric = QVBoxLayout()
+                metric.setContentsMargins(0, 0, 0, 0)
+                metric.setSpacing(0)
+                name_label = QLabel(name, box)
+                name_label.setObjectName('ReplyCardUsageName')
+                value_label = QLabel(value, box)
+                value_label.setObjectName('ReplyCardUsageValue')
+                value_label.setWordWrap(False)
+                metric.addWidget(name_label)
+                metric.addWidget(value_label)
+                row_layout.addLayout(metric)
+            row_layout.addStretch(1)
+            box_layout.addLayout(row_layout)
+        layout.addWidget(box)
+
     def _add_elements(self, layout, card, elements):
         for element in elements[:8]:
             if not isinstance(element, dict):
                 continue
             tag = element.get('tag') or element.get('type')
+            if tag == 'result_usage':
+                self._add_result_usage(layout, card, element.get('data') or {})
+                continue
             if tag in ('hr', 'divider'):
                 line = QFrame(card)
                 line.setObjectName('ReplyCardHr')
