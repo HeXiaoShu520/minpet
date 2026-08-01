@@ -105,6 +105,7 @@ class MiniPetApp(QApplication):
         self.quick_chat_backend = 'builtin'
         self.quick_reply_card_id = None
         self._quick_stream_text = ''
+        self._quick_reply_usage = None
         self.stream_display_delay = StreamDisplayDelay(self)
         self._surface_cards = {}
         # 内置模型和外置 surface 都是“完整文本不断增长”的流式形态，
@@ -808,6 +809,7 @@ class MiniPetApp(QApplication):
         else:
             self._begin_reply_card_turn()
         self._reset_quick_stream_tts()
+        self._quick_reply_usage = None
         self.claude_code_received_output = False
         self._claude_code_attempted_modes = set()
         self._claude_code_restart_pending = False
@@ -903,11 +905,31 @@ class MiniPetApp(QApplication):
         kind = info.get('kind')
         if kind == 'tool':
             progress = '正在调用工具：%s' % info.get('name', '工具') if info.get('state') == 'running' else '工具执行完成'
-            self._show_reply_card(self._quick_stream_text or '', status='streaming', timeout_ms=60000, progress=progress)
+            if info.get('usage'):
+                result_usage = self._claude_code_result_usage(info)
+                if result_usage:
+                    self._quick_reply_usage = result_usage
+            kwargs = {'status': 'streaming', 'timeout_ms': 60000, 'progress': progress}
+            if isinstance(self._quick_reply_usage, dict):
+                kwargs['result_usage'] = self._quick_reply_usage
+            self._show_reply_card(self._quick_stream_text or '', **kwargs)
         elif kind == 'result':
             result_usage = self._claude_code_result_usage(info)
             if result_usage:
-                self._show_reply_card(self._quick_stream_text or '', status='done', timeout_ms=60000, progress='', result_usage=result_usage)
+                self._quick_reply_usage = result_usage
+            if isinstance(self._quick_reply_usage, dict):
+                self._show_reply_card(
+                    self._quick_stream_text or '', status='done', timeout_ms=60000,
+                    progress='', result_usage=self._quick_reply_usage,
+                )
+        elif info.get('usage'):
+            result_usage = self._claude_code_result_usage(info)
+            if result_usage:
+                self._quick_reply_usage = result_usage
+                self._show_reply_card(
+                    self._quick_stream_text or '', status='streaming', timeout_ms=60000,
+                    result_usage=self._quick_reply_usage,
+                )
 
     def _on_claude_code_output(self, text):
         self.claude_code_starting = False
@@ -923,7 +945,10 @@ class MiniPetApp(QApplication):
 
     def _show_claude_code_streaming(self, text):
         self._chat_window_delta('claude_code', text)
-        self._show_reply_card(text, status='streaming', timeout_ms=60000)
+        self._show_reply_card(
+            text, status='streaming', timeout_ms=60000,
+            result_usage=self._quick_reply_usage,
+        )
 
     def _on_claude_code_result(self, text):
         self.claude_code_starting = False
@@ -939,7 +964,10 @@ class MiniPetApp(QApplication):
 
     def _show_claude_code_result(self, reply):
         self._save_external_reply('claude_code', reply)
-        self._show_reply_card(reply, status='done', timeout_ms=max(5000, min(25000, len(reply) * 180)))
+        self._show_reply_card(
+            reply, status='done', timeout_ms=max(5000, min(25000, len(reply) * 180)),
+            result_usage=self._quick_reply_usage,
+        )
 
     def _on_claude_code_session_ready(self, session_id):
         known_sessions = list(config.app_config.get('claude_code_known_sessions') or [])
@@ -1135,8 +1163,7 @@ class MiniPetApp(QApplication):
         }
         if progress is not None:
             event['progress'] = progress
-        if result_usage is not None:
-            event['result_usage'] = result_usage
+        event['result_usage'] = result_usage
         x, y = self.pet.reply_card_anchor()
         if self.quick_reply_card_id and self.note.update_reply_card(self.quick_reply_card_id, event, timeout=timeout_ms):
             return
@@ -1145,6 +1172,7 @@ class MiniPetApp(QApplication):
     def _begin_reply_card_turn(self):
         self.quick_reply_card_id = None
         self._quick_stream_text = ''
+        self._quick_reply_usage = None
 
     def _close_reply_card(self):
         if self.quick_reply_card_id:

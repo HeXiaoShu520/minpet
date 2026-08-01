@@ -102,7 +102,7 @@ MiniPet 发给 Claude Code 的最小输入事件为一行 JSON：
 {"type":"user","message":{"role":"user","content":[{"type":"text","text":"你好"}]}}
 ```
 
-Claude Code 输出中的 `stream_event.content_block_delta` 用于流式更新回复卡片，最终 `result` 事件用于结束卡片状态并触发 TTS 收尾。
+Claude Code 输出中的 `stream_event.content_block_delta` 用于流式更新回复卡片，最终 `result` 事件用于结束卡片状态并触发 TTS 收尾。回复卡片首次收到有效用量后才显示 `输入 / 输出 / 缓存 / 费用` 单行统计，并在后续进度和最终结果中持续更新；未返回有效用量时不显示统计栏。
 
 
 ## 连接 OpenClaw
