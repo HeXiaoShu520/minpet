@@ -53,6 +53,11 @@ class Win32FramelessHitTest(unittest.TestCase):
         self.assertEqual(HTCAPTION, hit_test(0, 30, 200, 120, 54, 8, maximized=True))
         self.assertEqual(HTCLIENT, hit_test(0, 60, 200, 120, 54, 8, maximized=True))
 
+    def test_maximized_title_controls_stay_client_area(self):
+        controls = [(68, 0, 44, 32), (112, 0, 44, 32), (156, 0, 44, 32)]
+        self.assertEqual(HTCAPTION, hit_test(40, 16, 200, 120, 32, 8, controls, maximized=True))
+        self.assertEqual(HTCLIENT, hit_test(178, 16, 200, 120, 32, 8, controls, maximized=True))
+
     def test_scaled_resize_border(self):
         self.assertEqual(HTLEFT, hit_test(11, 60, 300, 180, 81, 12))
         self.assertEqual(HTCLIENT, hit_test(12, 100, 300, 180, 81, 12))

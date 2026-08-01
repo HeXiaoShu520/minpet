@@ -18,10 +18,10 @@ if sys.platform == 'win32':
     from ctypes.wintypes import MSG, POINT
 
 from PySide6.QtCore import QByteArray, QBuffer, QEvent, QIODevice, QSize, Qt, QUrl, Signal
-from PySide6.QtGui import QFont, QIcon, QKeyEvent, QPixmap
+from PySide6.QtGui import QColor, QFont, QIcon, QKeyEvent, QPainter, QPen, QPixmap
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractButton, QApplication, QHBoxLayout, QLabel, QVBoxLayout, QWidget)
 from qfluentwidgets import TitleLabel, TransparentToolButton
 from qfluentwidgets import FluentIcon as FIF
 
@@ -166,6 +166,49 @@ class ChatBridge(QWebChannel):
             self._quote_callback(quoted_text)
 
 
+class _WindowControlButton(QAbstractButton):
+    """Windows 无边框窗口的系统控制按钮。"""
+
+    def __init__(self, action, parent=None):
+        super().__init__(parent)
+        self.action = action
+        self._maximized = False
+        self.setFixedSize(44, 32)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setCursor(Qt.ArrowCursor)
+
+    def set_maximized(self, maximized):
+        self._maximized = bool(maximized)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        hovered = self.underMouse()
+        pressed = self.isDown()
+        is_close = self.action == 'close'
+        if hovered or pressed:
+            if is_close:
+                painter.fillRect(self.rect(), QColor('#c42b1c' if pressed else '#e81123'))
+            else:
+                painter.fillRect(self.rect(), QColor('#e6e8eb' if pressed else '#f2f3f5'))
+        color = QColor('#ffffff') if is_close and (hovered or pressed) else QColor('#4b4f56')
+        painter.setPen(QPen(color, 1))
+        center_x = self.width() // 2
+        center_y = self.height() // 2
+        if self.action == 'minimize':
+            painter.drawLine(center_x - 5, center_y + 5, center_x + 5, center_y + 5)
+        elif self.action == 'maximize':
+            if self._maximized:
+                painter.drawRect(center_x - 5, center_y - 2, 8, 7)
+                painter.drawRect(center_x - 2, center_y - 5, 8, 7)
+            else:
+                painter.drawRect(center_x - 5, center_y - 5, 10, 10)
+        else:
+            painter.drawLine(center_x - 5, center_y - 5, center_x + 5, center_y + 5)
+            painter.drawLine(center_x + 5, center_y - 5, center_x - 5, center_y + 5)
+
+
 class ChatWindow(QWidget):
     """完整文本聊天窗口。
 
@@ -210,7 +253,7 @@ class ChatWindow(QWidget):
         if sys.platform == 'win32':
             self.title_bar = QWidget()
             self.title_bar.setFixedHeight(32)
-            self.title_bar.setStyleSheet('QWidget{background:#ffffff;border-bottom:1px solid #eef0f3;}')
+            self.title_bar.setStyleSheet('QWidget{background:#ffffff;}')
             title_layout = QHBoxLayout(self.title_bar)
             title_layout.setContentsMargins(10, 0, 0, 0)
             title_layout.setSpacing(6)
@@ -227,7 +270,7 @@ class ChatWindow(QWidget):
 
         self.header = QWidget()
         self.header.setFixedHeight(54)
-        self.header.setStyleSheet('QWidget{background:#ffffff;border-bottom:1px solid #e5e7eb;}')
+        self.header.setStyleSheet('QWidget{background:#ffffff;}')
         h_layout = QHBoxLayout(self.header)
         h_layout.setContentsMargins(18, 0, 12, 0)
         self.avatar_widget = Avatar(config.avatar_path('pet'), self.pet_name or '宠', False, self.header, size=34, icon_size=27)
@@ -313,18 +356,15 @@ class ChatWindow(QWidget):
         root.addWidget(input_bar)
 
     def _add_window_controls(self, layout):
-        self.minimize_btn = TransparentToolButton(FIF.MINIMIZE, self.title_bar)
-        self.maximize_btn = TransparentToolButton(FIF.FULL_SCREEN, self.title_bar)
-        self.close_btn = TransparentToolButton(FIF.CLOSE, self.title_bar)
+        self.minimize_btn = _WindowControlButton('minimize', self.title_bar)
+        self.maximize_btn = _WindowControlButton('maximize', self.title_bar)
+        self.close_btn = _WindowControlButton('close', self.title_bar)
+        layout.setSpacing(0)
         for button in (self.minimize_btn, self.maximize_btn, self.close_btn):
-            button.setFixedSize(32, 32)
             layout.addWidget(button)
         self.minimize_btn.setToolTip('最小化')
         self.maximize_btn.clicked.connect(self._toggle_maximized)
         self.close_btn.setToolTip('关闭')
-        self.close_btn.setStyleSheet(
-            'QToolButton:hover{background:#e81123;color:#ffffff;border:none;}'
-        )
         self.minimize_btn.clicked.connect(self.showMinimized)
         self.close_btn.clicked.connect(self.close)
         self._sync_maximize_button()
@@ -338,7 +378,9 @@ class ChatWindow(QWidget):
     def _sync_maximize_button(self):
         if not hasattr(self, 'maximize_btn'):
             return
-        self.maximize_btn.setToolTip('还原' if self.isMaximized() else '最大化')
+        maximized = self.isMaximized()
+        self.maximize_btn.setToolTip('还原' if maximized else '最大化')
+        self.maximize_btn.set_maximized(maximized)
 
     def changeEvent(self, event):
         super().changeEvent(event)
