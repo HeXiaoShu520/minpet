@@ -38,7 +38,7 @@ class SourceChipWidget(QLabel):
             'QLabel {'
             '  background: %s;'
             '  color: white;'
-            '  border-radius: 10px;'
+            '  border-radius: 999px;'
             '  border: 1px solid rgba(255,255,255,80);'
             '  padding: 1px 10px;'
             '  font-weight: 700;'

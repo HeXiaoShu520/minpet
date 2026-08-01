@@ -1,12 +1,12 @@
 # coding:utf-8
 
 
-def show_chat_window(owner, history=None, append_message=None, content_for_llm=None, system_prompt_builder=None, clear_history_callback=None, send_callback=None, backend='builtin'):
+def show_chat_window(owner, history=None, append_message=None, content_for_llm=None, system_prompt_builder=None, clear_history_callback=None, send_callback=None, backend='builtin', session_id='', sessions=None, create_session_callback=None, select_session_callback=None, sessions_callback=None):
     from windows.chat_window import ChatWindow
     import config
 
     if owner.chat_window is None:
-        owner.chat_window = ChatWindow(config.pet_display_name(), owner, history=history, append_message=append_message, content_for_llm=content_for_llm, system_prompt_builder=system_prompt_builder, clear_history_callback=clear_history_callback, send_callback=send_callback, backend=backend)
+        owner.chat_window = ChatWindow(config.pet_display_name(), owner, history=history, append_message=append_message, content_for_llm=content_for_llm, system_prompt_builder=system_prompt_builder, clear_history_callback=clear_history_callback, send_callback=send_callback, backend=backend, session_id=session_id, sessions=sessions, create_session_callback=create_session_callback, select_session_callback=select_session_callback, sessions_callback=sessions_callback)
     else:
         owner.chat_window.set_pet_name(config.pet_display_name())
         owner.chat_window.append_message = append_message
@@ -15,6 +15,7 @@ def show_chat_window(owner, history=None, append_message=None, content_for_llm=N
         owner.chat_window.clear_history_callback = clear_history_callback
         owner.chat_window.send_callback = send_callback
         owner.chat_window.set_backend(backend)
+        owner.chat_window.set_sessions(session_id, sessions or [], create_session_callback, select_session_callback, sessions_callback)
         if history is not None and owner.chat_window.history is not history:
             owner.chat_window.history = history
             owner.chat_window.reload_history()

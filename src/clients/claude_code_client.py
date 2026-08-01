@@ -14,6 +14,11 @@ import uuid
 
 from PySide6.QtCore import QThread, Signal
 
+try:
+    from clients.log_preview import log_preview
+except ModuleNotFoundError:
+    from src.clients.log_preview import log_preview
+
 
 ANSI_RE = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
 MAX_OUTPUT_CHARS = 3000
@@ -31,10 +36,12 @@ class ClaudeCodeSession(QThread):
     session_mode_mismatch = Signal(str)
     progress_ready = Signal(dict)
 
-    def __init__(self, project_dir, reset_token=0, resume=False, parent=None):
+    def __init__(self, project_dir, reset_token=0, chat_session_id='', resume=False, parent=None):
         super().__init__(parent)
         self.project_dir = project_dir
-        self.session_id = self._session_id_for_project(project_dir, reset_token)
+        self.session_id = self._session_id_for_project(
+            project_dir, reset_token, chat_session_id
+        )
         self.resume = bool(resume)
         self._proc = None
         self._stopping = False
@@ -49,9 +56,11 @@ class ClaudeCodeSession(QThread):
         self._startup_error = ''
 
     @staticmethod
-    def _session_id_for_project(project_dir, reset_token=0):
+    def _session_id_for_project(project_dir, reset_token=0, chat_session_id=''):
         project_key = str(project_dir or '').strip() or '.'
         project_key = project_key.replace('\\', '/').lower()
+        if chat_session_id:
+            project_key += '#chat:%s' % chat_session_id
         reset_token = int(reset_token or 0)
         if reset_token:
             project_key += '#reset:%s' % reset_token
@@ -266,7 +275,7 @@ class ClaudeCodeSession(QThread):
                     self.error_ready.emit('Claude Code 进程未运行，发送失败。')
                 continue
             try:
-                print('[Claude Code input]', text, flush=True)
+                print('[Claude Code input]', log_preview(text), flush=True)
                 event = {
                     'type': 'user',
                     'message': {
@@ -300,7 +309,7 @@ class ClaudeCodeSession(QThread):
             text = ANSI_RE.sub('', line or '').strip()
             if not text:
                 continue
-            print('[Claude Code stderr]', text, flush=True)
+            print('[Claude Code stderr]', log_preview(text), flush=True)
             if not self._process_ready_emitted:
                 self._startup_error = text[-MAX_STARTUP_ERROR_CHARS:]
             if self._handle_mode_mismatch(text):
@@ -420,7 +429,7 @@ class ClaudeCodeSession(QThread):
         if event_type == 'result':
             text = ANSI_RE.sub('', event.get('result') or self._message_text(event.get('message')) or '').strip()
             if text:
-                print('[Claude Code final]', text, flush=True)
+                print('[Claude Code final]', log_preview(text), flush=True)
                 self.result_ready.emit(text)
             return ''
 

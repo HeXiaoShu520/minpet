@@ -304,22 +304,38 @@ class DesktopPet(QWidget):
         self.input_popup.submitted.connect(self.chat_prompt_submitted.emit)
         self.input_popup.destroyed.connect(lambda: setattr(self, 'input_popup', None))
 
-    def show_voice_popup(self):
+    def show_voice_popup(self, anchor=None, anchor_mode='pet', initial_state='idle', initial_text=''):
+        if anchor is None:
+            anchor = self.reply_card_anchor()
+            anchor_mode = 'pet'
+        x, y = anchor
         if self.voice_popup is not None and self.voice_popup.isVisible():
+            self.voice_popup.move_to_anchor(x, y, smooth=False, anchor_mode=anchor_mode)
             self.voice_popup.raise_()
             return self.voice_popup
-        x, y = self.reply_card_anchor()
-        self.voice_popup = PetVoicePopup(x, y, self)
+        self.voice_popup = PetVoicePopup(
+            x,
+            y,
+            self,
+            anchor_mode=anchor_mode,
+            initial_state=initial_state,
+            initial_text=initial_text,
+        )
         self.voice_popup.pause_requested.connect(self.voice_pause_requested.emit)
         self.voice_popup.stop_requested.connect(self.voice_stop_requested.emit)
         self.voice_popup.destroyed.connect(lambda: setattr(self, 'voice_popup', None))
         return self.voice_popup
 
-    def update_voice_popup(self, state, text=''):
-        popup = self.show_voice_popup()
-        x, y = self.reply_card_anchor()
-        popup.move_to_anchor(x, y, smooth=False)
-        popup.update_state(state, text)
+    def update_voice_popup(self, state, text='', anchor=None, anchor_mode='pet'):
+        is_new = self.voice_popup is None or not self.voice_popup.isVisible()
+        popup = self.show_voice_popup(
+            anchor=anchor,
+            anchor_mode=anchor_mode,
+            initial_state=state,
+            initial_text=text,
+        )
+        if not is_new:
+            popup.update_state(state, text)
 
     def close_voice_popup(self):
         if self.voice_popup is not None:
@@ -333,7 +349,7 @@ class DesktopPet(QWidget):
         return limit_position(self, x, y)
 
     def _sync_voice_popup_position(self):
-        if self.voice_popup is not None and self.voice_popup.isVisible():
+        if self.voice_popup is not None and self.voice_popup.isVisible() and self.voice_popup.anchor_mode == 'pet':
             x, y = self.reply_card_anchor()
             self.voice_popup.move_to_anchor(x, y, floaty=self.fall_timer.isActive())
 
@@ -349,8 +365,8 @@ class DesktopPet(QWidget):
     def pat(self):
         pat_pet(self)
 
-    def show_chat(self, history=None, append_message=None, content_for_llm=None, system_prompt_builder=None, clear_history_callback=None, send_callback=None, backend='builtin'):
-        show_chat_window(self, history=history, append_message=append_message, content_for_llm=content_for_llm, system_prompt_builder=system_prompt_builder, clear_history_callback=clear_history_callback, send_callback=send_callback, backend=backend)
+    def show_chat(self, history=None, append_message=None, content_for_llm=None, system_prompt_builder=None, clear_history_callback=None, send_callback=None, backend='builtin', session_id='', sessions=None, create_session_callback=None, select_session_callback=None, sessions_callback=None):
+        show_chat_window(self, history=history, append_message=append_message, content_for_llm=content_for_llm, system_prompt_builder=system_prompt_builder, clear_history_callback=clear_history_callback, send_callback=send_callback, backend=backend, session_id=session_id, sessions=sessions, create_session_callback=create_session_callback, select_session_callback=select_session_callback, sessions_callback=sessions_callback)
 
     def show_doubao_call(self, append_message=None):
         show_doubao_call_window(self, append_message=append_message)

@@ -37,26 +37,24 @@ class Win32FramelessHitTest(unittest.TestCase):
             with self.subTest(point=point):
                 self.assertEqual(expected, hit_test(*point, 200, 120, 54, 8))
 
-    def test_title_blank_area_drags(self):
-        self.assertEqual(HTCAPTION, hit_test(100, 20, 200, 120, 32, 8))
+    def test_pet_header_blank_area_drags(self):
+        self.assertEqual(HTCAPTION, hit_test(100, 20, 200, 120, 40, 8))
+        self.assertEqual(HTCAPTION, hit_test(100, 39, 200, 120, 40, 8))
+        self.assertEqual(HTCLIENT, hit_test(100, 40, 200, 120, 40, 8))
 
-    def test_title_controls_stay_client_area(self):
-        controls = [(104, 0, 32, 32), (136, 0, 32, 32), (168, 0, 32, 32)]
-        self.assertEqual(HTCLIENT, hit_test(120, 16, 200, 120, 32, 8, controls))
-        self.assertEqual(HTCLIENT, hit_test(184, 16, 200, 120, 32, 8, controls))
-
-    def test_pet_header_and_content_are_client_area(self):
-        self.assertEqual(HTCLIENT, hit_test(100, 32, 200, 120, 32, 8))
-        self.assertEqual(HTCLIENT, hit_test(100, 60, 200, 120, 32, 8))
+    def test_header_controls_stay_client_area(self):
+        controls = [(72, 6, 28, 28), (117, 6, 32, 28), (149, 6, 32, 28), (181, 6, 32, 28)]
+        self.assertEqual(HTCLIENT, hit_test(86, 20, 220, 120, 40, 8, controls))
+        self.assertEqual(HTCLIENT, hit_test(197, 20, 220, 120, 40, 8, controls))
 
     def test_maximized_window_disables_resize(self):
         self.assertEqual(HTCAPTION, hit_test(0, 30, 200, 120, 54, 8, maximized=True))
         self.assertEqual(HTCLIENT, hit_test(0, 60, 200, 120, 54, 8, maximized=True))
 
-    def test_maximized_title_controls_stay_client_area(self):
-        controls = [(68, 0, 44, 32), (112, 0, 44, 32), (156, 0, 44, 32)]
-        self.assertEqual(HTCAPTION, hit_test(40, 16, 200, 120, 32, 8, controls, maximized=True))
-        self.assertEqual(HTCLIENT, hit_test(178, 16, 200, 120, 32, 8, controls, maximized=True))
+    def test_maximized_header_controls_stay_client_area(self):
+        controls = [(72, 6, 28, 28), (117, 6, 32, 28), (149, 6, 32, 28), (181, 6, 32, 28)]
+        self.assertEqual(HTCAPTION, hit_test(40, 20, 220, 120, 40, 8, controls, maximized=True))
+        self.assertEqual(HTCLIENT, hit_test(197, 20, 220, 120, 40, 8, controls, maximized=True))
 
     def test_scaled_resize_border(self):
         self.assertEqual(HTLEFT, hit_test(11, 60, 300, 180, 81, 12))

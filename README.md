@@ -30,7 +30,7 @@ MiniPet 提供多种智能体模式：
 | 连接 MiniPet 协议后端 | 连接 miniClaw 或其他按 MiniPet 通用协议实现的 WebSocket 后端。接入规范见 [MiniPet 当前协议设计](MiniPet%20当前协议设计.md)。 |
 | 连接 Claude Code | 启动本地 Claude Code CLI 的 `stream-json` 子进程，把桌宠输入作为同一项目会话的连续聊天发送给 Claude Code。 |
 
-四种模式都会把用户消息和最终成功回复写入 MiniPet 本地聊天记录，并按后端独立分类。切换模式时聊天窗口只显示当前后端历史，“清空对话”也只清除当前后端；旧版本未标记后端的记录兼容归入“内置大模型”。聊天窗口头部和助手名字右侧会显示当前后端徽标。Claude Code 自身的持久会话机制保持不变，本地聊天记录仅用于展示与检索。
+四种模式都会把用户消息和最终成功回复写入 MiniPet 本地聊天记录。聊天窗口侧栏会统一显示所有智能体会话；每条会话固定绑定来源智能体，切换会话时会同步切换历史、顶部徽标和后续发送目标，“清空对话”只删除当前会话并创建同来源的新会话。设置页的智能体模式仅决定新建对话和桌宠快捷输入的默认来源。旧版本未标记 `session_id` 的记录会按日期和后端兼容归入历史会话。
 
 ## 连接 Claude Code
 
@@ -57,7 +57,7 @@ claude --print \
   --include-partial-messages \
   --replay-user-messages \
   --permission-mode auto \
-  --session-id <由项目路径生成的固定 UUID>
+  --session-id <由项目路径、MiniPet 会话 ID 和重置标识生成的固定 UUID>
 ```
 
 会话创建成功后，MiniPet 会持久化记录该 ID。下次启动同一项目会改用：
@@ -70,20 +70,20 @@ claude --print \
   --include-partial-messages \
   --replay-user-messages \
   --permission-mode auto \
-  --resume <相同的固定 UUID>
+  --resume <同一 MiniPet 会话对应的固定 UUID>
 ```
 
 这只是恢复原会话，不使用 `--fork-session`。如果首次/后续标记与 Claude Code 的本地会话记录不一致，MiniPet 会根据“ID 已存在”或“找不到会话”错误在 `--session-id` 和 `--resume` 之间自动纠正一次。
 
-同一个会话 ID 同一时间只能被一个 Claude Code 进程占用。MiniPet 在切换后端或退出程序时会停止当前 Claude Code 子进程并等待释放；如果外部还有其他 Claude Code 进程占用同一个 ID，需要先关闭那个进程再重新发送。
+同一个 Claude Code 会话 ID 同一时间只能被一个子进程占用。MiniPet 在切换 Claude 历史会话或退出程序时会停止当前 Claude Code 子进程并等待释放；如果外部还有其他 Claude Code 进程占用同一个 ID，需要先关闭那个进程再重新发送。
 
-会话 ID 不单独保存，而是由项目路径稳定生成：
+Claude 会话 ID 不单独保存，而是由项目路径、MiniPet 聊天会话 ID 和重置标识稳定生成：
 
 ```text
-session_id = UUID(sha256(project_dir + reset_token).前 16 字节)
+claude_session_id = UUID(sha256(project_dir + chat_session_id + reset_token).前 16 字节)
 ```
 
-因此同一个项目目录重启 MiniPet 后仍会复用同一个 Claude Code 会话上下文。设置页提供“重置会话”按钮；点击后会增加 `claude_code_reset_token`，下次发送消息时使用新的会话 ID。
+因此不同 Claude 历史会话拥有互不混合的 Claude Code 上下文；重启后选择同一条历史仍会恢复它原来的上下文。设置页提供“重置会话”按钮；点击后会增加 `claude_code_reset_token`，下次发送消息时使用新的 Claude 会话 ID。
 
 数据流：
 
@@ -140,7 +140,7 @@ Content-Type: application/json; charset=utf-8
 {
   "model": "openclaw:main",
   "input": "你好",
-  "user": "minipet_user"
+  "user": "minipet_user:chat:<chat_session_id>"
 }
 ```
 
@@ -164,7 +164,7 @@ Content-Type: application/json; charset=utf-8
       ]
     }
   ],
-  "user": "minipet_user"
+  "user": "minipet_user:chat:<chat_session_id>"
 }
 ```
 
@@ -266,7 +266,8 @@ DESKTOP_API_PORT=18889
 
 ### AI 文本聊天
 
-- 独立聊天窗口；Windows 下使用自绘白色标题栏，支持原生拖动、双击最大化/还原、最小化、关闭和四边缩放
+- 独立聊天窗口；Windows 下使用蓝色自绘标题栏和圆角主面板，支持原生拖动、双击最大化/还原、最小化、关闭和四边缩放
+- 左侧统一会话列表，显示宠物头像、来源智能体标签和会话标题；可在内置 AI、Claude Code、OpenClaw、MiniPet 协议后端会话之间直接切换
 - 双方头像与消息块
 - Markdown 内容渲染
 - 流式输出

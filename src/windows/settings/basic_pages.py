@@ -172,7 +172,7 @@ class AgentPage(MiniPetScrollPage):
         self.modeLayout = QVBoxLayout(self.modeBox)
         self.modeLayout.setContentsMargins(0, 0, 0, 0)
         self.modeLayout.setSpacing(0)
-        self.backendCard = ComboSettingCard(self.BACKENDS, FIF.ROBOT, '智能体模式', '各后端分别保存聊天记录；切换模式后只显示当前后端的历史', self.modeBox)
+        self.backendCard = ComboSettingCard(self.BACKENDS, FIF.ROBOT, '智能体模式', '选择新建对话和桌宠快捷输入默认使用的智能体；已有会话保留原来源', self.modeBox)
         self.backendCard.setCurrentValue(cfg.get('agent_backend', 'builtin'))
         self.modeBox.setFixedHeight(self.backendCard.height())
 

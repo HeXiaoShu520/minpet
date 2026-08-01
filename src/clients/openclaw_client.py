@@ -166,7 +166,7 @@ def _read_openclaw_stream(resp, on_delta=None):
     return True, (final_text or ''.join(chunks)).strip()
 
 
-def call_openclaw(message, cfg=None, on_delta=None):
+def call_openclaw(message, cfg=None, on_delta=None, session_id=''):
     cfg = cfg or config.app_config
     token = load_openclaw_token()
     if not token:
@@ -174,6 +174,8 @@ def call_openclaw(message, cfg=None, on_delta=None):
     api_url = cfg.get('openclaw_api_url') or config.OPENCLAW_API_URL_DEFAULT
     model = cfg.get('openclaw_model') or config.OPENCLAW_MODEL_DEFAULT
     user = cfg.get('openclaw_user') or config.OPENCLAW_USER_DEFAULT
+    if session_id:
+        user = '%s:chat:%s' % (user, session_id)
     timeout = int(cfg.get('openclaw_timeout') or config.OPENCLAW_TIMEOUT_DEFAULT)
     payload = {
         'model': model,
@@ -212,10 +214,14 @@ class OpenClawWorker(QThread):
     delta_ready = Signal(str)
     result_ready = Signal(bool, str)
 
-    def __init__(self, message, cfg=None, parent=None):
+    def __init__(self, message, cfg=None, session_id='', parent=None):
         super().__init__(parent)
         self.message = message
         self.cfg = dict(cfg) if cfg is not None else dict(config.app_config)
+        self.session_id = session_id
 
     def run(self):
-        self.result_ready.emit(*call_openclaw(self.message, self.cfg, on_delta=self.delta_ready.emit))
+        self.result_ready.emit(*call_openclaw(
+            self.message, self.cfg, on_delta=self.delta_ready.emit,
+            session_id=self.session_id,
+        ))

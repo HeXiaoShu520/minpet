@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class ChatStore:
@@ -52,6 +52,67 @@ class ChatStore:
                 break
         return messages[-max_messages:]
 
+    def create_session(self, backend='builtin'):
+        self._ensure_session_index()
+        now = datetime.now().isoformat(timespec='seconds')
+        session_id = uuid.uuid4().hex
+        index = self._read_index()
+        index['schema_version'] = SCHEMA_VERSION
+        index.setdefault('sessions', {})[session_id] = {
+            'session_id': session_id,
+            'backend': self._normalize_backend(backend),
+            'title': '新对话',
+            'created_at': now,
+            'updated_at': now,
+            'message_count': 0,
+            'preview': '',
+            'legacy': False,
+        }
+        self._write_index(index)
+        return session_id
+
+    def list_sessions(self, backend=None):
+        self._ensure_session_index()
+        sessions = self._read_index().get('sessions', {})
+        backend = self._normalize_backend(backend) if backend else None
+        items = [dict(value, session_id=key) for key, value in sessions.items()
+                 if not backend or self._normalize_backend(value.get('backend')) == backend]
+        return sorted(items, key=lambda item: item.get('updated_at', ''), reverse=True)
+
+    def get_session(self, session_id):
+        """返回会话元数据；不存在时返回 None。"""
+        if not session_id:
+            return None
+        return next(
+            (item for item in self.list_sessions() if item.get('session_id') == session_id),
+            None,
+        )
+
+    def load_session(self, session_id):
+        messages = []
+        for path in sorted(self.sessions_dir.glob('*.jsonl')):
+            for message in self.load_stored_date(path.stem):
+                if self._session_id_for_message(path.stem, message) == session_id:
+                    messages.append(self.to_runtime_message(message))
+        return messages
+
+    def delete_session(self, session_id):
+        changed = False
+        for path in self.sessions_dir.glob('*.jsonl'):
+            messages = self.load_stored_date(path.stem)
+            kept = [message for message in messages
+                    if self._session_id_for_message(path.stem, message) != session_id]
+            if len(kept) == len(messages):
+                continue
+            changed = True
+            if kept:
+                path.write_text(''.join(json.dumps(message, ensure_ascii=False) + '\n' for message in kept), encoding='utf-8')
+            else:
+                path.unlink()
+        if changed:
+            self.rebuild_metadata()
+        return changed
+
     def load_stored_today(self):
         return self.load_stored_date(self.today())
 
@@ -78,7 +139,7 @@ class ChatStore:
                 messages.append(self.to_runtime_message(stored))
         return messages
 
-    def append(self, role, content, source='chat_window', pet_name='', backend='builtin'):
+    def append(self, role, content, source='chat_window', pet_name='', backend='builtin', session_id=None):
         now = datetime.now()
         date_text = now.strftime('%Y-%m-%d')
         message = {
@@ -88,6 +149,7 @@ class ChatStore:
             'role': role,
             'source': source,
             'backend': self._normalize_backend(backend),
+            'session_id': session_id or self.create_session(backend),
             'pet_name': pet_name,
             'content': self._persist_content_images(self._normalize_content(content), date_text),
         }
@@ -172,16 +234,12 @@ class ChatStore:
         self.delete_search_date(date_text)
         self.delete_summary(date_text)
 
-    def list_sessions(self):
-        index = self._read_index()
-        sessions = index.get('sessions', {})
-        return [{'date': key, **value} for key, value in sorted(sessions.items(), reverse=True)]
-
     def to_runtime_message(self, stored_message):
         return {
             'role': stored_message.get('role', 'user'),
             'content': self._resolve_runtime_content(stored_message.get('content', [])),
             'backend': self._message_backend(stored_message),
+            'session_id': stored_message.get('session_id', ''),
         }
 
     def content_text_for_memory(self, content):
@@ -328,11 +386,15 @@ class ChatStore:
                 created_at TEXT,
                 role TEXT,
                 source TEXT,
+                session_id TEXT,
                 pet_name TEXT,
                 text TEXT NOT NULL,
                 json TEXT NOT NULL
             )
         ''')
+        columns = {row['name'] for row in conn.execute('PRAGMA table_info(messages)')}
+        if 'session_id' not in columns:
+            conn.execute('ALTER TABLE messages ADD COLUMN session_id TEXT')
         conn.execute('CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(text, content="messages", content_rowid="rowid")')
         conn.commit()
 
@@ -346,14 +408,15 @@ class ChatStore:
             if old:
                 conn.execute('DELETE FROM messages_fts WHERE rowid=?', (old['rowid'],))
             conn.execute('''
-                INSERT OR REPLACE INTO messages(id, date, created_at, role, source, pet_name, text, json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO messages(id, date, created_at, role, source, session_id, pet_name, text, json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 message.get('id'),
                 date_text,
                 message.get('created_at', ''),
                 message.get('role', ''),
                 message.get('source', ''),
+                message.get('session_id', self._legacy_session_id(date_text, message)),
                 message.get('pet_name', ''),
                 text,
                 json.dumps(message, ensure_ascii=False),
@@ -506,18 +569,38 @@ class ChatStore:
 
     def _update_index(self, date_text, message):
         index = self._read_index()
+        index['schema_version'] = SCHEMA_VERSION
         sessions = index.setdefault('sessions', {})
-        item = sessions.setdefault(date_text, {'message_count': 0, 'image_count': 0, 'preview': ''})
+        session_id = self._session_id_for_message(date_text, message)
+        item = sessions.setdefault(session_id, {
+            'session_id': session_id,
+            'backend': self._message_backend(message),
+            'title': '新对话',
+            'created_at': message.get('created_at', ''),
+            'message_count': 0,
+            'preview': '',
+            'legacy': 'session_id' not in message,
+        })
         item['message_count'] = int(item.get('message_count', 0)) + 1
-        item['image_count'] = int(item.get('image_count', 0)) + sum(1 for block in message.get('content', []) if block.get('type') == 'image')
         item['updated_at'] = message.get('created_at')
         item['preview'] = self._preview(message.get('content', []))
+        if item.get('title') == '新对话' and message.get('role') == 'user' and item['preview']:
+            item['title'] = item['preview'][:24]
         self._write_index(index)
 
     def _remove_index_date(self, date_text):
+        self.rebuild_metadata()
+
+    def _legacy_session_id(self, date_text, message):
+        return 'legacy:%s:%s' % (date_text, self._message_backend(message))
+
+    def _session_id_for_message(self, date_text, message):
+        return message.get('session_id') or self._legacy_session_id(date_text, message)
+
+    def _ensure_session_index(self):
         index = self._read_index()
-        index.setdefault('sessions', {}).pop(date_text, None)
-        self._write_index(index)
+        if index.get('schema_version') != SCHEMA_VERSION or (not index.get('sessions') and any(self.sessions_dir.glob('*.jsonl'))):
+            self.rebuild_metadata()
 
     def _preview(self, content):
         for block in content or []:
