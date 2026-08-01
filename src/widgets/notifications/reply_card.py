@@ -38,9 +38,10 @@ class SourceChipWidget(QLabel):
             'QLabel {'
             '  background: %s;'
             '  color: white;'
-            '  border-radius: 999px;'
+            '  border-radius: 9px;'
             '  border: 1px solid rgba(255,255,255,80);'
             '  padding: 1px 10px;'
+            '  min-height: 18px;'
             '  font-weight: 700;'
             '}' % gradient
         )
@@ -741,19 +742,6 @@ class ReplyCard(ReplyCardWindow):
         if number >= 1000:
             return f'{number / 1000:.1f}k'
         return str(number)
-
-    @staticmethod
-    def _format_usage_duration(milliseconds):
-        try:
-            seconds = float(milliseconds) / 1000
-        except (TypeError, ValueError):
-            return ''
-        if seconds < 1:
-            return f'{int(milliseconds)} ms'
-        if seconds < 60:
-            return f'{seconds:.1f} s'
-        minutes, seconds = divmod(int(seconds), 60)
-        return f'{minutes} 分 {seconds} 秒'
 
     @staticmethod
     def _format_usage_cost(cost):

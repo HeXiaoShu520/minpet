@@ -33,7 +33,7 @@ class VoiceOrbWidget(QWidget):
         self.phase = 0
         self.text = ''
         self.min_orb_width = 40
-        self.max_orb_width = 420
+        self.max_orb_width = 520
         self.orb_height = 40
         self.icon_area_width = 40
         self.text_right_padding = 12
@@ -71,6 +71,15 @@ class VoiceOrbWidget(QWidget):
         self._animate_to_text_width()
         self.update()
 
+    def set_initial_content(self, state, text):
+        self.state = state
+        self.phase = 0
+        self.text = str(text or '').strip()
+        self._target_width = self._text_target_width(self.text)
+        self._orb_width = self._target_width
+        self.setFixedWidth(self._target_width)
+        self.update()
+
     def set_phase(self, phase):
         self.phase = phase
         self.update()
@@ -88,12 +97,21 @@ class VoiceOrbWidget(QWidget):
         else:
             self._ripple_tick = 0
 
+    def _text_font(self):
+        font = self.font()
+        font.setPointSize(10)
+        font.setFamily('Microsoft YaHei UI')
+        return font
+
+    def _text_target_width(self, text):
+        if not text:
+            return self.min_orb_width
+        fm = QFontMetrics(self._text_font())
+        target = self.icon_area_width + 8 + fm.horizontalAdvance(text) + self.text_right_padding
+        return max(self.min_orb_width, min(self.max_orb_width, target))
+
     def _animate_to_text_width(self):
-        target = self.min_orb_width
-        if self.text:
-            fm = QFontMetrics(self.font())
-            target = self.icon_area_width + 8 + fm.horizontalAdvance(self.text) + self.text_right_padding
-            target = max(self.min_orb_width, min(self.max_orb_width, target))
+        target = self._text_target_width(self.text)
         if abs(target - self._target_width) < 2:
             return
         self._target_width = target
@@ -183,9 +201,7 @@ class VoiceOrbWidget(QWidget):
         if text_rect.width() <= 8:
             return
         painter.setPen(self._color('text'))
-        font = painter.font()
-        font.setPointSize(10)
-        font.setFamily('Microsoft YaHei UI')
+        font = self._text_font()
         painter.setFont(font)
         text = QFontMetrics(font).elidedText(self.text, Qt.ElideRight, int(text_rect.width()))
         painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, text)
@@ -284,7 +300,7 @@ class PetVoicePopup(QFrame):
     pause_requested = Signal()
     stop_requested = Signal()
 
-    def __init__(self, x, y, parent=None):
+    def __init__(self, x, y, parent=None, anchor_mode='pet', initial_state='idle', initial_text=''):
         super().__init__(parent)
         self.anim_group = None
         self.follow_anim = None
@@ -293,9 +309,10 @@ class PetVoicePopup(QFrame):
         self.follow_velocity = QPointF()
         self.follow_timer = QTimer(self)
         self.follow_timer.timeout.connect(self._spring_follow_step)
-        self.state = 'idle'
+        self.state = initial_state
         self.anchor_x = x
         self.anchor_y = y
+        self.anchor_mode = anchor_mode
         self.anim_index = 0
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.NoDropShadowWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -314,6 +331,7 @@ class PetVoicePopup(QFrame):
         root.setSpacing(0)
 
         self.anim_widget = VoiceOrbWidget(card)
+        self.anim_widget.set_initial_content(initial_state, initial_text)
         self.anim_widget.installEventFilter(self)
         self.anim_widget.width_changed.connect(self._sync_to_current_anchor)
         self.anim_widget.setToolTip('单击暂停/继续语音，双击结束语音聊天')
@@ -352,6 +370,17 @@ class PetVoicePopup(QFrame):
         return super().eventFilter(watched, event)
 
     def _pos_from_anchor(self, x, y):
+        anchor = QPoint(int(x), int(y))
+        if self.anchor_mode == 'cursor':
+            screen = QApplication.screenAt(anchor) or QApplication.primaryScreen()
+            area = screen.availableGeometry() if screen else None
+            gap = 14
+            px = int(x - self.width() / 2)
+            py = int(y - self.height() - gap)
+            if area is not None and py < area.top() + 4:
+                py = int(y + gap)
+            return clamp_popup_pos(QPoint(px, py), self.size(), anchor)
+
         side_overlap = 8
         parent = self.parent()
         bounds = parent._current_visible_bounds() if hasattr(parent, '_current_visible_bounds') else None
@@ -360,18 +389,20 @@ class PetVoicePopup(QFrame):
             pet_right = parent.x() + parent.label.x() + bounds.right()
             pet_top = parent.y() + parent.label.y() + bounds.top()
             pet_height = bounds.height()
-            screen = QApplication.screenAt(QPoint(int(x), int(y))) or QApplication.primaryScreen()
+            screen = QApplication.screenAt(anchor) or QApplication.primaryScreen()
             area = screen.availableGeometry() if screen else None
             prefer_right = area is None or pet_right - side_overlap + self.width() <= area.right()
             px = int(pet_right - side_overlap) if prefer_right else int(pet_left - self.width() + side_overlap)
             py = int(pet_top + pet_height * 0.06)
-            return clamp_popup_pos(QPoint(px, py), self.size(), QPoint(int(x), int(y)))
+            return clamp_popup_pos(QPoint(px, py), self.size(), anchor)
         px = int(x - side_overlap)
-        return clamp_popup_pos(QPoint(px, int(y - self.height() / 2)), self.size(), QPoint(int(x), int(y)))
+        return clamp_popup_pos(QPoint(px, int(y - self.height() / 2)), self.size(), anchor)
 
-    def move_to_anchor(self, x, y, smooth=True, floaty=False):
+    def move_to_anchor(self, x, y, smooth=True, floaty=False, anchor_mode=None):
         self.anchor_x = x
         self.anchor_y = y
+        if anchor_mode is not None:
+            self.anchor_mode = anchor_mode
         self.follow_floaty = floaty
         target = self._pos_from_anchor(x, y)
         self.follow_target = target

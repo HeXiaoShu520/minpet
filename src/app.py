@@ -15,6 +15,7 @@ import random
 import signal
 import sys
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QLocale, QTimer
@@ -24,11 +25,11 @@ from qfluentwidgets import FluentTranslator, setThemeColor
 
 import config
 from clients.asr_client import AsrWorker
-from storage.chat_store import ChatStore
+from storage.chat_store import BUILTIN_GLOBAL_SESSION_ID, ChatStore
 from pet.desktop_pet import DesktopPet
 from clients.event_client import EventClient
 from clients.llm_client import ChatWorker
-from clients.openclaw_client import OpenClawWorker
+from clients.openclaw_client import OpenClawWorker, openclaw_user_for_session
 from clients.claude_code_client import ClaudeCodeSession
 from widgets.notifications.reply_card_center import ReplyCardCenter
 from protocols.protocol_v1 import SESSION_PING, SESSION_PONG, SESSION_READY, SURFACE_CLOSE, SURFACE_SHOW, SURFACE_UPDATE, USER_INPUT, V1_CAPABILITIES, normalize_inbound_event
@@ -45,6 +46,19 @@ from daily_input_controller import DailyInputController
 WAKE_ACK_KEYS = ('wake_ack_1', 'wake_ack_2', 'wake_ack_3', 'wake_ack_4')
 EVENT_CARD_AFTER_TTS_START_DELAY_MS = 450
 GOODBYE_CARD_QUIT_DELAY_MS = 1800
+
+
+@dataclass
+class TurnContext:
+    turn_id: str
+    backend: str
+    session_id: str
+    origin: str
+    surface_id: str
+    source: str
+    on_delta: object = None
+    on_result: object = None
+    text: str = ''
 
 
 class MiniPetApp(QApplication):
@@ -81,9 +95,8 @@ class MiniPetApp(QApplication):
         self.events = EventClient() if start_event_client else None
         if self.events and self._agent_backend() == 'custom':
             self.events.set_url(self._agent_ws_url())
-        # 各后端拥有独立会话；旧版无 session_id 的记录会按日期兼容展示。
+        # 每个智能体只保留一份全局聊天记录。
         self.chat_histories = {}
-        self.active_chat_sessions = {}
         self.chat_history = []
         self._restore_chat_history()
         # quick_chat_* 管理桌宠头顶快速输入：LLM 请求、回复卡片和可选 TTS 播报。
@@ -100,8 +113,8 @@ class MiniPetApp(QApplication):
         self._claude_code_restart_pending = False
         self._claude_code_last_startup_error = ''
         self._abandoned_reply_workers = []
-        self._chat_window_turn = None
-        self._pending_custom_turn = None
+        self._active_turns = {}
+        self._turn_by_surface_id = {}
         self.event_tts_worker = None
         self.quick_chat_source = 'quick_chat'
         self.quick_chat_backend = 'builtin'
@@ -123,6 +136,12 @@ class MiniPetApp(QApplication):
         self.pet_voice_waiting_reply = False
         self.pet_voice_paused = False
         self.pet_voice_paused_stage = 'idle'
+        self.pet_voice_last_text = ''
+        self.pet_voice_record_timeout_timer = QTimer(self)
+        self.pet_voice_record_timeout_timer.setSingleShot(True)
+        self.pet_voice_record_timeout_timer.timeout.connect(
+            self._on_pet_voice_recording_timeout
+        )
         self.pet_voice_shared_screen = None  # 语音球屏幕共享
         self.wake_word_worker = None
         self.wake_ack_worker = None
@@ -144,6 +163,7 @@ class MiniPetApp(QApplication):
         self.pet.quit_requested.connect(self._on_quit_requested)
         self.settings.settings_changed.connect(self.pet.apply_settings)
         self.settings.settings_changed.connect(self._apply_agent_settings)
+        self.settings.agent.reset_backend_history_requested.connect(self._reset_backend_history)
         self.settings.settings_changed.connect(self._apply_wake_word_settings)
         self.settings.settings_changed.connect(self._daily_input_ctrl.apply_settings)
         self.settings.pet_changed.connect(self.pet.load_pet)
@@ -167,61 +187,37 @@ class MiniPetApp(QApplication):
         """恢复当前后端活动会话的短期上下文。"""
         self.chat_history = self._history_for_backend(self._agent_backend())
 
-    def _active_session_id(self, backend, create=True):
-        backend = backend or 'builtin'
-        session_id = self.active_chat_sessions.get(backend)
-        sessions = self.chat_store.list_sessions(backend)
-        if session_id and any(item['session_id'] == session_id for item in sessions):
-            return session_id
-        if sessions:
-            session_id = sessions[0]['session_id']
-        elif create:
-            session_id = self.chat_store.create_session(backend)
-        else:
-            session_id = ''
-        if session_id:
-            self.active_chat_sessions[backend] = session_id
-        return session_id
-
-    def _history_for_session(self, backend, session_id):
-        backend = backend or 'builtin'
-        if not session_id:
-            return []
-        key = (backend, session_id)
-        if key not in self.chat_histories:
-            self.chat_histories[key] = self.chat_store.load_session(session_id)
-        return self.chat_histories[key]
+    def _backend_session_id(self, backend):
+        return self.chat_store.global_session_id(backend)
 
     def _history_for_backend(self, backend):
         backend = backend or 'builtin'
-        return self._history_for_session(backend, self._active_session_id(backend))
+        if backend not in self.chat_histories:
+            self.chat_histories[backend] = self.chat_store.load_backend_history(backend)
+        return self.chat_histories[backend]
 
-    def _chat_sessions(self, backend=None):
-        return self.chat_store.list_sessions(backend)
-
-    def _session_metadata(self, session_id):
-        return self.chat_store.get_session(session_id)
-
-    def _session_backend(self, session_id):
-        session = self._session_metadata(session_id)
-        backend = session.get('backend') if session else None
-        return backend if backend in ('builtin', 'claude_code', 'openclaw', 'custom') else None
-
-    def _new_chat_session(self, backend=None):
+    def _reset_backend_history(self, backend):
         backend = backend or self._agent_backend()
-        session_id = self.chat_store.create_session(backend)
-        self.active_chat_sessions[backend] = session_id
-        self.chat_histories[(backend, session_id)] = []
-        self.chat_history = self.chat_histories[(backend, session_id)]
-        return session_id
+        for turn in list(self._active_turns.values()):
+            if turn.backend == backend:
+                self._finish_turn(turn, False)
+        if backend == 'claude_code':
+            self._stop_claude_code_session()
+            config.app_config['claude_code_reset_token'] = (
+                int(config.app_config.get('claude_code_reset_token') or 0) + 1
+            )
+            config.app_config['claude_code_known_sessions'] = []
+            config.save_app_config()
+            self.claude_code_reset_token = config.app_config['claude_code_reset_token']
+        self.chat_store.clear_backend_history(backend)
+        self.chat_histories[backend] = []
+        if backend == self._agent_backend():
+            self.chat_history = self.chat_histories[backend]
+        self._refresh_chat_window()
 
-    def _select_chat_session(self, session_id):
-        backend = self._session_backend(session_id)
-        if backend is None:
-            return None
-        self.active_chat_sessions[backend] = session_id
-        self.chat_history = self._history_for_session(backend, session_id)
-        return self.chat_history
+    def _refresh_chat_window(self):
+        if self.pet.chat_window is not None and self.pet.chat_window.isVisible():
+            self._show_chat_window()
 
     def _agent_backend(self):
         return config.app_config.get('agent_backend', 'builtin') or 'builtin'
@@ -229,10 +225,14 @@ class MiniPetApp(QApplication):
     def _agent_ws_url(self):
         return config.app_config.get('custom_agent_ws_url') or config.CUSTOM_AGENT_WS_DEFAULT
 
-    def _apply_agent_settings(self):
+    def _apply_agent_settings(self, refresh_chat_window=True):
         backend = self._agent_backend()
         self.chat_history = self._history_for_backend(backend)
-        if self.pet.chat_window is not None:
+        if (
+            refresh_chat_window
+            and self.pet.chat_window is not None
+            and self.pet.chat_window.isVisible()
+        ):
             self._show_chat_window()
         current_reset_token = config.app_config.get('claude_code_reset_token', 0)
         if current_reset_token != self.claude_code_reset_token:
@@ -386,20 +386,23 @@ class MiniPetApp(QApplication):
         x, y = self.pet.reply_card_anchor()
         self.note.setup_reply_card_text('我会想你的，再见~', x, y, 3000, title=config.pet_display_name())
 
+    def _select_chat_backend(self, backend):
+        if backend not in ('builtin', 'claude_code', 'openclaw', 'custom'):
+            return None
+        if backend != self._agent_backend():
+            config.app_config['agent_backend'] = backend
+            config.save_app_config()
+            self._apply_agent_settings(refresh_chat_window=False)
+        self.chat_history = self._history_for_backend(backend)
+        return self.chat_history
+
     def _show_chat_window(self):
-        default_backend = self._agent_backend()
-        selected_id = ''
-        window = self.pet.chat_window
-        if window is not None and window.isVisible():
-            selected_id = window.session_id
-        backend = self._session_backend(selected_id) or default_backend
-        session_id = selected_id or self._active_session_id(backend)
-        self.chat_history = self._history_for_session(backend, session_id)
+        backend = self._agent_backend()
+        self.chat_history = self._history_for_backend(backend)
         self.pet.show_chat(
             self.chat_history, self._append_chat_message, self.chat_store.content_for_llm,
-            self._build_system_prompt, self._clear_chat_history, self._send_chat_window_message,
-            backend, session_id, self._chat_sessions(), self._new_chat_session,
-            self._select_chat_session, self._chat_sessions,
+            self._build_system_prompt, self._clear_chat_history,
+            self._send_chat_window_message, backend, self._select_chat_backend,
         )
 
     def _toggle_pet_voice_chat(self):
@@ -462,6 +465,7 @@ class MiniPetApp(QApplication):
         if not self.pet_voice_active or self.pet_voice_paused or self.quick_chat_worker is not None or self.pet_voice_waiting_reply:
             return
         self.pet_voice_listening = True
+        self.pet_voice_last_text = ''
         self.pet.update_voice_popup('listening', '')
         if self.pet_voice_asr_worker is not None and not self.pet_voice_asr_worker.isRunning():
             self.pet_voice_asr_worker = None
@@ -473,9 +477,18 @@ class MiniPetApp(QApplication):
             self.pet_voice_asr_worker.error_received.connect(self._on_pet_voice_error)
             self.pet_voice_asr_worker.finished_signal.connect(self._on_pet_voice_finished)
             self.pet_voice_asr_worker.start()
-        QTimer.singleShot(250, self.pet_voice_asr_worker.start_recording)
+        worker = self.pet_voice_asr_worker
+        QTimer.singleShot(250, lambda: self._start_pet_voice_asr_if_current(worker))
+        self.pet_voice_record_timeout_timer.start(config.ASR_RECORDING_MAX_MS)
+
+    def _start_pet_voice_asr_if_current(self, worker):
+        if (self.pet_voice_active and self.pet_voice_listening
+                and not self.pet_voice_paused
+                and self.pet_voice_asr_worker is worker and worker.isRunning()):
+            worker.start_recording()
 
     def _stop_pet_voice_recording(self):
+        self.pet_voice_record_timeout_timer.stop()
         self.pet_voice_listening = False
         if self.pet_voice_asr_worker is not None:
             self.pet_voice_asr_worker.stop_recording()
@@ -514,6 +527,8 @@ class MiniPetApp(QApplication):
             self.pet.update_voice_popup('idle', '')
 
     def _stop_pet_voice_chat(self):
+        self.pet_voice_record_timeout_timer.stop()
+        self.pet_voice_last_text = ''
         self.pet_voice_active = False
         self.pet.set_voice_chat_active(False)
         self.pet_voice_listening = False
@@ -576,13 +591,12 @@ class MiniPetApp(QApplication):
 
     def _on_pet_voice_text(self, text):
         if self.pet_voice_active and not self.pet_voice_paused and not self.pet_voice_waiting_reply and text and self.quick_chat_worker is None and not self.quick_stream_tts.is_active() and not self.external_stream_tts.is_active():
+            self.pet_voice_last_text = str(text).strip()
             self.pet.update_voice_popup('listening', text)
 
-    def _on_pet_voice_final(self, text):
-        text = (text or '').strip()
-        if not text or not self.pet_voice_active or self.pet_voice_paused or self.pet_voice_waiting_reply:
-            return
+    def _submit_pet_voice_text(self, text):
         self._stop_pet_voice_recording()
+        self.pet_voice_last_text = ''
         self.pet_voice_waiting_reply = True
         self.pet.update_voice_popup('thinking', text)
         screenshot = self._capture_voice_screenshot()
@@ -598,6 +612,32 @@ class MiniPetApp(QApplication):
             if self.pet_voice_active:
                 QTimer.singleShot(800, self._start_pet_voice_recording)
 
+    def _on_pet_voice_final(self, text):
+        text = (text or '').strip()
+        if not text or not self.pet_voice_active or self.pet_voice_paused or self.pet_voice_waiting_reply:
+            return
+        self._submit_pet_voice_text(text)
+
+    def _on_pet_voice_recording_timeout(self):
+        if (not self.pet_voice_active or self.pet_voice_paused
+                or not self.pet_voice_listening or self.pet_voice_waiting_reply):
+            return
+        text = self.pet_voice_last_text.strip()
+        self._stop_pet_voice_recording()
+        x, y = self.pet.reply_card_anchor()
+        if text:
+            self.note.setup_reply_card_text(
+                '语音录制已达到 5 分钟，已自动结束，并继续处理已识别内容。',
+                x, y, 5000, title=config.pet_display_name(),
+            )
+            self._submit_pet_voice_text(text)
+            return
+        self.note.setup_reply_card_text(
+            '语音录制已达到 5 分钟，已自动结束；未识别到可发送的内容。',
+            x, y, 5000, title=config.pet_display_name(),
+        )
+        self._finish_voice_turn(delay_ms=0)
+
     def _on_pet_voice_error(self, text):
         if self.pet_voice_active:
             self.pet.update_voice_popup('error', str(text)[:60])
@@ -606,6 +646,8 @@ class MiniPetApp(QApplication):
         self._stop_pet_voice_chat()
 
     def _on_pet_voice_finished(self):
+        self.pet_voice_record_timeout_timer.stop()
+        self.pet_voice_last_text = ''
         self.pet_voice_asr_worker = None
 
     def _show_doubao_call_window(self):
@@ -626,89 +668,136 @@ class MiniPetApp(QApplication):
             self._show_exit_card()
             QTimer.singleShot(GOODBYE_CARD_QUIT_DELAY_MS, self.pet.quit_now)
 
-    def _append_chat_message(self, role, content, source, backend=None, session_id=None):
-        """保存一条聊天消息，并同步到提交时所属会话的短期上下文。"""
+    def _append_chat_message(self, role, content, source, backend=None):
+        """保存一条消息到智能体唯一的全局记录。"""
         backend = backend or self._agent_backend()
-        session_id = session_id or self._active_session_id(backend)
         stored_message = self.chat_store.append(
             role, content, source, pet_name=config.pet_display_name(),
-            backend=backend, session_id=session_id,
+            backend=backend, session_id=self._backend_session_id(backend),
         )
-        key = (backend, session_id)
-        if key not in self.chat_histories:
-            self.chat_histories[key] = self.chat_store.load_session(session_id)[:-1]
-        self.chat_histories[key].append(stored_message)
-        if backend == self._agent_backend() and session_id == self._active_session_id(backend):
-            self.chat_history = self.chat_histories[key]
+        self._history_for_backend(backend).append(stored_message)
+        if backend == self._agent_backend():
+            self.chat_history = self.chat_histories[backend]
         return stored_message
 
-    def _clear_chat_history(self, session_id=None):
-        session_id = session_id or self._active_session_id(self._agent_backend())
-        backend = self._session_backend(session_id)
-        if backend is None:
-            return None
-        self.chat_store.delete_session(session_id)
-        self.chat_histories.pop((backend, session_id), None)
-        return self._new_chat_session(backend)
+    def _clear_chat_history(self):
+        self._reset_backend_history(self._agent_backend())
 
-    def _send_chat_window_message(self, content, on_sent, on_delta, on_result, session_id=None):
-        """按聊天会话绑定的智能体发送消息。"""
-        backend = self._session_backend(session_id) if session_id else self._agent_backend()
+    def _send_chat_window_message(self, content, on_sent, on_delta, on_result):
+        """按当前智能体的全局记录发送消息。"""
+        backend = self._agent_backend()
+        session_id = self._backend_session_id(backend)
         if backend is None:
             return False
         if backend == 'builtin':
-            self._append_chat_message('user', content, 'chat_window', backend, session_id)
+            turn = self._begin_turn(
+                backend, 'chat_window', session_id, 'chat_window',
+                on_delta=on_delta, on_result=on_result,
+            )
+            self._append_chat_message('user', content, 'chat_window', backend)
             on_sent(backend)
-            lane_id = 'builtin-chat-' + str(uuid.uuid4())
             worker = ChatWorker(
-                self._build_quick_chat_messages(backend, session_id), parent=self
+                self._build_quick_chat_messages(backend), parent=self
             )
             worker.delta_ready.connect(
-                lambda text: self.stream_display_delay.enqueue(lane_id, lambda: on_delta(text))
+                lambda text: self.stream_display_delay.enqueue(
+                    self._turn_lane(turn),
+                    lambda: self._publish_turn_delta(turn, turn.text + text),
+                )
             )
             worker.result_ready.connect(
                 lambda success, text: self.stream_display_delay.enqueue(
-                    lane_id, lambda: on_result(success, text)
+                    self._turn_lane(turn),
+                    lambda: self._finish_turn(turn, success, text),
                 )
             )
             worker.finished.connect(worker.deleteLater)
             worker.start()
             return worker
-        turn_id = str(uuid.uuid4())
-        surface_id = 'chat-window-' + turn_id
-        self._chat_window_turn = {
-            'backend': backend, 'session_id': session_id, 'turn_id': turn_id,
-            'surface_id': surface_id, 'delta': on_delta, 'result': on_result, 'text': '',
-        }
+        turn = self._begin_turn(
+            backend, 'chat_window', session_id, 'chat_window',
+            on_delta=on_delta, on_result=on_result,
+        )
         if self._send_external_command(
-            content, 'text', 'chat_window', turn_id=turn_id,
-            surface_id=surface_id, backend=backend, session_id=session_id,
+            content, 'text', 'chat_window', turn_id=turn.turn_id,
+            surface_id=turn.surface_id, backend=backend, session_id=session_id,
         ):
-            self._append_chat_message('user', content, 'chat_window', backend, session_id)
+            self._append_chat_message('user', content, 'chat_window', backend)
             on_sent(backend)
             return True
-        self._chat_window_turn = None
+        self._finish_turn(turn, False)
         return False
 
-    def _chat_window_delta(self, backend, text):
-        turn = self._chat_window_turn
-        if turn and turn.get('backend') == backend and text:
-            previous = turn.get('text', '')
-            delta = text[len(previous):] if text.startswith(previous) else text
-            turn['text'] = text if text.startswith(previous) else previous + text
-            if delta:
-                turn['delta'](delta)
+    def _begin_turn(self, backend, origin, session_id='', source='quick_chat', surface_id='', on_delta=None, on_result=None):
+        turn_id = str(uuid.uuid4())
+        surface_id = surface_id or 'turn-' + turn_id
+        turn = TurnContext(turn_id, backend, session_id, origin, surface_id, source, on_delta, on_result)
+        self._active_turns[turn_id] = turn
+        self._turn_by_surface_id[surface_id] = turn_id
+        return turn
 
-    def _chat_window_result(self, backend, success, text):
-        turn = self._chat_window_turn
-        if not turn or turn.get('backend') != backend:
+    def _resolve_turn(self, backend, turn_id='', surface_id=''):
+        turn = self._active_turns.get(turn_id) if turn_id else None
+        if turn is None and surface_id:
+            turn = self._active_turns.get(self._turn_by_surface_id.get(surface_id, ''))
+        if turn is None:
+            candidates = [item for item in self._active_turns.values() if item.backend == backend]
+            if len(candidates) == 1:
+                turn = candidates[0]
+        return turn if turn and turn.backend == backend else None
+
+    def _turn_lane(self, turn):
+        return '%s:%s' % (turn.backend, turn.turn_id)
+
+    def _publish_turn_delta(self, turn, text):
+        if not turn or not text:
+            return
+        previous = turn.text
+        delta = text[len(previous):] if text.startswith(previous) else text
+        turn.text = text if text.startswith(previous) else previous + text
+        if turn.origin == 'chat_window':
+            if delta and turn.on_delta:
+                turn.on_delta(delta)
+            return
+        self._show_reply_card(turn.text.strip(), status='streaming', timeout_ms=60000, result_usage=self._quick_reply_usage)
+
+    def _refresh_chat_window_for_turn(self, turn):
+        window = self.pet.chat_window
+        if (window is not None and window.isVisible()
+                and window.backend == turn.backend
+                and turn.session_id == self._backend_session_id(turn.backend)):
+            window.reload_history()
+
+    def _finish_turn(self, turn, success, text=''):
+        if not turn or self._active_turns.pop(turn.turn_id, None) is None:
             return False
-        self._chat_window_turn = None
-        turn['result'](success, text or turn.get('text', ''))
+        self._turn_by_surface_id.pop(turn.surface_id, None)
+        final = (text or turn.text).strip()
+        if turn.origin == 'chat_window':
+            if turn.on_result:
+                turn.on_result(success, final)
+            return True
+        if success and final:
+            self._append_chat_message('assistant', final, turn.source, turn.backend)
+            self._refresh_chat_window_for_turn(turn)
         return True
 
+    def _chat_window_delta(self, backend, text):
+        turn = self._resolve_turn(backend)
+        if turn and turn.origin == 'chat_window':
+            self._publish_turn_delta(turn, text)
+
+    def _chat_window_result(self, backend, success, text):
+        turn = self._resolve_turn(backend)
+        if not turn or turn.origin != 'chat_window':
+            return False
+        return self._finish_turn(turn, success, text)
+
     def _save_external_reply(self, backend, reply):
-        if not self._chat_window_result(backend, True, reply):
+        turn = self._resolve_turn(backend)
+        if turn:
+            self._finish_turn(turn, True, reply)
+        else:
             self._append_chat_message('assistant', reply, self.quick_chat_source or 'quick_chat', backend)
 
     def _build_system_prompt(self):
@@ -852,7 +941,12 @@ class MiniPetApp(QApplication):
             self._stop_claude_code_session()
         project_dir = self._claude_code_project_dir()
         if not project_dir.is_dir():
-            self._show_reply_card('Claude Code 项目目录不存在：%s' % project_dir, status='failed', timeout_ms=8000)
+            message = 'Claude Code 项目目录不存在：%s' % project_dir
+            turn = self._resolve_turn('claude_code')
+            if turn and turn.origin == 'chat_window':
+                self._finish_turn(turn, False, message)
+            else:
+                self._show_reply_card(message, status='failed', timeout_ms=8000)
             return False
         self.claude_code_starting = True
         self.claude_code_received_output = False
@@ -879,9 +973,15 @@ class MiniPetApp(QApplication):
         self.claude_code_session.session_mode_mismatch.connect(self._on_claude_code_mode_mismatch)
         self.claude_code_session.stopped.connect(self._on_claude_code_stopped)
         self.claude_code_session.start()
-        action = '恢复' if resume else '创建'
-        self._show_reply_card('正在%s Claude Code 会话：%s' % (action, project_dir), status='streaming', timeout_ms=60000)
+        turn = self._resolve_turn('claude_code')
+        if not turn or turn.origin == 'external':
+            action = '恢复' if resume else '创建'
+            self._show_reply_card('正在%s Claude Code 会话：%s' % (action, project_dir), status='streaming', timeout_ms=60000)
         return True
+
+    def _is_claude_code_chat_window_turn(self):
+        turn = self._resolve_turn('claude_code')
+        return bool(turn and turn.origin == 'chat_window')
 
     def _send_claude_code_prompt(self, content, mode='text', reuse_reply_card_id=None, chat_session_id=''):
         prompt = self._content_preview(content).strip()
@@ -894,7 +994,8 @@ class MiniPetApp(QApplication):
             self._quick_stream_text = ''
         else:
             self._begin_reply_card_turn()
-        self._reset_quick_stream_tts()
+        if not self._is_claude_code_chat_window_turn():
+            self._reset_quick_stream_tts()
         self._quick_reply_usage = None
         self.claude_code_received_output = False
         self._claude_code_attempted_modes = set()
@@ -906,7 +1007,8 @@ class MiniPetApp(QApplication):
             self._pending_claude_code_text = prompt
             self._claude_code_pending_sent = self.claude_code_session.send(prompt)
             return self._claude_code_pending_sent
-        self._show_reply_card('已发送给 Claude Code，等待输出...', status='streaming', timeout_ms=60000)
+        if not self._is_claude_code_chat_window_turn():
+            self._show_reply_card('已发送给 Claude Code，等待输出...', status='streaming', timeout_ms=60000)
         sent = self.claude_code_session.send(prompt)
         if sent:
             QTimer.singleShot(6000, self._warn_if_claude_code_silent)
@@ -933,15 +1035,21 @@ class MiniPetApp(QApplication):
             self.claude_code_starting = False
             self._pending_claude_code_text = ''
             self._claude_code_pending_sent = False
-            self._show_reply_card('Claude Code 已初始化，但发送消息失败。', status='failed', timeout_ms=8000)
+            if self._is_claude_code_chat_window_turn():
+                self._chat_window_result('claude_code', False, 'Claude Code 已初始化，但发送消息失败。')
+            else:
+                self._show_reply_card('Claude Code 已初始化，但发送消息失败。', status='failed', timeout_ms=8000)
             return
         self._pending_claude_code_text = ''
         self._claude_code_pending_sent = False
         self.claude_code_starting = False
-        self._show_reply_card('已发送给 Claude Code，等待输出...', status='streaming', timeout_ms=60000)
+        if not self._is_claude_code_chat_window_turn():
+            self._show_reply_card('已发送给 Claude Code，等待输出...', status='streaming', timeout_ms=60000)
         QTimer.singleShot(6000, self._warn_if_claude_code_silent)
 
     def _warn_if_claude_code_silent(self):
+        if self._is_claude_code_chat_window_turn():
+            return
         if self._agent_backend() == 'claude_code' and self.claude_code_session is not None and not self.claude_code_received_output:
             self._show_reply_card('Claude Code 已启动并收到输入，但暂时没有输出。可能是 CLI 在等待终端交互或 PATH/权限环境不完整。', status='streaming', timeout_ms=10000)
 
@@ -958,16 +1066,6 @@ class MiniPetApp(QApplication):
     def _claude_code_result_usage(self, info):
         usage = info.get('usage') if isinstance(info.get('usage'), dict) else {}
         result = {}
-        turns = self._claude_code_metric_number(info.get('num_turns'), integer=True)
-        if turns is not None:
-            result['turns'] = turns
-        duration_ms = self._claude_code_metric_number(info.get('duration_ms'))
-        if duration_ms is not None:
-            result['duration_ms'] = duration_ms
-        else:
-            duration_api_ms = self._claude_code_metric_number(info.get('duration_api_ms'))
-            if duration_api_ms is not None:
-                result['duration_api_ms'] = duration_api_ms
         for source_key, target_key in (('input_tokens', 'input_tokens'), ('output_tokens', 'output_tokens')):
             value = self._claude_code_metric_number(usage.get(source_key), integer=True)
             if value is not None:
@@ -987,6 +1085,8 @@ class MiniPetApp(QApplication):
 
     def _on_claude_code_progress(self, info):
         if not isinstance(info, dict):
+            return
+        if self._is_claude_code_chat_window_turn():
             return
         kind = info.get('kind')
         if kind == 'tool':
@@ -1022,38 +1122,42 @@ class MiniPetApp(QApplication):
         self.claude_code_received_output = True
         if self._pending_claude_code_text and not self._claude_code_pending_sent:
             QTimer.singleShot(0, self._flush_pending_claude_code_text)
+        turn = self._resolve_turn('claude_code')
+        if turn is None:
+            return
         shown = (text or 'Claude Code 正在处理...').strip()
         self._quick_stream_text = shown
         self.stream_display_delay.enqueue(
-            'claude-code',
-            lambda: self._show_claude_code_streaming(shown),
+            self._turn_lane(turn),
+            lambda: self._show_claude_code_streaming(turn, shown),
         )
 
-    def _show_claude_code_streaming(self, text):
-        self._chat_window_delta('claude_code', text)
-        self._show_reply_card(
-            text, status='streaming', timeout_ms=60000,
-            result_usage=self._quick_reply_usage,
-        )
+    def _show_claude_code_streaming(self, turn, text):
+        self._publish_turn_delta(turn, text)
 
     def _on_claude_code_result(self, text):
         self.claude_code_starting = False
         self.claude_code_received_output = True
-        reply = (text or self._quick_stream_text or 'Claude Code 没有返回文本。').strip()
+        turn = self._resolve_turn('claude_code')
+        if turn is None:
+            return
+        reply = (text or turn.text or 'Claude Code 没有返回文本。').strip()
         self._quick_stream_text = reply
-        self.quick_stream_tts.queue_text('claude-code-reply', reply, terminal=True)
         self.stream_display_delay.enqueue(
-            'claude-code',
-            lambda: self._show_claude_code_result(reply),
+            self._turn_lane(turn),
+            lambda: self._show_claude_code_result(turn, reply),
         )
-        self._finish_quick_voice_if_tts_idle()
 
-    def _show_claude_code_result(self, reply):
-        self._save_external_reply('claude_code', reply)
+    def _show_claude_code_result(self, turn, reply):
+        self._finish_turn(turn, True, reply)
+        if turn.origin == 'chat_window':
+            return
         self._show_reply_card(
             reply, status='done', timeout_ms=max(5000, min(25000, len(reply) * 180)),
             result_usage=self._quick_reply_usage,
         )
+        self.quick_stream_tts.queue_text(turn.surface_id, reply, terminal=True)
+        self._finish_quick_voice_if_tts_idle()
 
     def _on_claude_code_session_ready(self, session_id):
         known_sessions = list(config.app_config.get('claude_code_known_sessions') or [])
@@ -1108,12 +1212,20 @@ class MiniPetApp(QApplication):
         self._claude_code_pending_sent = False
         if session is not None:
             session.stop()
-        self._show_reply_card('Claude Code 会话启动失败：%s' % detail, status='failed', timeout_ms=10000)
+        message = 'Claude Code 会话启动失败：%s' % detail
+        if self._is_claude_code_chat_window_turn():
+            self._chat_window_result('claude_code', False, message)
+        else:
+            self._show_reply_card(message, status='failed', timeout_ms=10000)
 
     def _on_claude_code_error(self, text):
         self.claude_code_starting = False
         self.stream_display_delay.reset('claude-code')
-        self._show_reply_card(text or 'Claude Code 调用失败。', status='failed', timeout_ms=8000)
+        message = text or 'Claude Code 调用失败。'
+        if self._is_claude_code_chat_window_turn():
+            self._chat_window_result('claude_code', False, message)
+        else:
+            self._show_reply_card(message, status='failed', timeout_ms=8000)
 
     def _on_claude_code_stopped(self):
         session = self.sender()
@@ -1138,6 +1250,11 @@ class MiniPetApp(QApplication):
 
     def _send_external_command(self, content, mode='text', surface='pet_popup', screenshot='', turn_id='', surface_id='', backend=None, session_id=''):
         backend = backend or self._agent_backend()
+        turn = self._resolve_turn(backend, turn_id, surface_id)
+        if turn is None:
+            turn = self._begin_turn(backend, 'external', session_id, surface, surface_id)
+        turn_id = turn.turn_id
+        surface_id = turn.surface_id
         if backend == 'openclaw':
             return self._send_openclaw_prompt(
                 content, mode, screenshot=screenshot, chat_session_id=session_id
@@ -1147,7 +1264,7 @@ class MiniPetApp(QApplication):
                 content, mode, chat_session_id=session_id
             )
         x, y = self.pet.reply_card_anchor()
-        if mode in ('text', 'voice'):
+        if turn.origin == 'external' and mode in ('text', 'voice'):
             self._begin_reply_card_turn()
             self._reset_external_stream_tts()
             self._show_reply_card('正在思考...', status='streaming', timeout_ms=60000)
@@ -1167,11 +1284,6 @@ class MiniPetApp(QApplication):
         sent = self.events.send_event(USER_INPUT, payload) if self.events else False
         if sent and surface != 'chat_window':
             self._append_chat_message('user', content, surface, backend)
-            if backend == 'custom':
-                self._pending_custom_turn = {
-                    'turn_id': payload.get('turn_id'), 'surface_id': payload.get('surface_id'),
-                    'source': surface, 'backend': backend,
-                }
         if not sent:
             self._close_reply_card()
             self.note.setup_reply_card_text('外置智能体还没连接，先检查“智能体”设置。', x, y, 4500, title=config.pet_display_name())
@@ -1194,9 +1306,13 @@ class MiniPetApp(QApplication):
             self._quick_stream_text = ''
         else:
             self._begin_reply_card_turn()
-        self.stream_display_delay.reset('openclaw')
-        self._reset_external_stream_tts()
-        self._show_reply_card('正在问 OpenClaw...', status='streaming', timeout_ms=60000)
+        turn = self._resolve_turn('openclaw')
+        if turn is None:
+            turn = self._begin_turn('openclaw', 'external', chat_session_id, self.quick_chat_source)
+        self.stream_display_delay.reset(self._turn_lane(turn))
+        if turn.origin == 'external':
+            self._reset_external_stream_tts()
+            self._show_reply_card('正在问 OpenClaw...', status='streaming', timeout_ms=60000)
         self.openclaw_worker = OpenClawWorker(
             openclaw_input, session_id=chat_session_id, parent=self
         )
@@ -1206,44 +1322,43 @@ class MiniPetApp(QApplication):
         return True
 
     def _on_openclaw_delta(self, text):
-        if not text:
+        turn = self._resolve_turn('openclaw')
+        if not turn or not text:
             return
-        self._quick_stream_text += text
-        shown = self._quick_stream_text.strip()
-        if not shown:
-            return
-        self.external_stream_tts.queue_text('openclaw-reply', shown, terminal=False)
+        shown = (turn.text + text).strip()
+        if turn.origin == 'external':
+            self.external_stream_tts.queue_text(turn.surface_id, shown, terminal=False)
         self.stream_display_delay.enqueue(
-            'openclaw',
-            lambda: self._show_openclaw_streaming(text, shown),
+            self._turn_lane(turn),
+            lambda: self._publish_turn_delta(turn, shown),
         )
-
-    def _show_openclaw_streaming(self, text, shown):
-        self._chat_window_delta('openclaw', text)
-        self._show_reply_card(shown, status='streaming', timeout_ms=60000)
 
     def _on_openclaw_reply(self, success, text):
         self.openclaw_worker = None
-        reply = (text or self._quick_stream_text or '').strip()
+        turn = self._resolve_turn('openclaw')
+        if not turn:
+            return
+        reply = (text or turn.text or '').strip()
         if success:
             reply = reply or 'OpenClaw 没有返回文本。'
-            self._quick_stream_text = reply
-            self.external_stream_tts.queue_text('openclaw-reply', reply, terminal=True)
+            if turn.origin == 'external':
+                self.external_stream_tts.queue_text(turn.surface_id, reply, terminal=True)
             self.stream_display_delay.enqueue(
-                'openclaw',
-                lambda: self._show_openclaw_result(reply),
+                self._turn_lane(turn),
+                lambda: self._show_openclaw_result(turn, reply),
             )
-            self._finish_external_voice_if_tts_idle()
             return
-        self.stream_display_delay.reset('openclaw')
-        self._reset_external_stream_tts()
-        self._show_reply_card(reply or '调用 OpenClaw 失败。', status='failed', timeout_ms=8000)
-        if self.quick_chat_source == 'voice_chat' and self.pet_voice_active:
-            self._finish_voice_turn(delay_ms=800)
+        self.stream_display_delay.reset(self._turn_lane(turn))
+        if turn.origin == 'external':
+            self._reset_external_stream_tts()
+            self._show_reply_card(reply or '调用 OpenClaw 失败。', status='failed', timeout_ms=8000)
+        self._finish_turn(turn, False, reply)
 
-    def _show_openclaw_result(self, reply):
-        self._save_external_reply('openclaw', reply)
-        self._show_reply_card(reply, status='done', timeout_ms=max(5000, min(25000, len(reply) * 180)))
+    def _show_openclaw_result(self, turn, reply):
+        self._finish_turn(turn, True, reply)
+        if turn.origin == 'external':
+            self._show_reply_card(reply, status='done', timeout_ms=max(5000, min(25000, len(reply) * 180)))
+            self._finish_external_voice_if_tts_idle()
 
     _BACKEND_SOURCE_LABELS = {
         'builtin': '内置AI',
@@ -1360,30 +1475,29 @@ class MiniPetApp(QApplication):
             return False
         self.quick_chat_source = source
         self.quick_chat_backend = 'builtin'
-        self.quick_chat_session_id = self._active_session_id('builtin')
-        self._append_chat_message('user', text, source, 'builtin', self.quick_chat_session_id)
-        if self.pet.chat_window is not None and self.pet.chat_window.isVisible():
-            self.pet.chat_window.reload_history()
+        turn = self._begin_turn(
+            'builtin', 'external', self._backend_session_id('builtin'), source,
+            surface_id='quick-' + str(uuid.uuid4()),
+        )
+        self._append_chat_message('user', text, source, 'builtin')
         self._begin_reply_card_turn()
         self._reset_quick_stream_tts()
         self._show_reply_card('正在思考...', status='streaming', timeout_ms=60000)
         self.quick_chat_worker = ChatWorker(self._build_quick_chat_messages(screenshot=screenshot), parent=self)
+        self.quick_chat_worker._minipet_turn = turn
         self.quick_chat_worker.delta_ready.connect(self._on_quick_chat_delta)
         self.quick_chat_worker.result_ready.connect(self._on_quick_chat_reply)
         self.quick_chat_worker.start()
         return True
 
-    def _build_quick_chat_messages(self, backend=None, session_id=None, screenshot=''):
-        """构造指定会话的 LLM 上下文。"""
+    def _build_quick_chat_messages(self, backend=None, screenshot=''):
+        """Build LLM context from the backend global history."""
         messages = []
         system = self._build_system_prompt()
         if system:
             messages.append({'role': 'system', 'content': system})
         memory_limit = self._memory_message_limit()
-        if session_id:
-            history = self._history_for_session(backend, session_id)
-        else:
-            history = self.chat_history
+        history = self._history_for_backend(backend or self._agent_backend())
         history = list(history[-memory_limit:] if memory_limit > 0 else [])
         # 历史消息除最后一条外都用纯文本
         for message in history[:-1]:
@@ -1405,38 +1519,49 @@ class MiniPetApp(QApplication):
     def _on_quick_chat_delta(self, text):
         if not text or self.quick_chat_worker is None:
             return
-        self._quick_stream_text += text
-        shown = self._quick_stream_text.strip()
-        if shown:
-            self.quick_stream_tts.queue_text('quick-reply', shown, terminal=False)
-            self.stream_display_delay.enqueue(
-                'builtin',
-                lambda: self._show_reply_card(shown, status='streaming', timeout_ms=60000),
-            )
+        turn = getattr(self.quick_chat_worker, '_minipet_turn', None)
+        if turn is None:
+            return
+        shown = (turn.text + text).strip()
+        self._quick_stream_text = shown
+        self.quick_stream_tts.queue_text(turn.surface_id, shown, terminal=False)
+        self.stream_display_delay.enqueue(
+            self._turn_lane(turn),
+            lambda: self._publish_turn_delta(turn, shown),
+        )
 
     def _on_quick_chat_reply(self, success, text):
-        """处理快速聊天回复：保存历史、展示回复卡片，并按配置触发 TTS。"""
+        """Handle a quick chat response."""
+        worker = self.quick_chat_worker
         self.quick_chat_worker = None
+        turn = getattr(worker, '_minipet_turn', None)
         if self.quick_chat_source == 'quick_chat' and self.pet.input_popup is not None:
             self.pet.input_popup.close()
             self.pet.input_popup = None
         if success:
-            reply = (text or self._quick_stream_text).strip() or '嗯。'
-            self._append_chat_message('assistant', reply, self.quick_chat_source or 'quick_chat', self.quick_chat_backend, getattr(self, 'quick_chat_session_id', None))
-            if self.pet.chat_window is not None and self.pet.chat_window.isVisible():
-                self.pet.chat_window.reload_history()
+            reply = (text or (turn.text if turn else self._quick_stream_text)).strip() or '嗯。'
             self._quick_stream_text = reply
-            self.quick_stream_tts.queue_text('quick-reply', reply, terminal=True)
-            self.stream_display_delay.enqueue(
-                'builtin',
-                lambda: self._show_reply_card(reply, status='done', timeout_ms=max(5000, min(25000, len(reply) * 180))),
-            )
+            if turn:
+                self.quick_stream_tts.queue_text(turn.surface_id, reply, terminal=True)
+                self.stream_display_delay.enqueue(
+                    self._turn_lane(turn),
+                    lambda: self._show_quick_chat_result(turn, reply),
+                )
             self._finish_quick_voice_if_tts_idle()
         else:
             self._reset_quick_stream_tts()
+            if turn:
+                self._finish_turn(turn, False, text)
             self._show_reply_card('我现在说不出来：' + text, status='failed', timeout_ms=6000)
             if self.quick_chat_source == 'voice_chat' and self.pet_voice_active:
                 self._finish_voice_turn(delay_ms=800)
+
+    def _show_quick_chat_result(self, turn, reply):
+        self._finish_turn(turn, True, reply)
+        self._show_reply_card(
+            reply, status='done',
+            timeout_ms=max(5000, min(25000, len(reply) * 180)),
+        )
 
     def _on_quick_stream_tts_started(self, stream_id, text):
         if self.quick_chat_source == 'voice_chat' and self.pet_voice_active:
@@ -1505,15 +1630,23 @@ class MiniPetApp(QApplication):
 
     def _handle_surface_show(self, payload):
         card_event = normalize_display_event(SURFACE_SHOW, payload)
-        self._queue_external_reply_tts(card_event, surface_text(card_event))
+        if not self._is_chat_window_surface_turn(card_event):
+            self._queue_external_reply_tts(card_event, surface_text(card_event))
         self._queue_surface_display(card_event, is_update=False)
 
     def _handle_surface_update(self, payload):
         if not payload.get('surface_id'):
             return
         card_event = normalize_display_event(SURFACE_UPDATE, payload)
-        self._queue_external_reply_tts(card_event, surface_text(card_event))
+        if not self._is_chat_window_surface_turn(card_event):
+            self._queue_external_reply_tts(card_event, surface_text(card_event))
         self._queue_surface_display(card_event, is_update=True)
+
+    def _is_chat_window_surface_turn(self, card_event):
+        turn = self._resolve_turn(
+            'custom', card_event.get('turn_id'), card_event.get('surface_id'),
+        )
+        return bool(turn and turn.origin == 'chat_window')
 
     def _queue_surface_display(self, card_event, is_update):
         surface_id = card_event.get('surface_id') or '__external_reply__'
@@ -1523,7 +1656,8 @@ class MiniPetApp(QApplication):
         )
 
     def _show_surface_event(self, card_event, is_update):
-        self._handle_custom_chat_surface(card_event)
+        if self._handle_custom_chat_surface(card_event):
+            return
         self._close_reply_card()
         text = surface_text(card_event)
         if is_silent_surface_text(text) and not card_event.get('elements') and not card_event.get('actions') and not card_event.get('controls'):
@@ -1548,32 +1682,21 @@ class MiniPetApp(QApplication):
             self._surface_cards.pop(surface_id, None)
 
     def _handle_custom_chat_surface(self, card_event):
-        turn = self._chat_window_turn if self._chat_window_turn and self._chat_window_turn.get('backend') == 'custom' else None
-        pending = self._pending_custom_turn
-        candidates = [item for item in (turn, pending) if item]
-        if not candidates:
-            return False
-        turn_id = card_event.get('turn_id')
-        surface_id = card_event.get('surface_id')
-        matched = next((item for item in candidates if
-                        (turn_id and turn_id == item.get('turn_id')) or
-                        (surface_id and surface_id == item.get('surface_id'))), None)
-        # 兼容旧后端：事件无关联字段且全局只有一个 pending 时才降级接收。
-        if matched is None and not turn_id and not surface_id and len(candidates) == 1:
-            matched = candidates[0]
-        if matched is None:
+        turn = self._resolve_turn(
+            'custom', card_event.get('turn_id'), card_event.get('surface_id'),
+        )
+        if turn is None:
             return False
         text = surface_text(card_event)
-        if matched is turn:
+        if turn.origin == 'chat_window':
             if text:
-                self._chat_window_delta('custom', text)
+                self._publish_turn_delta(turn, text)
             if is_terminal_surface_status(card_event):
-                self._chat_window_result('custom', True, text or turn.get('text', ''))
-        elif is_terminal_surface_status(card_event):
-            if text:
-                self._append_chat_message('assistant', text, pending.get('source') or 'quick_chat', 'custom')
-            self._pending_custom_turn = None
-        return True
+                self._finish_turn(turn, True, text)
+            return True
+        if is_terminal_surface_status(card_event):
+            self._finish_turn(turn, True, text)
+        return False
 
     def _queue_external_reply_tts(self, card_event, text):
         if self._agent_backend() == 'builtin' or not text:
@@ -1640,7 +1763,7 @@ class MiniPetApp(QApplication):
             self._finish_voice_turn(delay_ms=300)
 
     def _on_reply_card_quote(self, card_id, message, quoted_text='', user_text=''):
-        """处理卡片内引用回复：把回复追加到原卡片而非新建。"""
+        """Handle a quoted reply within an existing card."""
         backend = self._agent_backend()
         # 存储时带结构化 quote block，聊天窗口 reload 时可渲染飞书风格引用
         if quoted_text and user_text:

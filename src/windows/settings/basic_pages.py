@@ -68,7 +68,7 @@ class BasicPage(MiniPetScrollPage):
         self.voiceFollowEffectCard = ComboSettingCard(VOICE_FOLLOW_EFFECT_OPTIONS, FIF.SPEED_HIGH, '语音球跟随效果', '弹力绳有惯性过冲；丝滑吸附更稳、更少跳变', self.visualGroup)
         self.voiceFollowEffectCard.setCurrentValue(config.app_config.get('voice_follow_effect', 'spring'))
         self.volumeCard = RangeSettingCard(0, 100, 0.01, FIF.VOLUME, '声音大小', '影响语音播报、语音聊天和豆包通话的音量', self.visualGroup)
-        self.volumeCard.setValue(round(float(config.app_config.get('volume', 0.4)) * 100))
+        self.volumeCard.setValue(round(float(config.app_config.get('volume', 0.9)) * 100))
 
         self.replyDisplayGroup = SettingCardGroup('回复设置', self.scrollWidget)
         self.typewriterEnabledCard = SwitchSettingCard(FIF.MESSAGE, '打印字效果', '开启后，回复文字会一字一字显示；关闭后直接显示完整回复', parent=self.replyDisplayGroup)
@@ -154,6 +154,7 @@ class MiniPetBackendProbeWorker(QThread):
 
 class AgentPage(MiniPetScrollPage):
     settings_changed = Signal()
+    reset_backend_history_requested = Signal(str)
 
     BACKENDS = [
         ('builtin', '使用内置大模型'),
@@ -172,7 +173,7 @@ class AgentPage(MiniPetScrollPage):
         self.modeLayout = QVBoxLayout(self.modeBox)
         self.modeLayout.setContentsMargins(0, 0, 0, 0)
         self.modeLayout.setSpacing(0)
-        self.backendCard = ComboSettingCard(self.BACKENDS, FIF.ROBOT, '智能体模式', '选择新建对话和桌宠快捷输入默认使用的智能体；已有会话保留原来源', self.modeBox)
+        self.backendCard = ComboSettingCard(self.BACKENDS, FIF.ROBOT, '智能体模式', '每个智能体保留一份全局聊天记录', self.modeBox)
         self.backendCard.setCurrentValue(cfg.get('agent_backend', 'builtin'))
         self.modeBox.setFixedHeight(self.backendCard.height())
 
@@ -207,13 +208,11 @@ class AgentPage(MiniPetScrollPage):
         self.protocolDocCard.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(config.ROOT_DIR / 'MiniPet 当前协议设计.md'))))
 
         self.claudeCodeGroup = SettingCardGroup('Claude Code 设置', self.scrollWidget)
-        self.claudeCodeDirCard = LineEditSettingCard(FIF.LINK, '项目目录', '第一次输入时会在这个目录下启动 Claude Code 会话', placeholder=str(config.ROOT_DIR), parent=self.claudeCodeGroup)
+        self.claudeCodeDirCard = LineEditSettingCard(FIF.LINK, '项目目录', 'Claude Code 会在这个目录下执行开发任务', placeholder=str(config.ROOT_DIR), parent=self.claudeCodeGroup)
         self.claudeCodeDirCard.setText(cfg.get('claude_code_project_dir', str(config.ROOT_DIR)))
-        self.claudeCodeBrowseCard = SettingCard(FIF.LINK, '选择目录', '选择 Claude Code 执行开发任务的工作目录', self.claudeCodeGroup)
-        self.claudeCodeBrowseBtn = PrimaryPushButton('选择', self.claudeCodeBrowseCard)
-        self.claudeCodeBrowseCard.hBoxLayout.addStretch(1)
-        self.claudeCodeBrowseCard.hBoxLayout.addWidget(self.claudeCodeBrowseBtn, 0, Qt.AlignRight)
-        self.claudeCodeBrowseCard.hBoxLayout.addSpacing(16)
+        self.claudeCodeBrowseBtn = PrimaryPushButton('选择', self.claudeCodeDirCard)
+        layout = self.claudeCodeDirCard.hBoxLayout
+        layout.insertWidget(layout.count() - 1, self.claudeCodeBrowseBtn, 0, Qt.AlignRight)
         self.claudeCodeBrowseBtn.clicked.connect(self._choose_claude_code_dir)
         self.claudeCodeResetCard = SettingCard(FIF.DELETE, '重置会话', '结束当前 Claude Code 会话，下次会使用新的会话 ID', self.claudeCodeGroup)
         self.claudeCodeResetBtn = PrimaryPushButton('重置', self.claudeCodeResetCard)
@@ -243,7 +242,7 @@ class AgentPage(MiniPetScrollPage):
             self.openclawGroup.addSettingCard(card)
         for card in [self.customWsCard, self.protocolDocCard, self.customProbeCard]:
             self.customGroup.addSettingCard(card)
-        for card in [self.claudeCodeDirCard, self.claudeCodeBrowseCard, self.claudeCodeResetCard]:
+        for card in [self.claudeCodeDirCard, self.claudeCodeResetCard]:
             self.claudeCodeGroup.addSettingCard(card)
         for card in [self.apiBaseCard, self.apiKeyCard, self.modelCard, self.memoryTurnsCard, self.actionCard]:
             self.builtinGroup.addSettingCard(card)
@@ -271,10 +270,13 @@ class AgentPage(MiniPetScrollPage):
             self.claudeCodeDirCard.setText(path)
 
     def _reset_claude_code_session(self):
-        config.app_config['claude_code_reset_token'] = int(config.app_config.get('claude_code_reset_token') or 0) + 1
-        config.save_app_config()
-        InfoBar.success('已重置', '下次发送消息会启动新的 Claude Code 会话', duration=2500, position=InfoBarPosition.BOTTOM, parent=self.window())
-        self.settings_changed.emit()
+        self._reset_current_backend_history('claude_code')
+
+    def _reset_current_backend_history(self, backend=None):
+        backend = backend or self.backendCard.currentValue() or 'builtin'
+        self.reset_backend_history_requested.emit(backend)
+        label = dict(self.BACKENDS).get(backend, backend)
+        InfoBar.success('已新建', label + ' 已清空旧记录并重新开始', duration=2500, position=InfoBarPosition.BOTTOM, parent=self.window())
 
     def _openclaw_session_key(self):
         model = config.app_config.get('openclaw_model') or config.OPENCLAW_MODEL_DEFAULT

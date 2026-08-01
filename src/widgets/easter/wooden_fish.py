@@ -202,30 +202,30 @@ class WoodenFishPopup(QFrame):
 
     def _hammer_angle(self):
         p = self._hit_progress()
-        rest = 18
+        rest = 32
         if p >= 1:
             return rest
-        if p < 0.22:
-            return rest + 18 * self._ease_out(p / 0.22)
-        if p < 0.55:
-            return 36 - 30 * self._ease_out((p - 0.22) / 0.33)
-        if p < 0.82:
-            return 6 + 16 * self._ease_out((p - 0.55) / 0.27)
-        return 22 - 4 * self._ease_out((p - 0.82) / 0.18)
+        if p < 0.18:
+            return rest + 8 * self._ease_out(p / 0.18)
+        if p < 0.52:
+            return 40 - 35 * self._ease_out((p - 0.18) / 0.34)
+        if p < 0.78:
+            return 5 + 19 * self._ease_out((p - 0.52) / 0.26)
+        return 24 + 8 * self._ease_out((p - 0.78) / 0.22)
 
     def _hammer_offset(self):
         p = self._hit_progress()
         if p >= 1:
             return QPointF(0, 0)
-        if p < 0.22:
-            lift = self._ease_out(p / 0.22)
-            return QPointF(6 * lift, -5 * lift)
-        if p < 0.55:
-            hit = self._ease_out((p - 0.22) / 0.33)
-            return QPointF(6 - 10 * hit, -5 + 14 * hit)
-        if p < 0.82:
-            bounce = self._ease_out((p - 0.55) / 0.27)
-            return QPointF(-4 + 4 * bounce, 9 - 9 * bounce)
+        if p < 0.18:
+            lift = self._ease_out(p / 0.18)
+            return QPointF(4 * lift, -6 * lift)
+        if p < 0.52:
+            drop = self._ease_out((p - 0.18) / 0.34)
+            return QPointF(4 - 10 * drop, -6 + 34 * drop)
+        if p < 0.78:
+            bounce = self._ease_out((p - 0.52) / 0.26)
+            return QPointF(-6 + 6 * bounce, 28 - 28 * bounce)
         return QPointF(0, 0)
 
     def paintEvent(self, event):
@@ -257,11 +257,11 @@ class WoodenFishPopup(QFrame):
         if not self.hammer.isNull():
             hammer_w = 118
             hammer = self.hammer.scaledToWidth(hammer_w, Qt.SmoothTransformation)
-            pivot_point = QPointF(self.width() * 1.01, self.height() * 0.49) + self._hammer_offset()
+            pivot_point = QPointF(self.width() * 0.83, self.height() * 0.42) + self._hammer_offset()
             transform = QTransform()
             transform.translate(pivot_point.x(), pivot_point.y())
             transform.rotate(self._hammer_angle())
-            transform.translate(-hammer_w * 1.08, -hammer.height() * 0.52)
+            transform.translate(-hammer_w * 0.78, -hammer.height() * 0.50)
             painter.setTransform(transform)
             painter.drawPixmap(0, 0, hammer)
             painter.resetTransform()

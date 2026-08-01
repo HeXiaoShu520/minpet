@@ -166,6 +166,12 @@ def _read_openclaw_stream(resp, on_delta=None):
     return True, (final_text or ''.join(chunks)).strip()
 
 
+def openclaw_user_for_session(cfg=None, session_id=''):
+    cfg = cfg or config.app_config
+    user = cfg.get('openclaw_user') or config.OPENCLAW_USER_DEFAULT
+    return '%s:chat:%s' % (user, session_id) if session_id else user
+
+
 def call_openclaw(message, cfg=None, on_delta=None, session_id=''):
     cfg = cfg or config.app_config
     token = load_openclaw_token()
@@ -173,9 +179,7 @@ def call_openclaw(message, cfg=None, on_delta=None, session_id=''):
         return False, '未找到 OpenClaw Token。请设置 OPENCLAW_GATEWAY_TOKEN，或确认 ~/.openclaw/openclaw.json 存在。'
     api_url = cfg.get('openclaw_api_url') or config.OPENCLAW_API_URL_DEFAULT
     model = cfg.get('openclaw_model') or config.OPENCLAW_MODEL_DEFAULT
-    user = cfg.get('openclaw_user') or config.OPENCLAW_USER_DEFAULT
-    if session_id:
-        user = '%s:chat:%s' % (user, session_id)
+    user = openclaw_user_for_session(cfg, session_id)
     timeout = int(cfg.get('openclaw_timeout') or config.OPENCLAW_TIMEOUT_DEFAULT)
     payload = {
         'model': model,

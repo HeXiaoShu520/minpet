@@ -15,14 +15,14 @@ class ClaudeCodeUsageCardTest(unittest.TestCase):
     def test_result_progress_passes_structured_usage_to_card(self):
         app = Mock()
         app._quick_stream_text = '你好呀，哥哥。'
+        app._chat_window_turn = None
+        app._is_claude_code_chat_window_turn = MiniPetApp._is_claude_code_chat_window_turn.__get__(app)
         app._claude_code_result_usage = MiniPetApp._claude_code_result_usage.__get__(app)
         app._claude_code_metric_number = MiniPetApp._claude_code_metric_number
         app._show_reply_card = Mock()
 
         MiniPetApp._on_claude_code_progress(app, {
             'kind': 'result',
-            'num_turns': 1,
-            'duration_ms': 3326,
             'total_cost_usd': 0.034236,
             'usage': {
                 'input_tokens': 4703,
@@ -38,8 +38,6 @@ class ClaudeCodeUsageCardTest(unittest.TestCase):
             timeout_ms=60000,
             progress='',
             result_usage={
-                'turns': 1,
-                'duration_ms': 3326.0,
                 'input_tokens': 4703,
                 'output_tokens': 9,
                 'cache_tokens': 21120,
@@ -50,6 +48,8 @@ class ClaudeCodeUsageCardTest(unittest.TestCase):
     def test_result_progress_ignores_invalid_metrics(self):
         app = Mock()
         app._quick_stream_text = ''
+        app._chat_window_turn = None
+        app._is_claude_code_chat_window_turn = MiniPetApp._is_claude_code_chat_window_turn.__get__(app)
         app._claude_code_result_usage = MiniPetApp._claude_code_result_usage.__get__(app)
         app._claude_code_metric_number = MiniPetApp._claude_code_metric_number
         app._show_reply_card = Mock()
@@ -66,6 +66,8 @@ class ClaudeCodeUsageCardTest(unittest.TestCase):
     def test_tool_progress_remains_plain_text(self):
         app = Mock()
         app._quick_stream_text = '处理中'
+        app._chat_window_turn = None
+        app._is_claude_code_chat_window_turn = MiniPetApp._is_claude_code_chat_window_turn.__get__(app)
         app._show_reply_card = Mock()
 
         MiniPetApp._on_claude_code_progress(app, {'kind': 'tool', 'state': 'running', 'name': 'Read'})
@@ -96,7 +98,6 @@ class ClaudeCodeUsageCardTest(unittest.TestCase):
         card = ReplyCard.__new__(ReplyCard)
 
         metrics = ReplyCard._usage_metrics(card, {
-            'duration_ms': 3326,
             'cost_usd': 0.034236,
             'input_tokens': 4703,
             'output_tokens': 9,
@@ -130,6 +131,29 @@ class ClaudeCodeUsageCardTest(unittest.TestCase):
 
         self.assertEqual(248, ReplyCard._card_width_for_event(card, ordinary_event))
         self.assertEqual(368, ReplyCard._card_width_for_event(card, usage_event))
+
+    def test_terminal_quick_tts_waits_for_delayed_result_display(self):
+        app = Mock()
+        app.claude_code_starting = True
+        app.claude_code_received_output = False
+        app._quick_stream_text = ''
+        app._active_turns = {}
+        app._turn_by_surface_id = {}
+        for name in ('_begin_turn', '_resolve_turn', '_turn_lane', '_finish_turn'):
+            setattr(app, name, getattr(MiniPetApp, name).__get__(app))
+        app._show_claude_code_result = MiniPetApp._show_claude_code_result.__get__(app)
+        turn = MiniPetApp._begin_turn(app, 'claude_code', 'external', surface_id='quick-claude')
+        callbacks = []
+        app.stream_display_delay.enqueue.side_effect = lambda lane, callback: callbacks.append(callback)
+
+        MiniPetApp._on_claude_code_result(app, '最终回答')
+
+        app.quick_stream_tts.queue_text.assert_not_called()
+        self.assertEqual(1, len(callbacks))
+        callbacks[0]()
+        app.quick_stream_tts.queue_text.assert_called_once_with(
+            turn.surface_id, '最终回答', terminal=True,
+        )
 
     def test_non_claude_reply_clears_previous_usage(self):
         app = Mock()

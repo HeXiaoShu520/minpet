@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from storage.chat_store import ChatStore
+from storage.chat_store import GLOBAL_SESSION_IDS, ChatStore
 
 
 class ChatStoreSessionTest(unittest.TestCase):
@@ -15,46 +15,49 @@ class ChatStoreSessionTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_sessions_are_isolated_within_same_backend(self):
-        first = self.store.create_session('builtin')
-        second = self.store.create_session('builtin')
-        self.store.append('user', '第一段对话', backend='builtin', session_id=first)
-        self.store.append('assistant', '第一段回复', backend='builtin', session_id=first)
-        self.store.append('user', '第二段对话', backend='builtin', session_id=second)
+    def test_backends_have_stable_global_session_ids(self):
+        self.assertEqual('builtin:global', self.store.global_session_id('builtin'))
+        self.assertEqual('claude_code:global', self.store.global_session_id('claude_code'))
+        self.assertEqual('openclaw:global', self.store.global_session_id('openclaw'))
+        self.assertEqual('custom:global', self.store.global_session_id('custom'))
+        self.assertEqual(set(GLOBAL_SESSION_IDS.values()), {
+            self.store.global_session_id(backend)
+            for backend in GLOBAL_SESSION_IDS
+        })
 
-        self.assertEqual(['第一段对话', '第一段回复'], [m['content'] for m in self.store.load_session(first)])
-        self.assertEqual(['第二段对话'], [m['content'] for m in self.store.load_session(second)])
-        self.assertEqual({first, second}, {item['session_id'] for item in self.store.list_sessions('builtin')})
+    def test_backend_history_is_isolated(self):
+        self.store.append('user', '内置消息', backend='builtin')
+        self.store.append('user', 'Claude 消息', backend='claude_code')
 
-    def test_delete_session_keeps_other_sessions(self):
-        first = self.store.create_session('builtin')
-        second = self.store.create_session('builtin')
-        self.store.append('user', '保留', backend='builtin', session_id=first)
-        self.store.append('user', '删除', backend='builtin', session_id=second)
+        self.assertEqual(['内置消息'], [
+            message['content']
+            for message in self.store.load_backend_history('builtin')
+        ])
+        self.assertEqual(['Claude 消息'], [
+            message['content']
+            for message in self.store.load_backend_history('claude_code')
+        ])
 
-        self.assertTrue(self.store.delete_session(second))
-        self.assertEqual(['保留'], [m['content'] for m in self.store.load_session(first)])
-        self.assertEqual([], self.store.load_session(second))
+    def test_clear_backend_history_keeps_other_backends(self):
+        self.store.append('user', '保留', backend='openclaw')
+        self.store.append('user', '清除', backend='builtin')
 
-    def test_mixed_backend_sessions_keep_metadata(self):
-        builtin = self.store.create_session('builtin')
-        claude = self.store.create_session('claude_code')
-        self.store.append('user', '内置对话', backend='builtin', session_id=builtin)
-        self.store.append('user', 'Claude 对话', backend='claude_code', session_id=claude)
+        self.store.clear_backend_history('builtin')
 
-        sessions = {item['session_id']: item for item in self.store.list_sessions()}
-        self.assertEqual('builtin', sessions[builtin]['backend'])
-        self.assertEqual('claude_code', sessions[claude]['backend'])
-        self.assertEqual(claude, self.store.get_session(claude)['session_id'])
-        self.assertIsNone(self.store.get_session('missing'))
+        self.assertEqual([], self.store.load_backend_history('builtin'))
+        self.assertEqual(['保留'], [
+            message['content']
+            for message in self.store.load_backend_history('openclaw')
+        ])
 
-    def test_old_records_map_to_date_and_backend_session(self):
-        path = self.store.sessions_dir / '2026-08-01.jsonl'
-        path.write_text('{"role":"user","backend":"builtin","content":[{"type":"text","text":"旧记录"}]}\n', encoding='utf-8')
+    def test_clear_all_removes_chat_data(self):
+        self.store.append('user', '消息', backend='custom')
 
-        sessions = self.store.list_sessions('builtin')
-        self.assertEqual('legacy:2026-08-01:builtin', sessions[0]['session_id'])
-        self.assertEqual(['旧记录'], [m['content'] for m in self.store.load_session(sessions[0]['session_id'])])
+        self.store.clear_all()
+
+        self.assertEqual([], self.store.load_backend_history('custom'))
+        self.assertFalse(self.store.index_file.exists())
+        self.assertFalse(self.store.search_db.exists())
 
 
 if __name__ == '__main__':

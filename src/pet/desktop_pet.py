@@ -365,8 +365,8 @@ class DesktopPet(QWidget):
     def pat(self):
         pat_pet(self)
 
-    def show_chat(self, history=None, append_message=None, content_for_llm=None, system_prompt_builder=None, clear_history_callback=None, send_callback=None, backend='builtin', session_id='', sessions=None, create_session_callback=None, select_session_callback=None, sessions_callback=None):
-        show_chat_window(self, history=history, append_message=append_message, content_for_llm=content_for_llm, system_prompt_builder=system_prompt_builder, clear_history_callback=clear_history_callback, send_callback=send_callback, backend=backend, session_id=session_id, sessions=sessions, create_session_callback=create_session_callback, select_session_callback=select_session_callback, sessions_callback=sessions_callback)
+    def show_chat(self, history=None, append_message=None, content_for_llm=None, system_prompt_builder=None, clear_history_callback=None, send_callback=None, backend='builtin', backend_select_callback=None):
+        show_chat_window(self, history=history, append_message=append_message, content_for_llm=content_for_llm, system_prompt_builder=system_prompt_builder, clear_history_callback=clear_history_callback, send_callback=send_callback, backend=backend, backend_select_callback=backend_select_callback)
 
     def show_doubao_call(self, append_message=None):
         show_doubao_call_window(self, append_message=append_message)

@@ -81,6 +81,8 @@ DEFAULT_TTS_CONFIG = {
     'max_length_to_filter_parenthesis': 100,
 }
 
+ASR_RECORDING_MAX_MS = 5 * 60 * 1000
+
 DEFAULT_VOICE_CHAT_CONFIG = {
     'continuous': False,
 }

@@ -21,7 +21,7 @@ from PySide6.QtCore import QByteArray, QBuffer, QEvent, QIODevice, QSize, Qt, QU
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QKeyEvent, QPainter, QPen, QPixmap
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import (QAbstractButton, QApplication, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMenu, QPushButton, QSizePolicy, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractButton, QApplication, QFrame, QHBoxLayout, QLabel, QMenu, QPushButton, QSizePolicy, QVBoxLayout, QWidget)
 from qfluentwidgets import TitleLabel, TransparentToolButton
 from qfluentwidgets import FluentIcon as FIF
 
@@ -218,7 +218,7 @@ class _WindowControlButton(QAbstractButton):
         center_x = self.width() // 2
         center_y = self.height() // 2
         if self.action == 'minimize':
-            painter.drawLine(center_x - 5, center_y + 3, center_x + 5, center_y + 3)
+            painter.drawLine(center_x - 5, center_y, center_x + 5, center_y)
         elif self.action == 'maximize':
             if self._maximized:
                 painter.drawRect(center_x - 5, center_y - 2, 8, 7)
@@ -230,52 +230,6 @@ class _WindowControlButton(QAbstractButton):
             painter.drawLine(center_x + 5, center_y - 5, center_x - 5, center_y + 5)
 
 
-class _SessionListItem(QWidget):
-    """侧栏中的紧凑会话项。"""
-
-    _BACKEND_LABEL = {
-        'builtin': '内置AI',
-        'claude_code': 'Claude',
-        'openclaw': 'OpenClaw',
-        'custom': 'MiniPet',
-    }
-
-    def __init__(self, session, parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(48)
-        self.setStyleSheet('QWidget{background:transparent;}')
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 4, 6, 4)
-        layout.setSpacing(7)
-        self.avatar = Avatar(config.avatar_path('pet'), '宠', False, self, size=30, icon_size=24)
-        layout.addWidget(self.avatar)
-        content = QWidget(self)
-        content.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(2)
-        self.title = QLabel(content)
-        self.title.setStyleSheet('QLabel{color:#303846;background:transparent;font-size:13px;font-weight:600;}')
-        self.title.setWordWrap(False)
-        self.title.setTextInteractionFlags(Qt.NoTextInteraction)
-        self._title_text = ' '.join(str(session.get('title') or '新对话').split())
-        content_layout.addWidget(self.title)
-        source = self._BACKEND_LABEL.get(session.get('backend'), session.get('backend') or '内置AI')
-        self.source = SourceChipWidget(source, content)
-        font = self.source.font()
-        font.setPointSize(7)
-        font.setBold(True)
-        self.source.setFont(font)
-        self.source.setFixedHeight(16)
-        content_layout.addWidget(self.source, 0, Qt.AlignLeft)
-        layout.addWidget(content, 1)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        width = max(24, self.title.width())
-        self.title.setText(QFontMetrics(self.title.font()).elidedText(self._title_text, Qt.ElideRight, width))
-
-
 class ChatWindow(QWidget):
     """完整文本聊天窗口。
 
@@ -284,7 +238,7 @@ class ChatWindow(QWidget):
     则在本地列表里维护临时历史，便于独立测试。
     """
 
-    def __init__(self, pet_name='', parent=None, history=None, append_message=None, content_for_llm=None, system_prompt_builder=None, clear_history_callback=None, send_callback=None, backend='builtin', session_id='', sessions=None, create_session_callback=None, select_session_callback=None, sessions_callback=None):
+    def __init__(self, pet_name='', parent=None, history=None, append_message=None, content_for_llm=None, system_prompt_builder=None, clear_history_callback=None, send_callback=None, backend='builtin', backend_select_callback=None):
         super().__init__(parent)
         self.pet_name = pet_name
         self.history = history if history is not None else []
@@ -294,11 +248,8 @@ class ChatWindow(QWidget):
         self.clear_history_callback = clear_history_callback
         self.send_callback = send_callback
         self.backend = backend or 'builtin'
-        self.session_id = session_id
-        self.sessions = sessions or []
-        self.create_session_callback = create_session_callback
-        self.select_session_callback = select_session_callback
-        self.sessions_callback = sessions_callback
+        self.backend_select_callback = backend_select_callback
+        self.backend_buttons = {}
         self.worker = None
         self._stream_id = None
         self._stream_text = ''
@@ -339,40 +290,60 @@ class ChatWindow(QWidget):
 
         shell = QFrame(self)
         shell.setObjectName('ChatShell')
-        shell.setStyleSheet('QFrame#ChatShell{background:#ffffff;border:none;border-radius:8px;}')
+        shell.setStyleSheet('QFrame#ChatShell{background:#f4f7fb;border:none;border-radius:6px;}')
         shell_layout = QHBoxLayout(shell)
-        shell_layout.setContentsMargins(1, 1, 1, 1)
+        shell_layout.setContentsMargins(0, 0, 0, 0)
         shell_layout.setSpacing(0)
 
         sidebar = QFrame(shell)
-        sidebar.setObjectName('ChatSidebar')
-        sidebar.setFixedWidth(220)
-        sidebar.setStyleSheet('QFrame#ChatSidebar{background:#f4f7fb;border:none;border-right:1px solid #e1e8f2;}')
+        sidebar.setObjectName('ChatBackendSidebar')
+        sidebar.setFixedWidth(180)
+        sidebar.setStyleSheet(
+            'QFrame#ChatBackendSidebar{background:#f4f7fb;border:none;'
+            'border-right:1px solid #e1e8f2;border-top-left-radius:6px;'
+            'border-bottom-left-radius:6px;}'
+        )
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(12, 12, 12, 12)
-        sidebar_layout.setSpacing(8)
-        new_session_btn = QPushButton('+  新建对话', sidebar)
-        new_session_btn.setObjectName('NewSessionButton')
-        new_session_btn.setFixedHeight(34)
-        new_session_btn.setCursor(Qt.PointingHandCursor)
-        new_session_btn.setStyleSheet('QPushButton#NewSessionButton{background:#e6f0ff;color:#2468b5;border:none;border-radius:6px;font-weight:600;text-align:left;padding-left:12px;}QPushButton#NewSessionButton:hover{background:#d8e8ff;}')
-        new_session_btn.clicked.connect(self._create_session)
-        sidebar_layout.addWidget(new_session_btn)
-        self.session_list = QListWidget(sidebar)
-        self.session_list.setObjectName('ChatSessionList')
-        self.session_list.setFrameShape(QFrame.NoFrame)
-        self.session_list.setVerticalScrollMode(QListWidget.ScrollPerPixel)
-        self.session_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.session_list.setStyleSheet('QListWidget#ChatSessionList{background:transparent;border:none;outline:none;}QListWidget#ChatSessionList::item{background:transparent;border-radius:6px;padding:0;color:#303846;}QListWidget#ChatSessionList::item:hover{background:#e8f0fb;}QListWidget#ChatSessionList::item:selected{background:#d9e8fb;color:#195fae;}QListWidget#ChatSessionList::item:selected QWidget{background:transparent;}QScrollBar:horizontal{height:0px;}QScrollBar:vertical{width:5px;background:transparent;}QScrollBar::handle:vertical{background:#c4d3e5;border-radius:2px;min-height:20px;}')
-        self.session_list.currentItemChanged.connect(self._select_session)
-        sidebar_layout.addWidget(self.session_list, 1)
+        sidebar_layout.setSpacing(6)
+        sidebar_title = QLabel('智能体', sidebar)
+        sidebar_title.setStyleSheet(
+            'QLabel{color:#738198;background:transparent;font-size:12px;font-weight:600;}'
+        )
+        sidebar_layout.addWidget(sidebar_title)
+        for key, label in (
+            ('builtin', '内置AI'), ('openclaw', 'OpenClaw'),
+            ('custom', 'MiniPet'), ('claude_code', 'Claude'),
+        ):
+            button = QPushButton(label, sidebar)
+            button.setCheckable(True)
+            button.setCursor(Qt.PointingHandCursor)
+            button.setFixedHeight(28)
+            button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            gradient, border = SourceChipWidget._CHIP_CSS.get(
+                label, ('#8c8c8c', '#8c8c8c')
+            )
+            button.setStyleSheet(
+                'QPushButton{background:%s;color:white;border:1px solid %s;'
+                'border-radius:14px;padding:1px 10px;font-weight:700;}'
+                'QPushButton:hover{border-color:rgba(255,255,255,210);}'
+                'QPushButton:checked{border:2px solid #195fae;}'
+                % (gradient, border)
+            )
+            button.clicked.connect(lambda checked, value=key: self._select_backend(value))
+            self.backend_buttons[key] = button
+            sidebar_layout.addWidget(button, 0, Qt.AlignLeft)
+        sidebar_layout.addStretch(1)
         shell_layout.addWidget(sidebar)
 
         chat_panel = QFrame(shell)
         chat_panel.setObjectName('ChatPanel')
-        chat_panel.setStyleSheet('QFrame#ChatPanel{background:#ffffff;border:none;}')
+        chat_panel.setStyleSheet(
+            'QFrame#ChatPanel{background:#ffffff;border:none;'
+            'border-top-right-radius:6px;border-bottom-right-radius:6px;}'
+        )
         chat_layout = QVBoxLayout(chat_panel)
-        chat_layout.setContentsMargins(0, 0, 0, 0)
+        chat_layout.setContentsMargins(0, 2, 2, 2)
         chat_layout.setSpacing(0)
         self.chat_header = QWidget(chat_panel)
         self.chat_header.setFixedHeight(44)
@@ -390,8 +361,7 @@ class ChatWindow(QWidget):
         title_box.addWidget(self.title_label)
         self.set_backend(self.backend)
         h_layout.addWidget(self.avatar_widget)
-        h_layout.addLayout(title_box)
-        h_layout.addStretch(1)
+        h_layout.addLayout(title_box, 1)
         self.clear_btn = TransparentToolButton(FIF.DELETE, self.chat_header)
         self.clear_btn.setFixedSize(28, 28)
         self.clear_btn.setToolTip('删除当前对话')
@@ -413,7 +383,12 @@ class ChatWindow(QWidget):
         html_text = html_path.read_text(encoding='utf-8')
         base_url = QUrl.fromLocalFile(str(html_path))
         self.web.setHtml(html_text, base_url)
-        chat_layout.addWidget(self.web, 1)
+        web_wrap = QWidget(chat_panel)
+        web_wrap.setStyleSheet('QWidget{background:#ffffff;}')
+        web_layout = QVBoxLayout(web_wrap)
+        web_layout.setContentsMargins(0, 0, 2, 0)
+        web_layout.addWidget(self.web)
+        chat_layout.addWidget(web_wrap, 1)
 
         # 输入区
         input_bar = QWidget()
@@ -468,74 +443,6 @@ class ChatWindow(QWidget):
         outer_layout.setContentsMargins(10, 0, 10, 10)
         outer_layout.addWidget(shell)
         root.addWidget(outer, 1)
-        self.set_sessions(self.session_id, self.sessions, self.create_session_callback, self.select_session_callback, self.sessions_callback)
-
-    def set_sessions(self, session_id, sessions, create_callback=None, select_callback=None, sessions_callback=None):
-        self.session_id = session_id or ''
-        self.sessions = sessions or []
-        self.create_session_callback = create_callback
-        self.select_session_callback = select_callback
-        self.sessions_callback = sessions_callback
-        if not hasattr(self, 'session_list'):
-            return
-        self.session_list.blockSignals(True)
-        self.session_list.clear()
-        selected_row = -1
-        for row, session in enumerate(self.sessions):
-            title = session.get('title') or '新对话'
-            item = QListWidgetItem()
-            item.setData(Qt.UserRole, session.get('session_id', ''))
-            item.setToolTip(title)
-            item.setSizeHint(QSize(0, 48))
-            self.session_list.addItem(item)
-            self.session_list.setItemWidget(item, _SessionListItem(session, self.session_list))
-            if session.get('session_id') == self.session_id:
-                selected_row = row
-        if selected_row >= 0:
-            self.session_list.setCurrentRow(selected_row)
-        self.session_list.blockSignals(False)
-
-    def _create_session(self):
-        if self.create_session_callback is None:
-            return
-        session_id = self.create_session_callback()
-        if session_id and self.select_session_callback is not None:
-            self._select_session_id(session_id)
-
-    def _select_session_id(self, session_id):
-        history = self.select_session_callback(session_id)
-        if history is None:
-            return
-        self.session_id = session_id
-        self.history = history
-        self.sessions = self.sessions_callback() if hasattr(self, 'sessions_callback') else self.sessions
-        session = next((item for item in self.sessions if item.get('session_id') == session_id), None)
-        if session is not None:
-            self.set_backend(session.get('backend') or self.backend)
-        self.set_sessions(self.session_id, self.sessions, self.create_session_callback, self.select_session_callback, self.sessions_callback)
-        self._clear_quote()
-        self.input.setEnabled(self.worker is None)
-        self.reload_history()
-
-    def _select_session(self, current, previous):
-        if current is None or self.select_session_callback is None:
-            return
-        session_id = current.data(Qt.UserRole)
-        if not session_id or session_id == self.session_id:
-            return
-        history = self.select_session_callback(session_id)
-        if history is None:
-            return
-        self.session_id = session_id
-        self.history = history
-        if self.sessions_callback is not None:
-            self.sessions = self.sessions_callback()
-        session = next((item for item in self.sessions if item.get('session_id') == session_id), None)
-        if session is not None:
-            self.set_backend(session.get('backend') or self.backend)
-        self._clear_quote()
-        self.input.setEnabled(self.worker is None)
-        self.reload_history()
 
     def _add_window_controls(self, layout, parent):
         self.minimize_btn = _WindowControlButton('minimize', parent)
@@ -615,6 +522,17 @@ class ChatWindow(QWidget):
         if hasattr(self, 'title_label'):
             self.title_label.setText(self.pet_name)
 
+    def _select_backend(self, backend):
+        if backend == self.backend or self.backend_select_callback is None:
+            return
+        history = self.backend_select_callback(backend)
+        if history is None:
+            return
+        self.history = history
+        self.set_backend(backend)
+        self._clear_quote()
+        self.reload_history()
+
     def set_backend(self, backend):
         self.backend = backend or 'builtin'
         _BACKEND_LABEL = {
@@ -636,7 +554,11 @@ class ChatWindow(QWidget):
         f.setBold(True)
         chip.setFont(f)
         self.backend_badge = chip
-        self._title_box.addWidget(chip, 0, Qt.AlignVCenter)
+        self._title_box.insertWidget(0, chip, 0, Qt.AlignVCenter)
+        for key, button in self.backend_buttons.items():
+            button.setChecked(key == self.backend)
+        if hasattr(self, 'clear_btn'):
+            self.clear_btn.setToolTip('清空当前智能体记录')
 
     def _on_quote_activated(self, quoted_text):
         self._quoted_text = quoted_text.strip()
@@ -782,19 +704,17 @@ class ChatWindow(QWidget):
             if w:
                 w.deleteLater()
         self.input.setPlaceholderText('发送给宠物')
-        # 开始流式回复卡片
+        # 聊天窗口的回复只在窗口内显示，不触发外部 TTS。
         stream_id = str(uuid.uuid4())
         self._stream_id = stream_id
         self._reset_stream_tts()
         self.input.setEnabled(False)
         if self.send_callback:
-            self._stream_session_id = self.session_id
             self.worker = self.send_callback(
                 content,
                 lambda backend: self._show_sent_user_then_stream(content, backend, stream_id),
                 lambda d: self._on_delta(stream_id, d),
                 lambda ok, t: self._on_reply(stream_id, ok, t),
-                self.session_id,
             )
             if not self.worker:
                 self._on_reply(stream_id, False, '当前后端发送失败。')
@@ -847,17 +767,11 @@ class ChatWindow(QWidget):
     def _on_delta(self, stream_id, text):
         if text:
             self._stream_text += text
-            if getattr(self, '_stream_session_id', self.session_id) != self.session_id:
-                return
             escaped = json.dumps(text, ensure_ascii=False)
             self._js('Chat.appendDelta(%s, %s)' % (json.dumps(stream_id), escaped))
-            self.stream_tts.queue_text(stream_id, self._stream_text.strip(), terminal=False)
 
     def _on_reply(self, stream_id, success, text):
-        stream_session_id = getattr(self, '_stream_session_id', self.session_id)
-        is_current_session = (
-            stream_session_id == self.session_id and stream_id == self._stream_id
-        )
+        is_current_session = stream_id == self._stream_id
         if is_current_session:
             self.input.setEnabled(True)
             self.worker = None
@@ -866,11 +780,10 @@ class ChatWindow(QWidget):
             if is_current_session:
                 self._js('Chat.endStream(%s, %s)' % (json.dumps(stream_id), json.dumps(final, ensure_ascii=False)))
             if self.append_message:
-                self.append_message('assistant', final, 'chat_window', getattr(self, '_stream_backend', self.backend), getattr(self, '_stream_session_id', self.session_id))
+                self.append_message('assistant', final, 'chat_window', getattr(self, '_stream_backend', self.backend))
             else:
                 self.history.append({'role': 'assistant', 'content': final})
             self._stream_text = final
-            self.stream_tts.queue_text(stream_id, final, terminal=True)
         else:
             self._reset_stream_tts()
             if is_current_session:
@@ -885,10 +798,8 @@ class ChatWindow(QWidget):
         stop_tts()
         self._reset_stream_tts()
         if self.clear_history_callback:
-            new_session_id = self.clear_history_callback(self.session_id)
-            if new_session_id and self.select_session_callback is not None:
-                self._select_session_id(new_session_id)
-                return
+            self.clear_history_callback()
+            self.history = []
         else:
             self.history.clear()
         self._js('Chat.clear()')

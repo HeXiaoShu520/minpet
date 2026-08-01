@@ -19,6 +19,10 @@ except Exception:
     OpenAITimeoutError = TimeoutError
 
 import config
+try:
+    from clients.log_preview import log_preview
+except ModuleNotFoundError:
+    from src.clients.log_preview import log_preview
 
 
 def _message_text(content):
@@ -77,7 +81,7 @@ async def _call_openai(messages, cfg, timeout, on_delta=None):
     if api_base:
         kwargs['base_url'] = api_base
     messages = _normalize_openai_messages(messages)
-    print('[MiniPet input]', _last_user_input(messages), flush=True)
+    print('[MiniPet input]', log_preview(_last_user_input(messages)), flush=True)
     try:
         async with AsyncOpenAI(**kwargs) as client:
             if on_delta:
@@ -93,14 +97,14 @@ async def _call_openai(messages, cfg, timeout, on_delta=None):
                         chunks.append(delta)
                         on_delta(delta)
                 reply = ''.join(chunks).strip()
-                print('[MiniPet final]', reply, flush=True)
+                print('[MiniPet final]', log_preview(reply), flush=True)
                 return True, reply
             response = await client.chat.completions.create(
                 model=model,
                 messages=messages,
             )
             reply = (response.choices[0].message.content or '').strip()
-            print('[MiniPet final]', reply, flush=True)
+            print('[MiniPet final]', log_preview(reply), flush=True)
             return True, reply
     except OpenAITimeoutError as e:
         return False, '网络超时：%s' % e

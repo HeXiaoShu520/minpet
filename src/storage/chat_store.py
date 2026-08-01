@@ -17,6 +17,13 @@ from datetime import datetime
 from pathlib import Path
 
 SCHEMA_VERSION = 2
+GLOBAL_SESSION_IDS = {
+    'builtin': 'builtin:global',
+    'claude_code': 'claude_code:global',
+    'openclaw': 'openclaw:global',
+    'custom': 'custom:global',
+}
+BUILTIN_GLOBAL_SESSION_ID = GLOBAL_SESSION_IDS['builtin']
 
 
 class ChatStore:
@@ -32,6 +39,21 @@ class ChatStore:
         self.root_dir.mkdir(parents=True, exist_ok=True)
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
         self.images_dir.mkdir(parents=True, exist_ok=True)
+
+    def global_session_id(self, backend):
+        return GLOBAL_SESSION_IDS.get(self._normalize_backend(backend), 'custom:global')
+
+    def load_backend_history(self, backend):
+        backend = self._normalize_backend(backend)
+        messages = []
+        for path in sorted(self.sessions_dir.glob('*.jsonl')):
+            for message in self.load_stored_date(path.stem):
+                if self._message_backend(message) == backend:
+                    messages.append(self.to_runtime_message(message))
+        return messages
+
+    def clear_backend_history(self, backend):
+        self.clear_backend(backend)
 
     def today(self):
         return datetime.now().strftime('%Y-%m-%d')
@@ -79,8 +101,35 @@ class ChatStore:
                  if not backend or self._normalize_backend(value.get('backend')) == backend]
         return sorted(items, key=lambda item: item.get('updated_at', ''), reverse=True)
 
+    def builtin_global_session(self):
+        messages = self.load_builtin_global_session()
+        first = messages[0] if messages else {}
+        last = messages[-1] if messages else {}
+        title = self.content_text_for_memory(first.get('content', '')) or '内置AI全局对话'
+        return {
+            'session_id': BUILTIN_GLOBAL_SESSION_ID,
+            'backend': 'builtin',
+            'title': title[:24],
+            'created_at': first.get('created_at', ''),
+            'updated_at': last.get('created_at', ''),
+            'message_count': len(messages),
+            'preview': self.content_text_for_memory(last.get('content', ''))[:80],
+            'legacy': False,
+            'global': True,
+        }
+
+    def load_builtin_global_session(self):
+        messages = []
+        for path in sorted(self.sessions_dir.glob('*.jsonl')):
+            for message in self.load_stored_date(path.stem):
+                if self._message_backend(message) == 'builtin':
+                    messages.append(self.to_runtime_message(message))
+        return messages
+
     def get_session(self, session_id):
         """返回会话元数据；不存在时返回 None。"""
+        if session_id == BUILTIN_GLOBAL_SESSION_ID:
+            return self.builtin_global_session()
         if not session_id:
             return None
         return next(
@@ -149,7 +198,7 @@ class ChatStore:
             'role': role,
             'source': source,
             'backend': self._normalize_backend(backend),
-            'session_id': session_id or self.create_session(backend),
+            'session_id': session_id or self.global_session_id(backend),
             'pet_name': pet_name,
             'content': self._persist_content_images(self._normalize_content(content), date_text),
         }
