@@ -178,13 +178,8 @@ class ReplyCardWindow(QFrame):
         pos_anim.setStartValue(self.pos())
         pos_anim.setEndValue(self.pos() + CARD_EXIT_OFFSET)
         pos_anim.setEasingCurve(QEasingCurve.InCubic)
-        opacity_anim = QPropertyAnimation(self, b'windowOpacity', self)
-        opacity_anim.setDuration(CARD_ANIM_OUT_MS)
-        opacity_anim.setStartValue(self.windowOpacity())
-        opacity_anim.setEndValue(0.0)
         self.anim_group = QParallelAnimationGroup(self)
         self.anim_group.addAnimation(pos_anim)
-        self.anim_group.addAnimation(opacity_anim)
         self.anim_group.finished.connect(self.close)
         self.anim_group.start()
 

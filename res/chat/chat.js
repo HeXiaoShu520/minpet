@@ -9,18 +9,83 @@ const Chat = (() => {
   let streamId = null;
   let streamText = '';
   let _ctxMenu = null;
+  let _selectionCopyButton = null;
+  let _selectionCopyText = '';
 
   /* ─── 初始化 QWebChannel ─── */
   function init() {
+    _initSelectionCopy();
     if (typeof QWebChannel === 'undefined') return;
     new QWebChannel(qt.webChannelTransport, ch => {
       bridge = ch.objects.bridge;
     });
   }
 
+  function _initSelectionCopy() {
+    if (_selectionCopyButton) return;
+    const button = document.createElement('button');
+    button.id = 'chat-selection-copy';
+    button.textContent = '复制';
+    button.hidden = true;
+    button.addEventListener('mousedown', event => event.preventDefault());
+    button.addEventListener('click', () => {
+      const text = _selectionCopyText;
+      _hideSelectionCopy(true);
+      if (text) navigator.clipboard.writeText(text).catch(() => {});
+    });
+    document.body.appendChild(button);
+    _selectionCopyButton = button;
+    document.addEventListener('selectionchange', _syncSelectionCopy);
+    document.addEventListener('mouseup', _syncSelectionCopy);
+    document.addEventListener('pointerdown', event => {
+      if (event.target !== button) _hideSelectionCopy(false);
+    }, true);
+    document.addEventListener('contextmenu', () => _hideSelectionCopy(true), true);
+    document.addEventListener('scroll', () => _hideSelectionCopy(false), true);
+  }
+
+  function _getCopyableSelection() {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount !== 1 || selection.isCollapsed) return null;
+    const text = selection.toString();
+    if (!text.trim()) return null;
+    const range = selection.getRangeAt(0);
+    const messages = document.getElementById('messages');
+    const start = range.startContainer.parentElement;
+    const end = range.endContainer.parentElement;
+    if (!messages || !start || !end || !messages.contains(range.commonAncestorContainer)) return null;
+    const allowed = node => node.closest && node.closest('.bubble-content, .quote-block');
+    if (!allowed(start) || !allowed(end)) return null;
+    return { range, text };
+  }
+
+  function _syncSelectionCopy() {
+    const selected = _getCopyableSelection();
+    if (!selected) {
+      _hideSelectionCopy(false);
+      return;
+    }
+    _selectionCopyText = selected.text;
+    const rect = selected.range.getBoundingClientRect();
+    if (!rect.width && !rect.height) return;
+    const button = _selectionCopyButton;
+    button.hidden = false;
+    const left = Math.max(6, Math.min(rect.left + rect.width / 2 - button.offsetWidth / 2, window.innerWidth - button.offsetWidth - 6));
+    const top = rect.top > button.offsetHeight + 8 ? rect.top - button.offsetHeight - 8 : rect.bottom + 8;
+    button.style.left = left + 'px';
+    button.style.top = Math.max(6, Math.min(top, window.innerHeight - button.offsetHeight - 6)) + 'px';
+  }
+
+  function _hideSelectionCopy(clearSelection) {
+    if (_selectionCopyButton) _selectionCopyButton.hidden = true;
+    _selectionCopyText = '';
+    if (clearSelection) window.getSelection().removeAllRanges();
+  }
+
   /* ─── 从 Python 添加完整消息 ─── */
   function appendMessage(msg) {
     // 如果有正在流式输出的气泡先结束它
+    _hideSelectionCopy(true);
     if (streamBubble) _finalizeStream();
     const row = _buildRow(msg);
     document.getElementById('messages').appendChild(row);
@@ -29,6 +94,7 @@ const Chat = (() => {
 
   /* ─── 流式追加 delta ─── */
   function startStream(msgOrId, role, name, avatarSrc) {
+    _hideSelectionCopy(true);
     if (streamBubble) _finalizeStream();
     // 兼容对象调用 Chat.startStream({id,role,name,avatar}) 和旧式四参数调用
     const msg = (msgOrId && typeof msgOrId === 'object')
@@ -46,6 +112,7 @@ const Chat = (() => {
 
   function appendDelta(id, delta) {
     if (streamId !== id || !streamBubble) return;
+    _hideSelectionCopy(true);
     streamText += delta;
     streamBubble.innerHTML = marked.parse(streamText);
     _bindCodeCopy(streamBubble);
@@ -54,6 +121,7 @@ const Chat = (() => {
 
   function endStream(id, finalText) {
     if (streamId !== id || !streamBubble) return;
+    _hideSelectionCopy(true);
     streamBubble.classList.remove('typing-cursor');
     if (finalText !== undefined) {
       streamBubble.innerHTML = marked.parse(finalText);
@@ -67,6 +135,7 @@ const Chat = (() => {
 
   function _finalizeStream() {
     if (!streamBubble) return;
+    _hideSelectionCopy(true);
     streamBubble.classList.remove('typing-cursor');
     streamBubble = null;
     streamId = null;
@@ -260,6 +329,7 @@ const Chat = (() => {
   }
 
   function _showCtxMenu(e, bubble) {
+    _hideSelectionCopy(true);
     _hideCtxMenu();
     const menu = document.createElement('div');
     menu.id = 'chat-ctx-menu';
@@ -285,6 +355,7 @@ const Chat = (() => {
 
   /* ─── 灯箱 ─── */
   function openLightbox(src) {
+    _hideSelectionCopy(true);
     document.getElementById('lightbox-img').src = src;
     document.getElementById('lightbox').classList.add('open');
   }
@@ -298,6 +369,7 @@ const Chat = (() => {
   }
 
   function clear() {
+    _hideSelectionCopy(true);
     document.getElementById('messages').innerHTML = '';
   }
 

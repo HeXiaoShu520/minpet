@@ -18,6 +18,7 @@ from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QVBoxLayout, QWidget)
 from qfluentwidgets import TitleLabel, TransparentToolButton
+from qframelesswindow import FramelessWindow, StandardTitleBar
 from qfluentwidgets import FluentIcon as FIF
 
 import config
@@ -92,6 +93,9 @@ class ChatInput(QTextEdit):
         super().keyPressEvent(event)
 
     def _resize_to_content(self):
+        if not self.toPlainText().strip():
+            self.setFixedHeight(38)
+            return
         doc_height = int(self.document().size().height()) + 20
         self.setFixedHeight(max(38, min(120, doc_height)))
 
@@ -157,7 +161,7 @@ class ChatBridge(QWebChannel):
             self._quote_callback(quoted_text)
 
 
-class ChatWindow(QWidget):
+class ChatWindow(FramelessWindow):
     """完整文本聊天窗口。
 
     这个窗口把 Qt 输入区和 WebEngine 消息区组合在一起。history 由外层
@@ -184,14 +188,15 @@ class ChatWindow(QWidget):
         self._pending_js = []
         self.setWindowTitle('与宠物聊天')
         self.setWindowIcon(QIcon(str(config.avatar_path('pet'))))
+        self.setTitleBar(StandardTitleBar(self))
+        self.titleBar.setStyleSheet('StandardTitleBar{background:#ffffff;border-bottom:1px solid #e5e7eb;}')
         self.resize(720, 620)
         self.setMinimumSize(QSize(520, 460))
-        self.setWindowFlags(Qt.Window)
         self._init_ui()
 
     def _init_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
+        root.setContentsMargins(0, self.titleBar.height(), 0, 0)
         root.setSpacing(0)
         self.setStyleSheet('QWidget{font-family:Microsoft YaHei, Segoe UI, sans-serif;}')
 

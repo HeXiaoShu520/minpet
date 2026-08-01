@@ -1,7 +1,7 @@
 # coding:utf-8
 """回复卡片窗口。"""
 
-from PySide6.QtCore import QEasingCurve, Property, QElapsedTimer, QPropertyAnimation, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QEasingCurve, Property, QElapsedTimer, QPropertyAnimation, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap, QTextDocument
 from PySide6.QtWidgets import QApplication, QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton, QSizePolicy, QVBoxLayout
 
@@ -80,10 +80,13 @@ class CountdownAvatarLabel(QLabel):
 
 
 class CopyableLabel(QLabel):
+    _active_label = None
+
     def __init__(self, text='', parent=None):
         super().__init__(text, parent)
         self._copy_button = None
         self._copy_text_cache = ''
+        self._copy_filter_installed = False
         self.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
         self.setCursor(Qt.IBeamCursor)
 
@@ -93,6 +96,7 @@ class CopyableLabel(QLabel):
         super().setText(text)
 
     def mousePressEvent(self, event):
+        self._hide_active_copy_button(except_label=self)
         self._hide_copy_button()
         if event.button() == Qt.RightButton:
             event.accept()
@@ -133,9 +137,31 @@ class CopyableLabel(QLabel):
         self._copy_text_cache = ''
         self._hide_copy_button()
 
+    @classmethod
+    def _hide_active_copy_button(cls, except_label=None):
+        label = cls._active_label
+        if label is not None and label is not except_label:
+            label._copy_text_cache = ''
+            label._hide_copy_button()
+            cls._active_label = None
+
     def _hide_copy_button(self):
         if self._copy_button is not None:
             self._copy_button.hide()
+        if self._copy_filter_installed:
+            QApplication.instance().removeEventFilter(self)
+            self._copy_filter_installed = False
+        if CopyableLabel._active_label is self:
+            CopyableLabel._active_label = None
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.MouseButtonPress and watched is not self._copy_button:
+            self._copy_text_cache = ''
+            self._hide_copy_button()
+        elif event.type() == QEvent.ApplicationDeactivate:
+            self._copy_text_cache = ''
+            self._hide_copy_button()
+        return super().eventFilter(watched, event)
 
     def _show_copy_button_if_selected(self, global_pos):
         selected_text = self._selected_plain_text()
@@ -144,6 +170,8 @@ class CopyableLabel(QLabel):
             self._hide_copy_button()
             return
         self._copy_text_cache = selected_text
+        CopyableLabel._hide_active_copy_button(except_label=self)
+        CopyableLabel._active_label = self
         root = self.window()
         if root is None:
             return
@@ -165,6 +193,9 @@ class CopyableLabel(QLabel):
         self._copy_button.move(x, y)
         self._copy_button.raise_()
         self._copy_button.show()
+        if not self._copy_filter_installed:
+            QApplication.instance().installEventFilter(self)
+            self._copy_filter_installed = True
 
 
 def _reply_card_style_qss(style=None):
@@ -204,7 +235,7 @@ class ReplyCard(ReplyCardWindow):
     quote_reply_submitted = Signal(str, str, str, str)  # card_id, full_message, quoted_text, user_text
 
     def __init__(self, card_id, event, timeout=REPLY_CARD_TIMEOUT_MS, parent=None):
-        super().__init__(card_id, parent, fade_in=True, initial_opacity=0.0)
+        super().__init__(card_id, parent, fade_in=False, initial_opacity=1.0)
         self.event_data = dict(event)
         self.control_widgets = {}
         self._typewriters = []
@@ -547,10 +578,13 @@ class ReplyCard(ReplyCardWindow):
         text = self._primary_text_value()
         if text:
             normalized = [{'type': 'text', 'content': text, '_primary': True}] + normalized
+        progress = str(self.event_data.get('progress') or '').strip()
+        if progress:
+            normalized.append({'type': 'text', 'content': progress})
         return normalized
 
     def _structure_signature(self):
-        return (repr(self.event_data.get('elements') or []), repr(self.event_data.get('controls') or []), repr(self.event_data.get('actions') or []))
+        return (repr(self.event_data.get('elements') or []), repr(self.event_data.get('progress') or ''), repr(self.event_data.get('controls') or []), repr(self.event_data.get('actions') or []))
 
     def update_card(self, event, timeout=None):
         if self.closing:
@@ -817,7 +851,7 @@ class ReplyCard(ReplyCardWindow):
 
     def _expand_quote_area(self):
         from PySide6.QtWidgets import QPlainTextEdit
-        from PySide6.QtGui import QKeySequence, QShortcut, QFont as _QFont
+        from PySide6.QtGui import QFont as _QFont
         self._make_permanent()
         card = None
         for child in self.children():
@@ -838,8 +872,9 @@ class ReplyCard(ReplyCardWindow):
         area_layout.addWidget(hr)
         edit = QPlainTextEdit(area)
         edit.setObjectName('QuoteInputEdit')
-        edit.setPlaceholderText('输入内容…')
+        edit.setPlaceholderText('输入内容，Enter 发送，Shift+Enter 换行')
         edit.setMaximumHeight(72)
+        edit.installEventFilter(self)
         edit.setStyleSheet(
             'QPlainTextEdit#QuoteInputEdit { border: 1px solid rgba(218,226,238,220); border-radius: 9px;'
             ' background: rgba(255,255,255,210); padding: 6px 8px; font: 13px "Microsoft YaHei UI"; }'
@@ -856,17 +891,26 @@ class ReplyCard(ReplyCardWindow):
         send_btn.clicked.connect(self._send_quote_reply)
         btn_row.addWidget(send_btn)
         area_layout.addLayout(btn_row)
-        sc = QShortcut(QKeySequence('Return'), edit)
-        sc.activated.connect(self._send_quote_reply)
         self.layout_box.addWidget(area)
         self._quote_area = area
         self._quote_edit = edit
         self._schedule_content_resize()
         edit.setFocus()
 
+    def eventFilter(self, watched, event):
+        if watched is getattr(self, '_quote_edit', None) and event.type() == QEvent.KeyPress:
+            if event.key() in (Qt.Key_Return, Qt.Key_Enter) and not event.modifiers() & Qt.ShiftModifier:
+                self._send_quote_reply()
+                return True
+        return super().eventFilter(watched, event)
+
     def _collapse_quote_area(self):
         if hasattr(self, '_quote_area') and self._quote_area is not None:
-            self._quote_area.deleteLater()
+            area = self._quote_area
+            self.layout_box.removeWidget(area)
+            area.hide()
+            area.setParent(None)
+            area.deleteLater()
             self._quote_area = None
             self._quote_edit = None
             self._schedule_content_resize()

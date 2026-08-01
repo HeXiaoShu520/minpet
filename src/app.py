@@ -785,6 +785,7 @@ class MiniPetApp(QApplication):
         self.claude_code_session.process_ready.connect(self._on_claude_code_process_ready)
         self.claude_code_session.output_ready.connect(self._on_claude_code_output)
         self.claude_code_session.result_ready.connect(self._on_claude_code_result)
+        self.claude_code_session.progress_ready.connect(self._on_claude_code_progress)
         self.claude_code_session.error_ready.connect(self._on_claude_code_error)
         self.claude_code_session.session_ready.connect(self._on_claude_code_session_ready)
         self.claude_code_session.session_mode_mismatch.connect(self._on_claude_code_mode_mismatch)
@@ -794,13 +795,17 @@ class MiniPetApp(QApplication):
         self._show_reply_card('正在%s Claude Code 会话：%s' % (action, project_dir), status='streaming', timeout_ms=60000)
         return True
 
-    def _send_claude_code_prompt(self, content, mode='text'):
+    def _send_claude_code_prompt(self, content, mode='text', reuse_reply_card_id=None):
         prompt = self._content_preview(content).strip()
         if not prompt:
             return False
         self.quick_chat_source = 'voice_chat' if mode == 'voice' else 'quick_chat'
         self.quick_chat_backend = self._agent_backend()
-        self._begin_reply_card_turn()
+        if reuse_reply_card_id:
+            self.quick_reply_card_id = reuse_reply_card_id
+            self._quick_stream_text = ''
+        else:
+            self._begin_reply_card_turn()
         self._reset_quick_stream_tts()
         self.claude_code_received_output = False
         self._claude_code_attempted_modes = set()
@@ -850,6 +855,34 @@ class MiniPetApp(QApplication):
     def _warn_if_claude_code_silent(self):
         if self._agent_backend() == 'claude_code' and self.claude_code_session is not None and not self.claude_code_received_output:
             self._show_reply_card('Claude Code 已启动并收到输入，但暂时没有输出。可能是 CLI 在等待终端交互或 PATH/权限环境不完整。', status='streaming', timeout_ms=10000)
+
+    def _on_claude_code_progress(self, info):
+        if not isinstance(info, dict):
+            return
+        kind = info.get('kind')
+        if kind == 'tool':
+            progress = '正在调用工具：%s' % info.get('name', '工具') if info.get('state') == 'running' else '工具执行完成'
+        elif kind == 'result':
+            parts = []
+            if info.get('num_turns') is not None:
+                parts.append('%s 轮' % info['num_turns'])
+            if info.get('duration_ms') is not None:
+                parts.append('耗时 %.1fs' % (float(info['duration_ms']) / 1000))
+            usage = info.get('usage') or {}
+            if usage.get('input_tokens') is not None:
+                parts.append('输入 %s token' % usage['input_tokens'])
+            if usage.get('output_tokens') is not None:
+                parts.append('输出 %s token' % usage['output_tokens'])
+            if usage.get('cache_read_input_tokens') is not None:
+                parts.append('缓存 %s token' % usage['cache_read_input_tokens'])
+            cost = info.get('total_cost_usd', info.get('cost_usd'))
+            if cost is not None:
+                parts.append('$%.4f' % float(cost))
+            progress = ' · '.join(parts)
+        else:
+            return
+        if progress:
+            self._show_reply_card(self._quick_stream_text or '', status='streaming' if kind != 'result' else 'done', timeout_ms=60000, progress=progress)
 
     def _on_claude_code_output(self, text):
         self.claude_code_starting = False
@@ -993,7 +1026,7 @@ class MiniPetApp(QApplication):
             self.note.setup_reply_card_text('外置智能体还没连接，先检查“智能体”设置。', x, y, 4500, title=config.pet_display_name())
         return sent
 
-    def _send_openclaw_prompt(self, content, mode='text', screenshot='', attachments=None):
+    def _send_openclaw_prompt(self, content, mode='text', screenshot='', attachments=None, reuse_reply_card_id=None):
         if self.openclaw_worker is not None:
             x, y = self.pet.reply_card_anchor()
             self.note.setup_reply_card_text('OpenClaw 还在处理上一句话，稍等一下。', x, y, 3000, title=config.pet_display_name())
@@ -1005,7 +1038,11 @@ class MiniPetApp(QApplication):
             return False
         self.quick_chat_source = 'voice_chat' if mode == 'voice' else 'quick_chat'
         self.quick_chat_backend = self._agent_backend()
-        self._begin_reply_card_turn()
+        if reuse_reply_card_id:
+            self.quick_reply_card_id = reuse_reply_card_id
+            self._quick_stream_text = ''
+        else:
+            self._begin_reply_card_turn()
         self.stream_display_delay.reset('openclaw')
         self._reset_external_stream_tts()
         self._show_reply_card('正在问 OpenClaw...', status='streaming', timeout_ms=60000)
@@ -1062,7 +1099,7 @@ class MiniPetApp(QApplication):
         'custom': 'MiniPet',
     }
 
-    def _show_reply_card(self, content, status='streaming', timeout_ms=60000):
+    def _show_reply_card(self, content, status='streaming', timeout_ms=60000, progress=None):
         source_label = self._BACKEND_SOURCE_LABELS.get(self.quick_chat_backend or 'builtin', '')
         event = {
             'surface_id': 'local-quick-reply',
@@ -1071,6 +1108,8 @@ class MiniPetApp(QApplication):
             'timeout_ms': timeout_ms,
             'source_label': source_label,
         }
+        if progress is not None:
+            event['progress'] = progress
         x, y = self.pet.reply_card_anchor()
         if self.quick_reply_card_id and self.note.update_reply_card(self.quick_reply_card_id, event, timeout=timeout_ms):
             return
@@ -1464,9 +1503,9 @@ class MiniPetApp(QApplication):
             self.quick_chat_worker.result_ready.connect(self._on_quick_chat_reply)
             self.quick_chat_worker.start()
         elif backend == 'claude_code':
-            self._send_claude_code_prompt(message)
+            self._send_claude_code_prompt(message, reuse_reply_card_id=card_id)
         elif backend == 'openclaw':
-            self._send_openclaw_prompt(message)
+            self._send_openclaw_prompt(message, reuse_reply_card_id=card_id)
         else:
             self._send_external_command(message, 'text', 'reply_card_quote')
 

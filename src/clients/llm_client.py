@@ -76,32 +76,32 @@ async def _call_openai(messages, cfg, timeout, on_delta=None):
     kwargs = {'api_key': api_key, 'timeout': timeout, 'max_retries': 1}
     if api_base:
         kwargs['base_url'] = api_base
-    client = AsyncOpenAI(**kwargs)
     messages = _normalize_openai_messages(messages)
     print('[MiniPet input]', _last_user_input(messages), flush=True)
     try:
-        if on_delta:
-            chunks = []
-            stream = await client.chat.completions.create(
+        async with AsyncOpenAI(**kwargs) as client:
+            if on_delta:
+                chunks = []
+                stream = await client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    stream=True,
+                )
+                async for event in stream:
+                    delta = event.choices[0].delta.content if event.choices else None
+                    if delta:
+                        chunks.append(delta)
+                        on_delta(delta)
+                reply = ''.join(chunks).strip()
+                print('[MiniPet final]', reply, flush=True)
+                return True, reply
+            response = await client.chat.completions.create(
                 model=model,
                 messages=messages,
-                stream=True,
             )
-            async for event in stream:
-                delta = event.choices[0].delta.content if event.choices else None
-                if delta:
-                    chunks.append(delta)
-                    on_delta(delta)
-            reply = ''.join(chunks).strip()
+            reply = (response.choices[0].message.content or '').strip()
             print('[MiniPet final]', reply, flush=True)
             return True, reply
-        response = await client.chat.completions.create(
-            model=model,
-            messages=messages,
-        )
-        reply = (response.choices[0].message.content or '').strip()
-        print('[MiniPet final]', reply, flush=True)
-        return True, reply
     except OpenAITimeoutError as e:
         return False, '网络超时：%s' % e
     except OpenAIConnectionError as e:

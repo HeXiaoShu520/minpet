@@ -29,6 +29,7 @@ class ClaudeCodeSession(QThread):
     process_ready = Signal()
     session_ready = Signal(str)
     session_mode_mismatch = Signal(str)
+    progress_ready = Signal(dict)
 
     def __init__(self, project_dir, reset_token=0, resume=False, parent=None):
         super().__init__(parent)
@@ -341,6 +342,7 @@ class ClaudeCodeSession(QThread):
                 self.error_ready.emit(text)
             return
 
+        self._emit_progress(event)
         text = self._event_text(event)
         if text:
             self._append_output(text)
@@ -366,6 +368,46 @@ class ClaudeCodeSession(QThread):
             return error
         return event.get('message') if isinstance(event.get('message'), str) else ''
 
+    def _emit_progress(self, event):
+        event_type = event.get('type', '')
+        info = {}
+        if event_type == 'system' and event.get('subtype') == 'init':
+            info = {'kind': 'init', 'model': event.get('model'), 'cwd': event.get('cwd')}
+        elif event_type == 'content_block_start':
+            block = event.get('content_block') or {}
+            if isinstance(block, dict) and block.get('type') == 'tool_use':
+                info = {'kind': 'tool', 'state': 'running', 'name': block.get('name') or '工具'}
+        elif event_type == 'assistant':
+            message = event.get('message') or {}
+            content = message.get('content') if isinstance(message, dict) else None
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get('type') == 'tool_use':
+                        info = {'kind': 'tool', 'state': 'running', 'name': block.get('name') or '工具'}
+                        break
+        elif event_type == 'user':
+            message = event.get('message') or {}
+            content = message.get('content') if isinstance(message, dict) else None
+            if isinstance(content, list) and any(isinstance(block, dict) and block.get('type') == 'tool_result' for block in content):
+                info = {'kind': 'tool', 'state': 'done'}
+        usage = event.get('usage') or {}
+        if event_type == 'message_start':
+            message = event.get('message') or {}
+            if isinstance(message, dict):
+                usage = message.get('usage') or usage
+        if isinstance(usage, dict) and usage:
+            info['usage'] = usage
+        if event_type == 'result':
+            info['kind'] = 'result'
+            for key in ('duration_ms', 'duration_api_ms', 'num_turns', 'total_cost_usd', 'cost_usd'):
+                if event.get(key) is not None:
+                    info[key] = event.get(key)
+            if isinstance(event.get('usage'), dict):
+                info['usage'] = event['usage']
+        if info:
+            print('[Claude Code event]', json.dumps(info, ensure_ascii=False), flush=True)
+            self.progress_ready.emit(info)
+
     def _event_text(self, event):
         event_type = event.get('type', '')
 
@@ -376,7 +418,7 @@ class ClaudeCodeSession(QThread):
             return ''
 
         if event_type == 'result':
-            text = event.get('result') or self._message_text(event.get('message'))
+            text = ANSI_RE.sub('', event.get('result') or self._message_text(event.get('message')) or '').strip()
             if text:
                 print('[Claude Code final]', text, flush=True)
                 self.result_ready.emit(text)
